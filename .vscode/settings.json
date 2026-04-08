@@ -1,0 +1,22 @@
+{
+    "editor.quickSuggestions": {
+        "other": true,
+        "comments": false,
+        "strings": true
+    },
+    "github.copilot.enable": {
+        "*": true
+    },
+    "github.copilot.advanced": {
+        "debug.testOverrideProxyUrl": "",
+        "debug.overrideEngine": "latest"
+    },
+    "github.copilot.inlineSuggest.enable": true,
+    "github.copilot.autoCompletions.enable": true,
+    "github.copilot.chat.inlineChat.enabled": true,
+    "security.workspace.trust.untrustedFiles": "open",
+    "terminal.integrated.allowWorkspaceCommands": true,
+    "files.autoSave": "afterDelay",
+    "files.autoSaveDelay": 300,
+    "task.allowAutomaticTasks": "on"
+}
