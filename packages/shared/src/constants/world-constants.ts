@@ -1,0 +1,10 @@
+export const MAP_WIDTH = 32
+export const MAP_HEIGHT = 32
+export const MAX_DEPTH = 64
+export const PLAYER_RADIUS = 0.25
+export const PLAYER_HEIGHT = 0.5
+export const PLAYER_SPEED = 3.0
+export const TURN_SPEED = 1.8
+export const LOOK_SPEED = 1.5
+export const MAX_LOOK_PITCH = 0.7
+export const FOOTSTEP_INTERVAL_SECONDS = 0.38

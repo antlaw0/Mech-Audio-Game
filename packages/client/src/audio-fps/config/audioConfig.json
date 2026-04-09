@@ -1,0 +1,37 @@
+{
+  "masterVolume": 0.9,
+  "uiVolume": 0.85,
+  "enemyVolume": 0.8,
+  "obstacleVolume": 0.75,
+  "distanceRolloff": {
+    "minDistance": 1,
+    "maxDistance": 48,
+    "rolloffFactor": 1.35
+  },
+  "panningCurve": {
+    "stereoScale": 1,
+    "frontFocus": 0.72
+  },
+  "trackingTone": {
+    "minFrequency": 180,
+    "maxFrequency": 1040,
+    "lockFrequency": 1240
+  },
+  "obstacleCueIntensity": {
+    "nearDistance": 1.8,
+    "farDistance": 10,
+    "minRateSeconds": 0.16,
+    "maxRateSeconds": 0.9
+  },
+  "enemyCueVolumeScales": {
+    "tank": 0.95,
+    "mech": 0.85,
+    "helicopter": 0.82,
+    "drone": 0.78
+  },
+  "navigation": {
+    "autoSweepIntervalSeconds": 2.5,
+    "pingRays": 16,
+    "pingRange": 18
+  }
+}

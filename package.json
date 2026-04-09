@@ -1,0 +1,25 @@
+{
+  "name": "mech-audio-game",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -ws",
+    "build:shared": "npm run build -w @mech-audio/shared",
+    "build:client": "npm run build -w @mech-audio/client",
+    "build:server": "npm run build -w @mech-audio/server",
+    "dev": "concurrently -n watch,serve -c cyan,green \"npm run dev:watch\" \"npm run dev:static\"",
+    "dev:watch": "tsc -b tsconfig.json --watch --preserveWatchOutput",
+    "dev:static": "serve . --listen tcp://localhost:3000",
+    "dev:server": "npm run dev -w @mech-audio/server",
+    "start:colyseus": "npm run start:colyseus -w @mech-audio/server",
+    "typecheck": "npm run typecheck -ws"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "serve": "^14.2.6",
+    "typescript": "^5.6.3"
+  }
+}

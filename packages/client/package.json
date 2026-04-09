@@ -1,0 +1,18 @@
+{
+  "name": "@mech-audio/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/test-map/main.js",
+  "types": "dist/test-map/main.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mech-audio/shared": "0.1.0",
+    "bitecs": "^0.3.40",
+    "phaser": "^3.90.0",
+    "tone": "^15.1.22"
+  }
+}

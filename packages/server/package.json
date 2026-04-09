@@ -1,0 +1,26 @@
+{
+  "name": "@mech-audio/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "node --watch dist/index.js",
+    "start": "node dist/index.js",
+    "start:colyseus": "node dist/colyseus/index.js"
+  },
+  "dependencies": {
+    "@colyseus/schema": "^4.0.19",
+    "@colyseus/ws-transport": "^0.17.11",
+    "@mech-audio/shared": "0.1.0",
+    "colyseus": "^0.17.8",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13"
+  }
+}

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <title>Mech Audio Game - Test Map</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
+    #gameCanvas { display: block; cursor: none; }
+    #hud {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #0af;
+      font-family: monospace;
+      font-size: 13px;
+      letter-spacing: 1px;
+      pointer-events: none;
+      text-align: center;
+      text-shadow: 0 0 6px #0af;
+    }
+    #awarenessStatus {
+      margin-top: 8px;
+      color: #8ef;
+      font-size: 12px;
+      letter-spacing: 1px;
+    }
+    #sonarStatus {
+      margin-top: 6px;
+      color: #7fdfbf;
+      font-size: 12px;
+      letter-spacing: 1px;
+    }
+  </style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<div id="hud">
+  WASD: MOVE / STRAFE &nbsp;|&nbsp; ←→: TURN &nbsp;|&nbsp; ↑↓: LOOK (TAP BOTH TO CENTER) &nbsp;|&nbsp; SPACE: FIRE &nbsp;|&nbsp; E: TOGGLE SWEEP SONAR &nbsp;|&nbsp; Q: AIM ASSIST TOGGLE
+  <div id="awarenessStatus">AWARENESS: SCANNING...</div>
+  <div id="sonarStatus">SONAR: OFF</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "tone": "https://esm.sh/tone@15",
+    "bitecs": "https://esm.sh/bitecs@0.3.40"
+  }
+}
+</script>
+<script type="module" src="./packages/client/dist/test-map/main.js"></script>
+</body>
+</html>

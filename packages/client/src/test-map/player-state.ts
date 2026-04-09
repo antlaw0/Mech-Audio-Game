@@ -1,0 +1,26 @@
+import type { InputState, Player } from './types.js'
+
+export function createPlayer(): Player {
+  return {
+    x: 24.5,
+    y: 24.5,
+    angle: 0,
+    pitch: 0
+  } // end object player
+} // end function createPlayer
+
+export function createInputState(): InputState {
+  return {
+    moveForward: false,
+    moveBack: false,
+    strafeLeft: false,
+    strafeRight: false,
+    turnLeft: false,
+    turnRight: false,
+    lookUp: false,
+    lookDown: false,
+    pitchResetPending: false,
+    firePending: false,
+    sonarPingPending: false
+  } // end object input state
+} // end function createInputState
