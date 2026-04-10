@@ -46,3 +46,21 @@ export const AUDIO_CONFIG = {
     threatCueDelayMs: 360
   }
 } as const
+
+export const AUDIO_NAVIGATION_CONFIG = {
+  worldUnitsPerTile: 1,
+  playerRadius: 0.5,
+  nearFieldRadius: 1.5,
+  movementAwarenessRadius: 8,
+  obstacleAudioMaxDistance: 12,
+  enemyAudioMaxDistance: 25,
+  activePingObstacleDistance: 12,
+  activePingEnemyDistance: 20,
+  passiveSweepTickRateHz: 30,
+  passiveSweepRotationSeconds: 2.5,
+  sonarSilenceDistance: 10,
+  maxSimultaneousObstacleTones: 5,
+  losTickIntervalSeconds: 0.3,
+  sweepBaseFrequency: 240,
+  sweepPitchSpan: 70
+} as const

@@ -21,6 +21,13 @@ export function createInputState(): InputState {
     lookDown: false,
     pitchResetPending: false,
     firePending: false,
-    sonarPingPending: false
+    sonarPingPending: false,
+    snapNorthPending: false,
+    snapEastPending: false,
+    snapSouthPending: false,
+    snapWestPending: false,
+    spawnTankPending: false,
+    spawnStrikerPending: false,
+    spawnBrutePending: false
   } // end object input state
 } // end function createInputState

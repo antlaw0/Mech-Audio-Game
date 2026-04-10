@@ -1,16 +1,24 @@
 import * as Tone from 'tone'
-import { AUDIO_CONFIG } from './audio-config.js'
+import { AUDIO_CONFIG, AUDIO_NAVIGATION_CONFIG } from './audio-config.js'
 import {
-  bearingBetween,
   clamp,
   distanceToFilter,
   distanceToVolume,
-  lerp,
+  filterClosest,
+  findNearestObstacleContact,
+  getBearing,
+  hasLineOfSight,
+  initializeAudioCueUtilities,
   normalizeAngle,
+  playCardinalOrientationCue as playCardinalOrientationCueUtility,
+  playCollisionThud as playCollisionThudUtility,
+  playWallProximityCue,
   relativeVelocityForDoppler,
+  scanSonarContact,
+  silenceWallProximityCue,
   worldToListenerSpace
 } from './audio-utils.js'
-import type { AudioController, EnemyAudioState, ObstructionAwareness, PlayerAudioState, SonarEcho } from './types.js'
+import type { AudioController, EnemyAudioState, ObstructionAwareness, PlayerAudioState, SonarEcho, SpriteObject } from './types.js'
 
 interface EnemySoundSet {
   idleLoop: Tone.Player
@@ -57,8 +65,10 @@ class EnemyAudioRuntime {
   private passivePingTimerSeconds = 0
   private turnCueCooldownSeconds = 0
   private attackDuckingTimerSeconds = 0
+  private losTickCooldownSeconds = 0
   private activeSonarStamp = -1
   private alive = true
+  private lastTurnCueTime = -1
 
   constructor(profile: EnemyAudioProfile) {
     this.profile = profile
@@ -106,14 +116,14 @@ class EnemyAudioRuntime {
   } // end constructor
 
   initializeLoops(): void {
-    this.safeStart(this.profile.sounds.idleLoop)
+    // Start once and keep running so enemy loops remain trackable in 3D space.
     this.safeStart(this.profile.sounds.movementLoop)
-    this.idleGain.gain.rampTo(0.45, AUDIO_CONFIG.enemy.idleFadeSeconds)
-    this.movementGain.gain.rampTo(0, AUDIO_CONFIG.enemy.movementFadeSeconds)
+    this.idleGain.gain.rampTo(0, AUDIO_CONFIG.enemy.idleFadeSeconds)
+    this.movementGain.gain.rampTo(1, AUDIO_CONFIG.enemy.movementFadeSeconds)
   } // end method initializeLoops
 
-  updateAudio(dt: number, enemy: EnemyAudioState, player: PlayerAudioState): void {
-    this.safeStart(this.profile.sounds.idleLoop)
+  updateAudio(dt: number, enemy: EnemyAudioState, player: PlayerAudioState, hasSightLine: boolean): void {
+    // Keep trying to start the loop until its buffer is loaded; safeStart is idempotent.
     this.safeStart(this.profile.sounds.movementLoop)
 
     const relative = worldToListenerSpace(enemy.position, player.position, player.angle)
@@ -122,11 +132,17 @@ class EnemyAudioRuntime {
     this.profile.effects.panner.positionZ.value = relative.z
 
     const distance = Math.hypot(relative.x, relative.y, relative.z)
-    const distanceVolume = distanceToVolume(distance)
-    const targetVolume = this.profile.params.baseVolume * distanceVolume
+    const distanceVolume = distanceToVolume(distance, AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance)
+    const targetVolume = distance <= AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance
+      ? this.profile.params.baseVolume * Math.pow(distanceVolume, 1.35)
+      : 0
     this.profile.effects.gain.gain.rampTo(targetVolume, 0.08)
 
-    const filterTarget = distanceToFilter(distance) + enemy.height * AUDIO_CONFIG.enemy.altitudeFilterScale
+    const filterTarget = (
+      hasSightLine
+        ? distanceToFilter(distance)
+        : Math.max(240, distanceToFilter(distance) * 0.42)
+    ) + enemy.height * AUDIO_CONFIG.enemy.altitudeFilterScale
     this.profile.effects.filter.frequency.rampTo(filterTarget, 0.08)
 
     const relSpeed = relativeVelocityForDoppler(enemy.velocity, player.velocity)
@@ -135,31 +151,29 @@ class EnemyAudioRuntime {
     const cents = clamp(signedSpeed * 16, AUDIO_CONFIG.enemy.dopplerCentsMin, AUDIO_CONFIG.enemy.dopplerCentsMax)
     this.profile.effects.doppler.pitch = cents / 100
 
-    const motionGain = enemy.isMoving ? 1 : 0
-    const ducking = this.attackDuckingTimerSeconds > 0 ? AUDIO_CONFIG.enemy.attackDucking : 1
-    const idleTarget = enemy.isAlive ? (1 - motionGain * 0.55) * ducking : 0
-    const movementTarget = enemy.isAlive ? motionGain * ducking : 0
+    this.setPlaybackRateSafely(
+      this.profile.sounds.movementLoop,
+      clamp(0.9 + Math.hypot(enemy.velocity.x, enemy.velocity.y, enemy.velocity.z) * 0.08, 0.9, 1.35)
+    )
 
-    this.idleGain.gain.rampTo(idleTarget, AUDIO_CONFIG.enemy.idleFadeSeconds)
-    this.movementGain.gain.rampTo(movementTarget, AUDIO_CONFIG.enemy.movementFadeSeconds)
+    this.idleGain.gain.rampTo(0, AUDIO_CONFIG.enemy.idleFadeSeconds)
+    this.movementGain.gain.rampTo(enemy.isAlive ? 1 : 0, AUDIO_CONFIG.enemy.movementFadeSeconds)
 
     const facingDelta = Math.abs(normalizeAngle(enemy.facingAngle - this.lastFacingAngle))
     if (facingDelta > AUDIO_CONFIG.enemy.turnCueThresholdRadians && this.turnCueCooldownSeconds <= 0 && enemy.isAlive) {
-      this.turnCueSynth.triggerAttackRelease('G5', '32n')
+      this.triggerTurnCue('G5', '32n')
       this.turnCueCooldownSeconds = AUDIO_CONFIG.enemy.turnCueCooldownSeconds
     } // end if turn cue should play
 
     this.turnCueCooldownSeconds = Math.max(0, this.turnCueCooldownSeconds - dt)
     this.attackDuckingTimerSeconds = Math.max(0, this.attackDuckingTimerSeconds - dt)
+    this.losTickCooldownSeconds = Math.max(0, this.losTickCooldownSeconds - dt)
     this.lastFacingAngle = enemy.facingAngle
 
-    if (enemy.isAlive) {
-      this.passivePingTimerSeconds -= dt
-      if (this.passivePingTimerSeconds <= 0) {
-        this.triggerPassivePing(enemy.height)
-        this.passivePingTimerSeconds = this.randomPassiveIntervalSeconds()
-      } // end if passive ping timer elapsed
-    } // end if enemy alive
+    if (enemy.isAlive && hasSightLine && distance <= AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance && this.losTickCooldownSeconds <= 0) {
+      this.triggerTurnCue('B5', '64n')
+      this.losTickCooldownSeconds = AUDIO_NAVIGATION_CONFIG.losTickIntervalSeconds
+    } // end if line-of-sight cue should play
 
     this.alive = enemy.isAlive
   } // end method updateAudio
@@ -207,7 +221,7 @@ class EnemyAudioRuntime {
     } // end if enemy not alive
     this.setPlaybackRateSafely(this.profile.sounds.hurtSound, 1 + (Math.random() * 0.14 - 0.07))
     this.safeRetrigger(this.profile.sounds.hurtSound)
-    this.turnCueSynth.triggerAttackRelease('A4', '64n')
+    this.triggerTurnCue('A4', '64n')
   } // end method playHurt
 
   playDeath(): void {
@@ -281,6 +295,20 @@ class EnemyAudioRuntime {
     const maxMs = AUDIO_CONFIG.enemy.passivePingMaxMs
     return (minMs + Math.random() * (maxMs - minMs)) / 1000
   } // end method randomPassiveIntervalSeconds
+
+  private triggerTurnCue(note: string, duration: Tone.Unit.Time): void {
+    const now = Tone.now()
+    const triggerTime = this.lastTurnCueTime >= 0
+      ? Math.max(now, this.lastTurnCueTime + 0.002)
+      : now
+
+    try {
+      this.turnCueSynth.triggerAttackRelease(note, duration, triggerTime)
+      this.lastTurnCueTime = triggerTime
+    } catch {
+      // Ignore tightly-packed cue scheduling conflicts.
+    } // end try/catch cue schedule
+  } // end method triggerTurnCue
 } // end class EnemyAudioRuntime
 
 function createTankProfile(enemyId: string, context: AudioContext): EnemyAudioProfile {
@@ -328,25 +356,38 @@ function createTankProfile(enemyId: string, context: AudioContext): EnemyAudioPr
 
 export function createAudioController(): AudioController {
   let audioStarted = false
+  let audioPaused = false
   let servoPlaying = false
+  let servoWasPlayingBeforePause = false
+  let servoTimeBeforePause = 0
+  let footstepWasPlayingBeforePause = false
+  let footstepTimeBeforePause = 0
+  let contextWasRunningBeforePause = false
   let aimAssistEnabled = true
   let previousPlayerX = 0
   let previousPlayerY = 0
   let previousPlayerZ = 0
-  let passiveRadarTimerSeconds = AUDIO_CONFIG.player.passiveRadarMinIntervalSeconds
+  let passiveRadarTimerSeconds: number = AUDIO_CONFIG.player.passiveRadarMinIntervalSeconds
   let activeSonarStamp = 0
+  let passiveSweepAccumulatorSeconds = 0
+  let passiveSweepAngle = 0
   let obstructionCueCooldownSeconds = 0
   let obstructionWasBlocked = false
   let sonarEchoVoiceCursor = 0
+  let enemyPingVoiceCursor = 0
   let boundaryWarningTimerSeconds = 0
   let boundaryPulseCooldownSeconds = 0
+  let aimAssistWasCentered = false
+  let aimAssistOscStarted = false
+
+  const aimAssistProjectileRadius = 0.25
 
   const rawContext = Tone.getContext().rawContext as AudioContext
   const enemyRuntimes = new Map<string, EnemyAudioRuntime>()
 
   const footstepAudio = new Audio('assets/sounds/footstep.mp3')
   footstepAudio.preload = 'auto'
-  footstepAudio.volume = 0.5
+  footstepAudio.volume = 0.25
 
   const servoAudio = new Audio('assets/sounds/servomotor.ogg')
   servoAudio.preload = 'auto'
@@ -379,10 +420,26 @@ export function createAudioController(): AudioController {
     envelope: { attack: 0.001, decay: 0.06, sustain: 0, release: 0.03 }
   }).toDestination()
 
+  const pauseOpenChirpSynth = new Tone.Synth({
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.04 }
+  }).toDestination()
+
+  const pauseCloseChirpSynth = new Tone.Synth({
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.04 }
+  }).toDestination()
+
   const sonarSweepSynth = new Tone.FMSynth({
     harmonicity: 0.5,
     modulationIndex: 10,
     envelope: { attack: 0.01, decay: 0.18, sustain: 0, release: 0.1 }
+  }).toDestination()
+
+  const activePingSynth = new Tone.FMSynth({
+    harmonicity: 1.2,
+    modulationIndex: 6,
+    envelope: { attack: 0.002, decay: 0.2, sustain: 0, release: 0.08 }
   }).toDestination()
 
   const passiveRadarSweepSynth = new Tone.Synth({
@@ -408,6 +465,16 @@ export function createAudioController(): AudioController {
     const synth = new Tone.Synth({
       oscillator: { type: 'triangle' },
       envelope: { attack: 0.001, decay: 0.09, sustain: 0, release: 0.05 }
+    }).connect(panner)
+    return { synth, panner }
+  })
+
+  const enemyPingVoices = Array.from({ length: 6 }, () => {
+    const panner = new Tone.Panner(0).toDestination()
+    const synth = new Tone.FMSynth({
+      harmonicity: 1.4,
+      modulationIndex: 7,
+      envelope: { attack: 0.001, decay: 0.14, sustain: 0, release: 0.05 }
     }).connect(panner)
     return { synth, panner }
   })
@@ -442,8 +509,6 @@ export function createAudioController(): AudioController {
   const tankDeathConfirmPanner = new Tone.Panner(0).toDestination()
   const tankDeathConfirmGain = new Tone.Gain(1).connect(tankDeathConfirmPanner)
   const tankDeathConfirmSound = new Tone.Player('assets/sounds/explosion_2a.ogg').connect(tankDeathConfirmGain)
-
-  aimAssistOsc.start()
 
   const isAudioContextRunning = (): boolean => Tone.getContext().state === 'running'
 
@@ -486,6 +551,11 @@ export function createAudioController(): AudioController {
         await servoAudio.play().catch(() => undefined)
         servoAudio.pause()
         servoAudio.currentTime = 0
+        initializeAudioCueUtilities()
+        if (!aimAssistOscStarted) {
+          aimAssistOsc.start()
+          aimAssistOscStarted = true
+        } // end if aim assist oscillator not started
         footstepAudio.muted = false
         servoAudio.muted = false
         audioStarted = true
@@ -494,6 +564,80 @@ export function createAudioController(): AudioController {
       // Browser may reject resume when not triggered by a user gesture.
     } // end try/catch ensureAudio
   } // end function ensureAudio
+
+  const playPauseOpenChirp = (): void => {
+    if (!audioStarted || !isAudioContextRunning()) {
+      return
+    } // end if audio not started
+    pauseOpenChirpSynth.triggerAttackRelease('A5', '64n')
+  } // end function playPauseOpenChirp
+
+  const playPauseCloseChirp = (): void => {
+    if (!audioStarted || !isAudioContextRunning()) {
+      return
+    } // end if audio not started
+    pauseCloseChirpSynth.triggerAttackRelease('E6', '64n')
+  } // end function playPauseCloseChirp
+
+  const pauseAllAudio = async (): Promise<void> => {
+    if (audioPaused) {
+      return
+    } // end if already paused
+
+    audioPaused = true
+    contextWasRunningBeforePause = isAudioContextRunning()
+
+    servoWasPlayingBeforePause = servoPlaying && !servoAudio.paused
+    servoTimeBeforePause = servoAudio.currentTime
+    if (servoWasPlayingBeforePause) {
+      servoAudio.pause()
+    } // end if servo was playing
+    servoPlaying = false
+
+    footstepWasPlayingBeforePause = !footstepAudio.paused
+    footstepTimeBeforePause = footstepAudio.currentTime
+    if (footstepWasPlayingBeforePause) {
+      footstepAudio.pause()
+    } // end if footstep was playing
+
+    if (contextWasRunningBeforePause) {
+      try {
+        await rawContext.suspend()
+      } catch {
+        // Ignore suspend failures and keep gameplay paused regardless.
+      } // end try/catch context suspend
+    } // end if context was running before pause
+  } // end function pauseAllAudio
+
+  const resumeAllAudio = async (): Promise<void> => {
+    if (!audioPaused) {
+      return
+    } // end if not paused
+
+    if (contextWasRunningBeforePause && Tone.getContext().state !== 'running') {
+      try {
+        await rawContext.resume()
+      } catch {
+        // Ignore resume failures; interaction can re-arm audio later.
+      } // end try/catch context resume
+    } // end if context should resume
+
+    if (servoWasPlayingBeforePause) {
+      servoAudio.currentTime = servoTimeBeforePause
+      void servoAudio.play().catch(() => undefined)
+      servoPlaying = true
+    } // end if servo should resume
+
+    if (footstepWasPlayingBeforePause) {
+      footstepAudio.currentTime = footstepTimeBeforePause
+      void footstepAudio.play().catch(() => undefined)
+    } // end if footstep should resume
+
+    servoWasPlayingBeforePause = false
+    footstepWasPlayingBeforePause = false
+    contextWasRunningBeforePause = false
+    audioPaused = false
+  } // end function resumeAllAudio
 
   const getAudioContextState = (): AudioContextState => Tone.getContext().state
 
@@ -504,17 +648,161 @@ export function createAudioController(): AudioController {
     } // end if disabling aim assist
   } // end function setAimAssistEnabled
 
-  const updateFrameAudio = (dt: number, player: PlayerAudioState, enemies: EnemyAudioState[]): void => {
-    if (!audioStarted || !isAudioContextRunning()) {
+  const playObstacleContact = (distance: number, bearing: number, kind: 'wall' | 'boundary' | 'tree' | 'rock', lowVolume = false): void => {
+    const voice = sonarEchoVoices[sonarEchoVoiceCursor % sonarEchoVoices.length]
+    sonarEchoVoiceCursor += 1
+    if (!voice) {
+      return
+    } // end if no obstacle voice available
+
+    const frequency = kind === 'boundary'
+      ? 400
+      : kind === 'wall'
+        ? 480
+        : kind === 'tree'
+          ? 520
+          : 420
+    const oscillatorType = kind === 'boundary'
+      ? 'sawtooth'
+      : kind === 'wall'
+        ? 'sine'
+        : kind === 'tree'
+          ? 'triangle'
+          : 'square'
+    voice.panner.pan.rampTo(clamp(Math.sin(bearing), -1, 1), 0.01)
+    voice.synth.volume.value = Tone.gainToDb(clamp(distanceToVolume(distance, AUDIO_NAVIGATION_CONFIG.obstacleAudioMaxDistance) * (lowVolume ? 0.18 : 0.42), 0.001, 1))
+    voice.synth.oscillator.type = oscillatorType
+    voice.synth.triggerAttackRelease(frequency, lowVolume ? '64n' : '32n')
+  } // end function playObstacleContact
+
+  const playEnemyContact = (distance: number, bearing: number, enemyId?: string, lowVolume = false): void => {
+    const voice = enemyPingVoices[enemyPingVoiceCursor % enemyPingVoices.length]
+    enemyPingVoiceCursor += 1
+    if (!voice) {
+      return
+    } // end if no enemy voice available
+
+    voice.panner.pan.rampTo(clamp(Math.sin(bearing), -1, 1), 0.01)
+    voice.synth.volume.value = Tone.gainToDb(clamp(distanceToVolume(distance, AUDIO_NAVIGATION_CONFIG.activePingEnemyDistance) * (lowVolume ? 0.22 : 0.55), 0.001, 1))
+    voice.synth.triggerAttackRelease(760 - distance * 8, lowVolume ? '64n' : '16n')
+
+    if (enemyId) {
+      getOrCreateEnemyRuntime(enemyId, AUDIO_CONFIG.tank.type).onSonarPing(activeSonarStamp, 0)
+    } // end if enemy runtime should react to ping
+  } // end function playEnemyContact
+
+  const updateNearFieldNavigation = (player: PlayerAudioState, mapData: Uint8Array, sprites: SpriteObject[]): void => {
+    const nearest = findNearestObstacleContact(
+      mapData,
+      { x: player.position.x, y: player.position.y },
+      player.angle,
+      sprites,
+      AUDIO_NAVIGATION_CONFIG.nearFieldRadius
+    )
+
+    if (!nearest || nearest.distance > AUDIO_NAVIGATION_CONFIG.nearFieldRadius) {
+      silenceWallProximityCue()
+      return
+    } // end if no near-field obstacle detected
+
+    const intensity = clamp(1 - nearest.distance / AUDIO_NAVIGATION_CONFIG.nearFieldRadius, 0, 1)
+    playWallProximityCue(nearest.bearing, intensity)
+  } // end function updateNearFieldNavigation
+
+  const runPassiveSweepTick = (player: PlayerAudioState, enemies: EnemyAudioState[], mapData: Uint8Array, sprites: SpriteObject[]): void => {
+    const stepAngle = (Math.PI * 2) / (AUDIO_NAVIGATION_CONFIG.passiveSweepRotationSeconds * AUDIO_NAVIGATION_CONFIG.passiveSweepTickRateHz)
+    const currentAngle = passiveSweepAngle
+    const contact = scanSonarContact(
+      mapData,
+      { x: player.position.x, y: player.position.y },
+      player.angle,
+      currentAngle,
+      sprites,
+      enemies,
+      AUDIO_NAVIGATION_CONFIG.obstacleAudioMaxDistance,
+      AUDIO_NAVIGATION_CONFIG.obstacleAudioMaxDistance
+    )
+
+    if (contact?.kind === 'enemy') {
+      const normalizedSweep = ((currentAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
+      const sweepFrequency = AUDIO_NAVIGATION_CONFIG.sweepBaseFrequency + (normalizedSweep / (Math.PI * 2)) * AUDIO_NAVIGATION_CONFIG.sweepPitchSpan
+      sonarSweepSynth.volume.value = Tone.gainToDb(0.04)
+      sonarSweepSynth.triggerAttackRelease(sweepFrequency, '64n')
+      playEnemyContact(contact.distance, contact.bearing, contact.enemyId, true)
+    } else if (contact) {
+      const normalizedSweep = ((currentAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
+      const sweepFrequency = AUDIO_NAVIGATION_CONFIG.sweepBaseFrequency + (normalizedSweep / (Math.PI * 2)) * AUDIO_NAVIGATION_CONFIG.sweepPitchSpan
+      sonarSweepSynth.volume.value = Tone.gainToDb(0.035)
+      sonarSweepSynth.triggerAttackRelease(sweepFrequency, '64n')
+      playObstacleContact(contact.distance, contact.bearing, contact.kind, true)
+    } // end if passive sweep contact found
+
+    passiveSweepAngle = normalizeAngle(passiveSweepAngle + stepAngle)
+  } // end function runPassiveSweepTick
+
+  const updateFrameAudio = (
+    dt: number,
+    player: PlayerAudioState,
+    enemies: EnemyAudioState[],
+    mapData: Uint8Array,
+    sprites: SpriteObject[]
+  ): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
+
+    const nearestEnemyDistance = enemies
+      .filter((enemy) => enemy.isAlive)
+      .map((enemy) => Math.hypot(
+        enemy.position.x - player.position.x,
+        enemy.position.y - player.position.y,
+        enemy.position.z - player.position.z
+      ))
+      .sort((a, b) => a - b)[0] ?? Number.POSITIVE_INFINITY
+    const nearestObstacleContact = findNearestObstacleContact(
+      mapData,
+      { x: player.position.x, y: player.position.y },
+      player.angle,
+      sprites,
+      AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance,
+      32
+    )
+    const hasNearbySonarContact = (
+      nearestEnemyDistance <= AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance ||
+      (nearestObstacleContact !== null && nearestObstacleContact.distance <= AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance)
+    )
+
+    const losEnemyCandidates = enemies
+      .filter((enemy) => enemy.isAlive)
+      .map((enemy) => {
+        const hasSightLine = hasLineOfSight(
+          mapData,
+          { x: enemy.position.x, y: enemy.position.y },
+          { x: player.position.x, y: player.position.y }
+        )
+        const distance = Math.hypot(
+          enemy.position.x - player.position.x,
+          enemy.position.y - player.position.y,
+          enemy.position.z - player.position.z
+        )
+        return { enemyId: enemy.id, hasSightLine, distance }
+      })
+      .filter((entry) => entry.hasSightLine)
+      .sort((a, b) => a.distance - b.distance)
+    const primaryLosEnemyId = losEnemyCandidates[0]?.enemyId
 
     const liveEnemyIds = new Set<string>()
     for (const enemy of enemies) {
       liveEnemyIds.add(enemy.id)
       const runtime = getOrCreateEnemyRuntime(enemy.id, enemy.type)
-      runtime.updateAudio(dt, enemy, player)
-      runtime.onSonarPing(activeSonarStamp, enemy.height)
+      const hasSightLine = losEnemyCandidates.some((entry) => entry.enemyId === enemy.id)
+      const shouldEmitLosTick = primaryLosEnemyId === enemy.id
+      runtime.updateAudio(
+        dt,
+        enemy,
+        player,
+        hasNearbySonarContact && hasSightLine && shouldEmitLosTick
+      )
     } // end for each enemy
 
     for (const [enemyId, runtime] of enemyRuntimes.entries()) {
@@ -524,6 +812,20 @@ export function createAudioController(): AudioController {
       } // end if runtime not active this frame
     } // end for each runtime
 
+    if (!hasNearbySonarContact) {
+      silenceWallProximityCue()
+      passiveSweepAccumulatorSeconds = 0
+    } else {
+      updateNearFieldNavigation(player, mapData, sprites)
+
+      passiveSweepAccumulatorSeconds += dt
+      const sweepTickSeconds = 1 / AUDIO_NAVIGATION_CONFIG.passiveSweepTickRateHz
+      while (passiveSweepAccumulatorSeconds >= sweepTickSeconds) {
+        passiveSweepAccumulatorSeconds -= sweepTickSeconds
+        runPassiveSweepTick(player, enemies, mapData, sprites)
+      } // end while passive sweep ticks are due
+    } // end if sonar should be active
+
     updatePassiveRadar(dt)
     updateAimAssist(dt, player, enemies)
 
@@ -532,17 +834,89 @@ export function createAudioController(): AudioController {
     previousPlayerZ = player.position.z
   } // end function updateFrameAudio
 
-  const triggerActiveSonar = (): void => {
-    if (!audioStarted || !isAudioContextRunning()) {
+  const triggerActiveSonar = (
+    player: PlayerAudioState,
+    enemies: EnemyAudioState[],
+    mapData: Uint8Array,
+    sprites: SpriteObject[]
+  ): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
 
+    const nearestEnemyDistance = enemies
+      .filter((enemy) => enemy.isAlive)
+      .map((enemy) => Math.hypot(
+        enemy.position.x - player.position.x,
+        enemy.position.y - player.position.y,
+        enemy.position.z - player.position.z
+      ))
+      .sort((a, b) => a - b)[0] ?? Number.POSITIVE_INFINITY
+    const nearestObstacleContact = findNearestObstacleContact(
+      mapData,
+      { x: player.position.x, y: player.position.y },
+      player.angle,
+      sprites,
+      AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance,
+      32
+    )
+    const hasNearbySonarContact = (
+      nearestEnemyDistance <= AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance ||
+      (nearestObstacleContact !== null && nearestObstacleContact.distance <= AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance)
+    )
+    if (!hasNearbySonarContact) {
+      return
+    } // end if no nearby sonar-worthy contact
+
     activeSonarStamp += 1
-    sonarSweepSynth.triggerAttackRelease('C3', AUDIO_CONFIG.player.sonarActiveDurationSeconds)
+    activePingSynth.volume.value = Tone.gainToDb(0.12)
+    activePingSynth.triggerAttackRelease('C4', AUDIO_CONFIG.player.sonarActiveDurationSeconds)
+
+    const contacts = []
+    for (let index = 0; index < 16; index += 1) {
+      const angle = player.angle + (index / 16) * Math.PI * 2
+      const contact = scanSonarContact(
+        mapData,
+        { x: player.position.x, y: player.position.y },
+        player.angle,
+        angle,
+        sprites,
+        enemies,
+        AUDIO_NAVIGATION_CONFIG.activePingObstacleDistance,
+        AUDIO_NAVIGATION_CONFIG.activePingEnemyDistance
+      )
+      if (contact) {
+        contacts.push(contact)
+      } // end if manual ping ray returned a hit
+    } // end for each starburst ray
+
+    const obstacleContacts = filterClosest(
+      contacts.filter((contact) => contact.kind !== 'enemy'),
+      AUDIO_NAVIGATION_CONFIG.maxSimultaneousObstacleTones
+    )
+    const uniqueEnemyContacts = new Map<string, typeof contacts[number]>()
+    for (const contact of contacts) {
+      if (contact.kind !== 'enemy' || !contact.enemyId || uniqueEnemyContacts.has(contact.enemyId)) {
+        continue
+      } // end if contact is not a unique enemy hit
+      uniqueEnemyContacts.set(contact.enemyId, contact)
+    } // end for each contact
+
+    for (const contact of obstacleContacts) {
+      if (contact.kind === 'enemy') {
+        continue
+      } // end if contact is not an obstacle tone
+
+      playObstacleContact(contact.distance, contact.bearing, contact.kind)
+    } // end for each filtered obstacle contact
+
+    for (const contact of uniqueEnemyContacts.values()) {
+      playEnemyContact(contact.distance, contact.bearing, contact.enemyId)
+    } // end for each enemy sonar contact
   } // end function triggerActiveSonar
 
   const emitEnvironmentalSonar = (echoes: SonarEcho[]): void => {
-    if (!audioStarted || !isAudioContextRunning()) {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
 
@@ -577,42 +951,42 @@ export function createAudioController(): AudioController {
   } // end function emitEnvironmentalSonar
 
   const playEnemyThreatCue = (enemyId: string): void => {
-    if (!audioStarted || !isAudioContextRunning()) {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
     getOrCreateEnemyRuntime(enemyId, AUDIO_CONFIG.tank.type).playThreatCue()
   } // end function playEnemyThreatCue
 
   const playEnemyAttack = (enemyId: string): void => {
-    if (!audioStarted || !isAudioContextRunning()) {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
     getOrCreateEnemyRuntime(enemyId, AUDIO_CONFIG.tank.type).playAttack()
   } // end function playEnemyAttack
 
   const playEnemyHurt = (enemyId: string): void => {
-    if (!audioStarted || !isAudioContextRunning()) {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
     getOrCreateEnemyRuntime(enemyId, AUDIO_CONFIG.tank.type).playHurt()
   } // end function playEnemyHurt
 
   const playEnemyDeath = (enemyId: string): void => {
-    if (!audioStarted || !isAudioContextRunning()) {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
     getOrCreateEnemyRuntime(enemyId, AUDIO_CONFIG.tank.type).playDeath()
   } // end function playEnemyDeath
 
   const fireGunshot = (): void => {
-    if (!audioStarted || !isAudioContextRunning()) {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
     playerFireSynth.triggerAttackRelease('16n')
   } // end function fireGunshot
 
   const playPitchCenterConfirm = (): void => {
-    if (!audioStarted || !isAudioContextRunning()) {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
     pitchCenterConfirmSynth.triggerAttackRelease('C6', '64n')
@@ -625,7 +999,7 @@ export function createAudioController(): AudioController {
     playerY: number,
     playerAngle: number
   ): void => {
-    if (!audioStarted || !isAudioContextRunning()) {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
 
@@ -641,7 +1015,7 @@ export function createAudioController(): AudioController {
     playerY: number,
     playerAngle: number
   ): void => {
-    if (!audioStarted || !isAudioContextRunning()) {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
 
@@ -657,7 +1031,7 @@ export function createAudioController(): AudioController {
     playerY: number,
     playerAngle: number
   ): void => {
-    if (!audioStarted || !isAudioContextRunning()) {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
 
@@ -673,7 +1047,7 @@ export function createAudioController(): AudioController {
   } // end function playImpact
 
   const startServo = (): void => {
-    if (servoPlaying) {
+    if (audioPaused || servoPlaying) {
       return
     } // end if servo already playing
 
@@ -693,7 +1067,7 @@ export function createAudioController(): AudioController {
   } // end function stopServo
 
   const playFootstep = (): void => {
-    if (!audioStarted) {
+    if (!audioStarted || audioPaused) {
       return
     } // end if audio not started
 
@@ -702,134 +1076,55 @@ export function createAudioController(): AudioController {
   } // end function playFootstep
 
   const playBump = (): void => {
-    if (!audioStarted || !isAudioContextRunning()) {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
-    impactSynth.triggerAttackRelease(180, '32n')
+    playCollisionThudUtility(0)
   } // end function playBump
 
-  const updatePassiveRadar = (dt: number): void => {
-    passiveRadarTimerSeconds -= dt
-    if (passiveRadarTimerSeconds > 0) {
+  const playCollisionThud = (direction: number): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
-    } // end if passive radar timer still running
+    } // end if audio not started
 
-    passiveRadarSweepSynth.triggerAttackRelease('E3', '8n')
-    for (const runtime of enemyRuntimes.values()) {
-      runtime.playPassiveRadarEcho()
-    } // end for each enemy runtime
+    playCollisionThudUtility(direction)
+  } // end function playCollisionThud
 
-    const minSeconds = AUDIO_CONFIG.player.passiveRadarMinIntervalSeconds
-    const maxSeconds = AUDIO_CONFIG.player.passiveRadarMaxIntervalSeconds
-    passiveRadarTimerSeconds = minSeconds + Math.random() * (maxSeconds - minSeconds)
+  const playCardinalOrientationCue = (newFacing: number): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
+      return
+    } // end if audio not started
+
+    playCardinalOrientationCueUtility(newFacing)
+  } // end function playCardinalOrientationCue
+
+  const updatePassiveRadar = (dt: number): void => {
+    passiveRadarTimerSeconds = Math.max(0, passiveRadarTimerSeconds - dt)
+    void passiveRadarSweepSynth
   } // end function updatePassiveRadar
 
   const updateAimAssist = (dt: number, player: PlayerAudioState, enemies: EnemyAudioState[]): void => {
-    if (!aimAssistEnabled || enemies.length === 0) {
-      aimAssistGain.gain.rampTo(0, 0.08)
-      return
-    } // end if aim assist disabled or no enemies
-
-    let bestDelta = Number.POSITIVE_INFINITY
-    for (const enemy of enemies) {
-      if (!enemy.isAlive) {
-        continue
-      } // end if enemy is dead
-      const bearing = bearingBetween(enemy.position, player.position)
-      const delta = Math.abs(normalizeAngle(bearing - player.angle))
-      if (delta < bestDelta) {
-        bestDelta = delta
-      } // end if better target delta
-    } // end for each enemy
-
-    if (!Number.isFinite(bestDelta)) {
-      aimAssistGain.gain.rampTo(0, 0.08)
-      return
-    } // end if no finite target delta
-
-    const clampedDelta = clamp(bestDelta, 0, Math.PI)
-    const alignment = 1 - clampedDelta / Math.PI
-    const targetFrequency = AUDIO_CONFIG.player.aimAssistBaseFrequency +
-      alignment * (AUDIO_CONFIG.player.aimAssistMaxFrequency - AUDIO_CONFIG.player.aimAssistBaseFrequency)
-    const currentFrequency = aimAssistOsc.frequency.value
-    const currentFrequencyHz = typeof currentFrequency === 'number'
-      ? currentFrequency
-      : Tone.Frequency(currentFrequency).toFrequency()
-
-    aimAssistOsc.frequency.value = lerp(currentFrequencyHz, targetFrequency, AUDIO_CONFIG.player.aimAssistUpdateLerp)
-    aimAssistFilter.frequency.rampTo(600 + alignment * 3200, 0.08)
-    aimAssistGain.gain.rampTo(alignment * AUDIO_CONFIG.player.aimAssistGain, 0.08)
-
-    if (clampedDelta < AUDIO_CONFIG.player.aimAssistLockThresholdRadians && Math.abs(player.velocity.x) + Math.abs(player.velocity.y) > 0) {
-      aimAssistLockClick.triggerAttackRelease('C6', '64n')
-    } // end if aim lock threshold reached
-
+    // Target tracking now relies on enemy positional loop audio only.
+    aimAssistGain.gain.rampTo(0, 0.08)
+    aimAssistWasCentered = false
+    void aimAssistEnabled
+    void aimAssistProjectileRadius
+    void player
+    void enemies
     void dt
   } // end function updateAimAssist
 
   const updateObstructionAwareness = (dt: number, awareness: ObstructionAwareness): void => {
-    if (!audioStarted || !isAudioContextRunning() || !awareness.hasTarget) {
-      obstructionWasBlocked = false
-      obstructionCueCooldownSeconds = 0
-      return
-    } // end if audio not started or no target
-
     obstructionCueCooldownSeconds = Math.max(0, obstructionCueCooldownSeconds - dt)
-
-    if (awareness.isBlocked) {
-      const pan = clamp(awareness.obstacleBearingDelta / (Math.PI * 0.5), -1, 1)
-      obstructionPanner.pan.rampTo(pan, 0.05)
-
-      if (obstructionCueCooldownSeconds <= 0) {
-        const baseFrequency = awareness.obstacleType === 'wall'
-          ? 165
-          : awareness.obstacleType === 'rock'
-            ? 210
-            : 270
-        const distanceBend = clamp(1.35 - awareness.obstacleDistance / 18, 0.75, 1.4)
-        obstructionBlockedSynth.triggerAttackRelease(baseFrequency * distanceBend, '16n')
-        obstructionCueCooldownSeconds = 0.24 + clamp(awareness.obstacleDistance * 0.03, 0.04, 0.42)
-      } // end if obstacle cue should play
-    } // end if target is blocked
-
-    if (obstructionWasBlocked && !awareness.isBlocked) {
-      obstructionClearSynth.triggerAttackRelease('C6', '64n')
-    } // end if path just became clear
-
-    obstructionWasBlocked = awareness.isBlocked
+    obstructionWasBlocked = awareness.isBlocked && awareness.hasTarget
   } // end function updateObstructionAwareness
 
   const updateBoundaryZoneCue = (distanceToBoundary: number, dt: number): void => {
-    if (!audioStarted || !isAudioContextRunning()) {
-      return
-    } // end if audio unavailable
-
-    const warningDistance = AUDIO_CONFIG.player.boundaryWarningDistance
-    if (distanceToBoundary > warningDistance) {
-      boundaryWarningTimerSeconds = 0
-      boundaryPulseCooldownSeconds = 0
-      return
-    } // end if not near map boundary
-
-    const proximity = 1 - clamp(distanceToBoundary / warningDistance, 0, 1)
-    const interval =
-      AUDIO_CONFIG.player.boundaryWarningIntervalFarSeconds +
-      (AUDIO_CONFIG.player.boundaryWarningIntervalNearSeconds - AUDIO_CONFIG.player.boundaryWarningIntervalFarSeconds) * proximity
-
-    boundaryWarningTimerSeconds -= dt
+    boundaryWarningTimerSeconds = Math.max(0, boundaryWarningTimerSeconds - dt)
     boundaryPulseCooldownSeconds = Math.max(0, boundaryPulseCooldownSeconds - dt)
-
-    if (boundaryWarningTimerSeconds <= 0) {
-      const frequency = 180 + proximity * 520
-      const duration = proximity > 0.6 ? '32n' : '64n'
-      boundaryWarningSynth.triggerAttackRelease(frequency, duration)
-      boundaryWarningTimerSeconds = interval
-    } // end if boundary pulse timer elapsed
-
-    if (proximity > 0.78 && boundaryPulseCooldownSeconds <= 0) {
-      boundaryUrgencySynth.triggerAttackRelease(220, '64n')
-      boundaryPulseCooldownSeconds = 0.32
-    } // end if urgent boundary proximity
+    void distanceToBoundary
+    void boundaryWarningSynth
+    void boundaryUrgencySynth
   } // end function updateBoundaryZoneCue
 
   const getOrCreateEnemyRuntime = (enemyId: string, enemyType: string): EnemyAudioRuntime => {
@@ -849,12 +1144,18 @@ export function createAudioController(): AudioController {
 
   return {
     ensureAudio,
+    playPauseOpenChirp,
+    playPauseCloseChirp,
+    pauseAllAudio,
+    resumeAllAudio,
     startServo,
     stopServo,
     playFootstep,
     playBump,
+    playCollisionThud,
     playPitchCenterConfirm,
     fireGunshot,
+    playCardinalOrientationCue,
     setAimAssistEnabled,
     isAimAssistEnabled: () => aimAssistEnabled,
     updateFrameAudio,

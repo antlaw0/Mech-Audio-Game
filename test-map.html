@@ -34,14 +34,250 @@
       font-size: 12px;
       letter-spacing: 1px;
     }
+    #pauseOverlay {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(3, 8, 14, 0.74);
+      backdrop-filter: blur(2px);
+      z-index: 10;
+    }
+    .pause-panel {
+      min-width: 280px;
+      border: 1px solid rgba(98, 214, 255, 0.45);
+      background: rgba(4, 12, 22, 0.92);
+      box-shadow: 0 0 22px rgba(0, 170, 255, 0.3);
+      padding: 22px;
+      text-align: center;
+      color: #9befff;
+      font-family: monospace;
+    }
+    .pause-title {
+      font-size: 26px;
+      letter-spacing: 4px;
+      margin-bottom: 16px;
+      text-shadow: 0 0 10px rgba(95, 228, 255, 0.48);
+    }
+    .pause-button {
+      width: 100%;
+      margin-top: 10px;
+      padding: 10px 12px;
+      border: 1px solid rgba(111, 220, 255, 0.52);
+      background: rgba(0, 39, 57, 0.65);
+      color: #bff6ff;
+      font-family: monospace;
+      letter-spacing: 1px;
+      cursor: pointer;
+    }
+    .pause-button:hover,
+    .pause-button:focus {
+      background: rgba(0, 96, 136, 0.58);
+      outline: none;
+    }
+    #enemyEditorModal {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(3, 8, 14, 0.88);
+      backdrop-filter: blur(2px);
+      z-index: 20;
+      overflow-y: auto;
+      padding: 20px;
+    }
+    .editor-panel {
+      min-width: 340px;
+      max-width: 520px;
+      width: 100%;
+      max-height: calc(100vh - 40px);
+      overflow-y: auto;
+      border: 1px solid rgba(98, 214, 255, 0.45);
+      background: rgba(4, 12, 22, 0.96);
+      box-shadow: 0 0 22px rgba(0, 170, 255, 0.3);
+      padding: 22px;
+      color: #9befff;
+      font-family: monospace;
+    }
+    .editor-title {
+      font-size: 20px;
+      letter-spacing: 3px;
+      margin-bottom: 14px;
+      text-shadow: 0 0 10px rgba(95, 228, 255, 0.48);
+      text-align: center;
+    }
+    .editor-fieldset {
+      border: 1px solid rgba(98, 214, 255, 0.25);
+      padding: 10px 14px;
+      margin-bottom: 12px;
+    }
+    .editor-fieldset legend {
+      font-size: 11px;
+      letter-spacing: 2px;
+      color: #5fd0ff;
+      padding: 0 6px;
+      text-transform: uppercase;
+    }
+    .editor-field {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 8px;
+      gap: 8px;
+    }
+    .editor-field label {
+      font-size: 12px;
+      letter-spacing: 1px;
+      flex: 0 0 auto;
+      min-width: 170px;
+      color: #9befff;
+    }
+    .editor-field input[type="text"],
+    .editor-field input[type="number"],
+    .editor-field select {
+      flex: 1;
+      background: rgba(0, 20, 35, 0.8);
+      border: 1px solid rgba(98, 214, 255, 0.35);
+      color: #d4f8ff;
+      font-family: monospace;
+      font-size: 12px;
+      padding: 4px 6px;
+      min-width: 0;
+    }
+    .editor-field input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      flex: 0 0 auto;
+      accent-color: #0af;
+      margin-left: auto;
+    }
+    .editor-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .editor-actions .pause-button {
+      flex: 1;
+      margin-top: 0;
+    }
   </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="hud">
-  WASD: MOVE / STRAFE &nbsp;|&nbsp; ←→: TURN &nbsp;|&nbsp; ↑↓: LOOK (TAP BOTH TO CENTER) &nbsp;|&nbsp; SPACE: FIRE &nbsp;|&nbsp; E: TOGGLE SWEEP SONAR &nbsp;|&nbsp; Q: AIM ASSIST TOGGLE
+  WASD: MOVE / STRAFE &nbsp;|&nbsp; ←→: TURN &nbsp;|&nbsp; ↑↓: LOOK (TAP BOTH TO CENTER) &nbsp;|&nbsp; SPACE: FIRE &nbsp;|&nbsp; E: MANUAL SONAR PING &nbsp;|&nbsp; I/J/K/L: SNAP N/W/S/E &nbsp;|&nbsp; NUMPAD 1-3: SPAWN ENEMY (PAUSE+NUMPAD: EDIT STATS) &nbsp;|&nbsp; Q: AIM ASSIST TOGGLE
   <div id="awarenessStatus">AWARENESS: SCANNING...</div>
-  <div id="sonarStatus">SONAR: OFF</div>
+  <div id="sonarStatus">SONAR: PASSIVE SWEEP READY</div>
+</div>
+<div id="pauseOverlay" aria-hidden="true">
+  <div class="pause-panel" role="dialog" aria-modal="true" aria-label="Pause Menu">
+    <div class="pause-title">Paused</div>
+    <button id="pauseResumeButton" class="pause-button" type="button">Resume Game</button>
+    <button id="pauseExitButton" class="pause-button" type="button">Exit To Main Screen</button>
+  </div>
+</div>
+<div
+  id="enemyEditorModal"
+  role="dialog"
+  aria-modal="true"
+  aria-label="Edit spawned enemy"
+  aria-hidden="true"
+>
+  <div class="editor-panel">
+    <h2 id="enemyEditorTitle" class="editor-title">Edit Enemy</h2>
+    <form id="enemyEditorForm" novalidate>
+      <fieldset class="editor-fieldset">
+        <legend>Core Stats</legend>
+        <div class="editor-field">
+          <label for="editorName">Name</label>
+          <input type="text" id="editorName" name="name" />
+        </div>
+        <div class="editor-field">
+          <label for="editorMaxHp">Max HP</label>
+          <input type="number" id="editorMaxHp" name="maxHp" min="1" step="1" />
+        </div>
+        <div class="editor-field">
+          <label for="editorCollisionRadius">Collision Radius</label>
+          <input type="number" id="editorCollisionRadius" name="collisionRadius" min="0.05" step="0.05" />
+        </div>
+        <div class="editor-field">
+          <label for="editorMovementSpeed">Movement Speed</label>
+          <input type="number" id="editorMovementSpeed" name="movementSpeed" min="0" step="0.1" />
+        </div>
+      </fieldset>
+      <fieldset class="editor-fieldset">
+        <legend>Combat</legend>
+        <div class="editor-field">
+          <label for="editorProjectileSpeed">Projectile Speed</label>
+          <input type="number" id="editorProjectileSpeed" name="projectileSpeed" min="1" step="1" />
+        </div>
+        <div class="editor-field">
+          <label for="editorShotDamage">Shot Damage</label>
+          <input type="number" id="editorShotDamage" name="shotDamage" min="1" step="1" />
+        </div>
+        <div class="editor-field">
+          <label for="editorFireRateSeconds">Fire Rate (seconds)</label>
+          <input type="number" id="editorFireRateSeconds" name="fireRateSeconds" min="0.1" step="0.1" />
+        </div>
+        <div class="editor-field">
+          <label for="editorThreatDelaySeconds">Threat Delay (seconds)</label>
+          <input type="number" id="editorThreatDelaySeconds" name="threatDelaySeconds" min="0" step="0.01" />
+        </div>
+        <div class="editor-field">
+          <label for="editorProjectileMaxDistance">Projectile Max Distance</label>
+          <input type="number" id="editorProjectileMaxDistance" name="projectileMaxDistance" min="1" step="0.1" />
+        </div>
+      </fieldset>
+      <fieldset class="editor-fieldset">
+        <legend>Behavior</legend>
+        <div class="editor-field">
+          <label for="editorMovementPattern">Movement Pattern</label>
+          <select id="editorMovementPattern" name="movementPattern">
+            <option value="wander">Wander</option>
+            <option value="aggressive-wander">Aggressive Wander</option>
+            <option value="hold-and-pivot">Hold and Pivot</option>
+          </select>
+        </div>
+        <div class="editor-field">
+          <label for="editorRetargetInterval">Retarget Interval (s)</label>
+          <input type="number" id="editorRetargetInterval" name="retargetInterval" min="0.5" step="0.5" />
+        </div>
+        <div class="editor-field">
+          <label for="editorEngageRange">Preferred Engage Range</label>
+          <input type="number" id="editorEngageRange" name="engageRange" min="1" step="1" />
+        </div>
+        <div class="editor-field">
+          <label for="editorLineOfSight">Require Line of Sight to Shoot</label>
+          <input type="checkbox" id="editorLineOfSight" name="lineOfSight" />
+        </div>
+      </fieldset>
+      <fieldset class="editor-fieldset">
+        <legend>Sounds</legend>
+        <div class="editor-field">
+          <label for="editorAttackSound">Attack Sound Path</label>
+          <input type="text" id="editorAttackSound" name="attackSound" />
+        </div>
+        <div class="editor-field">
+          <label for="editorHurtSound">Hurt Sound Path</label>
+          <input type="text" id="editorHurtSound" name="hurtSound" />
+        </div>
+        <div class="editor-field">
+          <label for="editorDeathSound">Death Sound Path</label>
+          <input type="text" id="editorDeathSound" name="deathSound" />
+        </div>
+        <div class="editor-field">
+          <label for="editorLoopSound">Loop Sound Path</label>
+          <input type="text" id="editorLoopSound" name="loopSound" />
+        </div>
+      </fieldset>
+      <div class="editor-actions">
+        <button type="button" id="editorSpawnButton" class="pause-button">Spawn</button>
+        <button type="button" id="editorCancelButton" class="pause-button">Cancel</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <script type="importmap">

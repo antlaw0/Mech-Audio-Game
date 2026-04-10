@@ -11,15 +11,17 @@ import {
 import {
   BULLET_MAX_DIST,
   BULLET_SPEED,
+  MAP_HEIGHT,
+  MAP_WIDTH,
   PLAYER_HEIGHT,
-  TANK_SPEED,
-  TANK_CANNON_RANGE,
-  TANK_CANNON_FIRE_INTERVAL,
-  TANK_THREAT_DELAY_MS,
-  TANK_HEALTH,
-  TANK_PROJECTILE_SPEED
 } from './constants.js'
 import { isWall } from './collision.js'
+import {
+  ENEMY_NUMERIC_ID,
+  getEnemyDefinition,
+  getEnemyDefinitionFromNumericId
+} from './enemies/index.js'
+import type { EnemyDefinitionConfig, EnemyId } from './enemies/enemyTypes.js'
 import type { AudioController, Bullet, EnemyRender, Player, TankRender } from './types.js'
 
 const KIND_BULLET = 1
@@ -49,6 +51,10 @@ const Health = defineComponent({
   hp: Types.i16
 })
 
+const EnemyProfile = defineComponent({
+  id: Types.ui8
+})
+
 const Behavior = defineComponent({
   movementAngle: Types.f32,
   movementTimer: Types.f32,
@@ -62,10 +68,18 @@ const TankExplosion = defineComponent({
   maxDuration: Types.f32
 })
 
-const CombatQuery = defineQuery([Position, Facing, Meta])
-const TankQuery = defineQuery([Position, Facing, Meta, Health, Behavior])
+const ProjectileStats = defineComponent({
+  speed: Types.f32,
+  damage: Types.i16,
+  maxDistance: Types.f32
+})
 
-type CombatEcsWorld = IWorld
+const CombatQuery = defineQuery([Position, Facing, Meta])
+const TankQuery = defineQuery([Position, Facing, Meta, Health, Behavior, EnemyProfile])
+
+type CombatEcsWorld = IWorld & {
+  customConfigs: Map<number, EnemyDefinitionConfig>
+}
 
 function addEnemy(world: CombatEcsWorld, x: number, y: number, radius = 0.33): void {
   const enemy = addEntity(world)
@@ -82,23 +96,28 @@ function addEnemy(world: CombatEcsWorld, x: number, y: number, radius = 0.33): v
   Meta.alive[enemy] = 1
 } // end function addEnemy
 
-function addTank(world: CombatEcsWorld, x: number, y: number): void {
+function addTank(world: CombatEcsWorld, x: number, y: number, enemyId: EnemyId = 'tank'): void {
+  const definition = getEnemyDefinition(enemyId)
+
   const tank = addEntity(world)
   addComponent(world, Position, tank)
   addComponent(world, Facing, tank)
   addComponent(world, Meta, tank)
   addComponent(world, Health, tank)
   addComponent(world, Behavior, tank)
+  addComponent(world, EnemyProfile, tank)
   addComponent(world, TankExplosion, tank)
+
   Position.x[tank] = x
   Position.y[tank] = y
   Facing.angle[tank] = 0
   Facing.pitch[tank] = 0
   Meta.kind[tank] = KIND_TANK
-  Meta.radius[tank] = 0.5
+  Meta.radius[tank] = definition.collisionRadius
   Meta.distance[tank] = 0
   Meta.alive[tank] = 1
-  Health.hp[tank] = TANK_HEALTH
+  Health.hp[tank] = definition.maxHp
+  EnemyProfile.id[tank] = ENEMY_NUMERIC_ID[enemyId]
   Behavior.movementAngle[tank] = Math.random() * Math.PI * 2
   Behavior.movementTimer[tank] = 0
   Behavior.cannonFireCooldown[tank] = 0
@@ -141,16 +160,21 @@ function hasLineOfSight(
 
 function spawnTankProjectile(
   world: CombatEcsWorld,
+  tankEntity: number,
   tankX: number,
   tankY: number,
   targetX: number,
   targetY: number
 ): void {
+  const enemyProfileId = EnemyProfile.id[tankEntity] ?? ENEMY_NUMERIC_ID.tank
+  const customConfig = world.customConfigs.get(tankEntity)
+  const definition = customConfig ?? getEnemyDefinitionFromNumericId(enemyProfileId)
   const angle = Math.atan2(targetY - tankY, targetX - tankX)
   const bullet = addEntity(world)
   addComponent(world, Position, bullet)
   addComponent(world, Facing, bullet)
   addComponent(world, Meta, bullet)
+  addComponent(world, ProjectileStats, bullet)
   Position.x[bullet] = tankX
   Position.y[bullet] = tankY
   Facing.angle[bullet] = angle
@@ -159,19 +183,146 @@ function spawnTankProjectile(
   Meta.radius[bullet] = 0.2
   Meta.distance[bullet] = 0
   Meta.alive[bullet] = 1
+  ProjectileStats.speed[bullet] = definition.projectileSpeed
+  ProjectileStats.damage[bullet] = definition.shotDamage
+  ProjectileStats.maxDistance[bullet] = definition.projectileMaxDistance
 } // end function spawnTankProjectile
 
 export function createCombatEcsWorld(): CombatEcsWorld {
-  const world = createWorld()
+  const world = createWorld() as CombatEcsWorld
+  world.customConfigs = new Map()
   addTank(world, 32.5, 30.5)
   return world
 } // end function createCombatEcsWorld
+
+function canSpawnTankAt(world: CombatEcsWorld, mapData: Uint8Array, x: number, y: number, player: Player, collisionRadius?: number): boolean {
+  const tankRadius = collisionRadius ?? getEnemyDefinition('tank').collisionRadius
+  const collisionPadding = 0.18
+
+  if (
+    x <= tankRadius + collisionPadding ||
+    y <= tankRadius + collisionPadding ||
+    x >= MAP_WIDTH - (tankRadius + collisionPadding) ||
+    y >= MAP_HEIGHT - (tankRadius + collisionPadding)
+  ) {
+    return false
+  } // end if too close to map boundaries
+
+  if (
+    isWall(mapData, x, y) ||
+    isWall(mapData, x + tankRadius, y) ||
+    isWall(mapData, x - tankRadius, y) ||
+    isWall(mapData, x, y + tankRadius) ||
+    isWall(mapData, x, y - tankRadius)
+  ) {
+    return false
+  } // end if spawn intersects a wall tile
+
+  if (Math.hypot(x - player.x, y - player.y) < 4.5) {
+    return false
+  } // end if too close to player spawn area
+
+  const tankEntities = TankQuery(world)
+  for (const tank of tankEntities) {
+    if ((Meta.alive[tank] ?? 0) !== 1) {
+      continue
+    } // end if tank is not alive
+
+    const tankX = getNumber(Position.x, tank)
+    const tankY = getNumber(Position.y, tank)
+    const radius = getNumber(Meta.radius, tank)
+    if (tankX === null || tankY === null || radius === null) {
+      continue
+    } // end if missing tank positional data
+
+    if (Math.hypot(x - tankX, y - tankY) < tankRadius + radius + 0.8) {
+      return false
+    } // end if overlaps existing tank
+  } // end for each existing tank
+
+  return true
+} // end function canSpawnTankAt
+
+export function spawnRandomTank(world: CombatEcsWorld, mapData: Uint8Array, player: Player): boolean {
+  const maxAttempts = 90
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const x = 1.25 + Math.random() * (MAP_WIDTH - 2.5)
+    const y = 1.25 + Math.random() * (MAP_HEIGHT - 2.5)
+    if (!canSpawnTankAt(world, mapData, x, y, player)) {
+      continue
+    } // end if random spawn candidate invalid
+
+    addTank(world, x, y)
+    return true
+  } // end for each spawn attempt
+
+  return false
+} // end function spawnRandomTank
+
+function addTankFromConfig(world: CombatEcsWorld, x: number, y: number, config: EnemyDefinitionConfig): void {
+  const tank = addEntity(world)
+  addComponent(world, Position, tank)
+  addComponent(world, Facing, tank)
+  addComponent(world, Meta, tank)
+  addComponent(world, Health, tank)
+  addComponent(world, Behavior, tank)
+  addComponent(world, EnemyProfile, tank)
+  addComponent(world, TankExplosion, tank)
+  Position.x[tank] = x
+  Position.y[tank] = y
+  Facing.angle[tank] = 0
+  Facing.pitch[tank] = 0
+  Meta.kind[tank] = KIND_TANK
+  Meta.radius[tank] = config.collisionRadius
+  Meta.distance[tank] = 0
+  Meta.alive[tank] = 1
+  Health.hp[tank] = config.maxHp
+  EnemyProfile.id[tank] = ENEMY_NUMERIC_ID[config.id]
+  Behavior.movementAngle[tank] = Math.random() * Math.PI * 2
+  Behavior.movementTimer[tank] = 0
+  Behavior.cannonFireCooldown[tank] = 0
+  Behavior.attackWindupSeconds[tank] = 0
+  Behavior.isMoving[tank] = 1
+  TankExplosion.timeRemaining[tank] = 0
+  TankExplosion.maxDuration[tank] = 0.7
+  world.customConfigs.set(tank, config)
+} // end function addTankFromConfig
+
+export function spawnRandomEnemy(world: CombatEcsWorld, mapData: Uint8Array, player: Player, enemyId: EnemyId = 'tank'): boolean {
+  const definition = getEnemyDefinition(enemyId)
+  const maxAttempts = 90
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const x = 1.25 + Math.random() * (MAP_WIDTH - 2.5)
+    const y = 1.25 + Math.random() * (MAP_HEIGHT - 2.5)
+    if (!canSpawnTankAt(world, mapData, x, y, player, definition.collisionRadius)) {
+      continue
+    } // end if random spawn candidate invalid
+    addTank(world, x, y, enemyId)
+    return true
+  } // end for each spawn attempt
+  return false
+} // end function spawnRandomEnemy
+
+export function spawnRandomTankFromConfig(world: CombatEcsWorld, mapData: Uint8Array, player: Player, config: EnemyDefinitionConfig): boolean {
+  const maxAttempts = 90
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const x = 1.25 + Math.random() * (MAP_WIDTH - 2.5)
+    const y = 1.25 + Math.random() * (MAP_HEIGHT - 2.5)
+    if (!canSpawnTankAt(world, mapData, x, y, player, config.collisionRadius)) {
+      continue
+    } // end if random spawn candidate invalid
+    addTankFromConfig(world, x, y, config)
+    return true
+  } // end for each spawn attempt
+  return false
+} // end function spawnRandomTankFromConfig
 
 export function spawnPlayerBullet(world: CombatEcsWorld, player: Player): void {
   const bullet = addEntity(world)
   addComponent(world, Position, bullet)
   addComponent(world, Facing, bullet)
   addComponent(world, Meta, bullet)
+  addComponent(world, ProjectileStats, bullet)
   Position.x[bullet] = player.x
   Position.y[bullet] = player.y
   Facing.angle[bullet] = player.angle
@@ -180,6 +331,9 @@ export function spawnPlayerBullet(world: CombatEcsWorld, player: Player): void {
   Meta.radius[bullet] = BULLET_HIT_RADIUS
   Meta.distance[bullet] = 0
   Meta.alive[bullet] = 1
+  ProjectileStats.speed[bullet] = BULLET_SPEED
+  ProjectileStats.damage[bullet] = 10
+  ProjectileStats.maxDistance[bullet] = BULLET_MAX_DIST
 } // end function spawnPlayerBullet
 
 function computeFloorCeilHitDistance(pitch: number): number {
@@ -215,6 +369,10 @@ export function stepCombatEcsWorld(
 
   // --- Update tanks ---
   for (const tank of tankEntities) {
+    const enemyProfileId = EnemyProfile.id[tank] ?? ENEMY_NUMERIC_ID.tank
+    const customConfig = world.customConfigs.get(tank)
+    const enemyDefinition = customConfig ?? getEnemyDefinitionFromNumericId(enemyProfileId)
+
     const tankX = getNumber(Position.x, tank)
     const tankY = getNumber(Position.y, tank)
     const tankHp = Health.hp[tank]
@@ -244,7 +402,7 @@ export function stepCombatEcsWorld(
     } // end if behavior missing
 
     // --- Tank movement ---
-    const moveStep = TANK_SPEED * deltaSeconds
+    const moveStep = enemyDefinition.movementSpeed * deltaSeconds
     const nextX = tankX + Math.cos(movementAngle) * moveStep
     const nextY = tankY + Math.sin(movementAngle) * moveStep
 
@@ -263,8 +421,8 @@ export function stepCombatEcsWorld(
       Facing.angle[tank] = movementAngle
       Behavior.movementTimer[tank] = movementTimer + deltaSeconds
 
-      // Change direction every 5 seconds or so
-      if (movementTimer > 5) {
+      // Retarget movement heading using enemy behavior settings.
+      if (movementTimer > enemyDefinition.behavior.retargetIntervalSeconds) {
         Behavior.movementAngle[tank] = Math.random() * Math.PI * 2
         Behavior.movementTimer[tank] = 0
       } // end if time to change direction
@@ -275,21 +433,22 @@ export function stepCombatEcsWorld(
     // --- LOS check and cannon fire ---
     const dist = Math.hypot(nextX - player.x, nextY - player.y)
     const hasLos = hasLineOfSight(mapData, nextX, nextY, player.x, player.y)
-    const threatDelaySeconds = TANK_THREAT_DELAY_MS / 1000
+    const canShootByLos = enemyDefinition.behavior.lineOfSightRequiredToShoot ? hasLos : true
+    const threatDelaySeconds = enemyDefinition.threatDelaySeconds
 
     if (attackWindup > 0) {
       const newWindup = Math.max(0, attackWindup - deltaSeconds)
       Behavior.attackWindupSeconds[tank] = newWindup
-      if (newWindup <= 0 && hasLos && dist < TANK_CANNON_RANGE) {
-        spawnTankProjectile(world, nextX, nextY, player.x, player.y)
+      if (newWindup <= 0 && canShootByLos && dist < enemyDefinition.behavior.preferredEngageRange) {
+        spawnTankProjectile(world, tank, nextX, nextY, player.x, player.y)
         audio.playEnemyAttack(`tank-${tank}`)
       } // end if windup completed and target valid
     } else {
       const newCooldown = Math.max(0, cannonCooldown - deltaSeconds)
       Behavior.cannonFireCooldown[tank] = newCooldown
-      if (hasLos && dist < TANK_CANNON_RANGE && newCooldown <= 0) {
+      if (canShootByLos && dist < enemyDefinition.behavior.preferredEngageRange && newCooldown <= 0) {
         Behavior.attackWindupSeconds[tank] = threatDelaySeconds
-        Behavior.cannonFireCooldown[tank] = TANK_CANNON_FIRE_INTERVAL / 1000
+        Behavior.cannonFireCooldown[tank] = enemyDefinition.fireRateSeconds
         audio.playEnemyThreatCue(`tank-${tank}`)
       } // end if tank can start cannon telegraph
     } // end if cannon windup or cooldown path
@@ -320,8 +479,8 @@ export function stepCombatEcsWorld(
       continue
     } // end if missing projectile data
 
-    const speed = kind === KIND_BULLET ? BULLET_SPEED : TANK_PROJECTILE_SPEED
-    const maxDist = kind === KIND_BULLET ? BULLET_MAX_DIST : BULLET_MAX_DIST * 1.2
+    const speed = getNumber(ProjectileStats.speed, entity) ?? (kind === KIND_BULLET ? BULLET_SPEED : getEnemyDefinition('tank').projectileSpeed)
+    const maxDist = getNumber(ProjectileStats.maxDistance, entity) ?? (kind === KIND_BULLET ? BULLET_MAX_DIST : BULLET_MAX_DIST * 1.2)
     const step = speed * deltaSeconds
     const cosA = Math.cos(angle)
     const sinA = Math.sin(angle)
@@ -370,7 +529,8 @@ export function stepCombatEcsWorld(
         if (Math.hypot(dx, dy) < targetRadius + bulletRadius) {
           // Tank hit by player bullet
           Meta.alive[entity] = 0
-          Health.hp[tank] = (Health.hp[tank] ?? 0) - 10
+          const projectileDamage = getNumber(ProjectileStats.damage, entity) ?? 10
+          Health.hp[tank] = (Health.hp[tank] ?? 0) - Math.max(1, Math.round(projectileDamage))
           audio.playImpact(targetX, targetY, player.x, player.y, player.angle)
           audio.playTankHitConfirm(targetX, targetY, player.x, player.y, player.angle)
 
@@ -421,6 +581,7 @@ export function stepCombatEcsWorld(
           continue
         } // end if waiting for explosion animation to finish
       } // end if tank entity
+      world.customConfigs.delete(entity)
       removeEntity(world, entity)
     } // end if dead
   } // end for cleanup
@@ -494,26 +655,29 @@ export function getCombatRenderState(world: CombatEcsWorld): {
 
     const x = getNumber(Position.x, tank)
     const y = getNumber(Position.y, tank)
+    const radius = getNumber(Meta.radius, tank)
     const angle = getNumber(Facing.angle, tank)
     const movementAngle = getNumber(Behavior.movementAngle, tank)
     const isMoving = (Behavior.isMoving[tank] ?? 0) === 1
     const hp = Health.hp[tank]
-    if (x === null || y === null || angle === null || movementAngle === null || hp === undefined) {
+    if (x === null || y === null || radius === null || angle === null || movementAngle === null || hp === undefined) {
       continue
     } // end if missing tank render data
 
-    const velocityX = isMoving ? Math.cos(movementAngle) * TANK_SPEED : 0
-    const velocityY = isMoving ? Math.sin(movementAngle) * TANK_SPEED : 0
+    const profile = getEnemyDefinitionFromNumericId(EnemyProfile.id[tank] ?? ENEMY_NUMERIC_ID.tank)
+    const velocityX = isMoving ? Math.cos(movementAngle) * profile.movementSpeed : 0
+    const velocityY = isMoving ? Math.sin(movementAngle) * profile.movementSpeed : 0
 
     tanks.push({
       id: tank,
       x,
       y,
+      radius,
       angle,
       velocityX,
       velocityY,
       health: Math.max(0, hp),
-      maxHealth: TANK_HEALTH,
+      maxHealth: profile.maxHp,
       alive,
       explosionIntensity: !alive && explosionMaxDuration > 0
         ? Math.max(0, Math.min(1, explosionTimeRemaining / explosionMaxDuration))

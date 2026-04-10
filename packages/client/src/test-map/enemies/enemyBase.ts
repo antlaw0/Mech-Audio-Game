@@ -1,0 +1,31 @@
+import type { EnemyBehaviorDefinition, EnemyDefinitionConfig, EnemyId, EnemySoundDefinition } from './enemyTypes.js'
+
+export abstract class EnemyDefinitionBase {
+  readonly id: EnemyId
+  readonly name: string
+  readonly maxHp: number
+  readonly collisionRadius: number
+  readonly movementSpeed: number
+  readonly projectileSpeed: number
+  readonly shotDamage: number
+  readonly fireRateSeconds: number
+  readonly threatDelaySeconds: number
+  readonly projectileMaxDistance: number
+  readonly behavior: EnemyBehaviorDefinition
+  readonly sounds: EnemySoundDefinition
+
+  protected constructor(config: EnemyDefinitionConfig) {
+    this.id = config.id
+    this.name = config.name
+    this.maxHp = config.maxHp
+    this.collisionRadius = config.collisionRadius
+    this.movementSpeed = config.movementSpeed
+    this.projectileSpeed = config.projectileSpeed
+    this.shotDamage = config.shotDamage
+    this.fireRateSeconds = config.fireRateSeconds
+    this.threatDelaySeconds = config.threatDelaySeconds
+    this.projectileMaxDistance = config.projectileMaxDistance
+    this.behavior = config.behavior
+    this.sounds = config.sounds
+  } // end constructor EnemyDefinitionBase
+} // end class EnemyDefinitionBase

@@ -1,150 +1,344 @@
 
-# ✔️ Instructions for Copilot (paste directly)
-
-**Task:**
-Implement a sweeping audio-sonar system similar to the sweeping sonar in the audio game *Swamp*. Use **Tone.js** for audio. The sonar must simulate a rotating “beam” sweeping left to right across the player’s forward view and use raycasting results to shape the audio. The audio must convey walls, corridors, open space, and corners through volume, filtering, and panning.
-
-**Build everything inside a single JavaScript module** with clean, readable functions.
-I want accurate, working code.
-All blocks must have correct matching braces, and every closing brace must include a trailing comment explaining what it closes.
+> "Follow this document. Update all audio navigation code accordingly."
 
 ---
 
-## 1. Architecture requirements
+# ✅ **AUDIO_SONAR_SYSTEM_UPDATE.md**
 
-Implement the following:
+### **Swamp-Style Navigation & Awareness System (Tile-Accurate Implementation)**
 
-### A. Player structure
+### **Instructions for GitHub Copilot**
 
-```javascript
-player = {
-    x: number,
-    y: number,
-    facing: number // in degrees
-}
-```
+This document defines **exact implementation rules** for directional awareness, sonar operation, radar sweeps, obstacle density filtering, enemy tracking, and collision audio for an accessible audio-FPS using pseudo-3D raycasting.
 
-### B. Raycasting system
-
-Implement a simple 2D raycast function:
-
-`raycast(x, y, angleDeg): number`
-
-Rules:
-
-* Converts angle to radians.
-* Steps forward in small increments (0.1 to 0.2 units).
-* Stops when hitting a wall tile in a 2D grid map.
-* Returns distance to the wall.
-* Must not hang if no wall is hit; clamp to max distance.
-
-### C. Sweeping sonar controller
-
-Create a `SweepingSonar` class with:
-
-* `start()`
-* `stop()`
-* `update()` (should run every 20 ms via requestAnimationFrame or setInterval)
-* Internally maintains:
-
-  * sweepAngle (current relative angle, starting at -45 degrees)
-  * sweepDirection (1 for rightward sweep, -1 for leftward sweep)
-  * sweepSpeed (degrees per update)
-* Sweep oscillates between -45 and +45 degrees.
-
-### D. Audio engine (Tone.js)
-
-Create the following:
-
-* One continuous oscillator at about 1200 Hz.
-* A lowpass filter to represent distance.
-* A stereo panner.
-* Audio mappings:
-
-  * Closer walls = louder + brighter filter cutoff.
-  * Farther walls = quieter + darker filter cutoff.
-* Panning corresponds to sweep angle:
-
-  * -45 degrees pan = -1
-  * +45 degrees pan = +1
-
-Audio must update in real time with each sweep angle step.
-
-### E. Controls
-
-Provide simple methods the game can call:
-
-* `setEnabled(true/false)` to turn the sweeping sonar on or off.
-* `updatePlayerPosition(x, y, facingDeg)`.
+Copilot must follow this document **verbatim** when generating or modifying audio navigation logic.
 
 ---
 
-## 2. Sweeping logic details
+# 1. WORLD SCALE & CORE CONSTANTS
 
-### World angle calculation:
-
-```
-worldAngle = player.facing + sweepAngle
-```
-
-### Raycasting distance mapping:
-
-Given `distance` and a `maxDistance` value (e.g., 30):
-
-Compute:
+Copilot must use these fixed world units:
 
 ```
-closeness = 1 - clamp(distance / maxDistance, 0, 1)
+1 tile = 1 meter
+Player radius = 0.5 tiles
+Max map dimension: MAP_WIDTH x MAP_HEIGHT (already defined)
 ```
 
-Then:
+## 1.1 Core distances used throughout the system:
 
 ```
-volume = -30 + (closeness * 20)  // in decibels
-cutoff = 1000 + (closeness * 8000)
-pan = sweepAngle / 45
+NEAR_FIELD_RADIUS = 1.5 tiles     // collision & wall brushing cues
+MOVEMENT_AWARENESS_RADIUS = 8 tiles
+OBSTACLE_AUDIO_MAX_DISTANCE = 12 tiles // ~12 meters audible space
+ENEMY_AUDIO_MAX_DISTANCE = 25 tiles    // long-range enemy detection
+SONAR_SWEEP_STEP_ANGLE = fieldOfView / rayCount  // auto from renderer
+MAX_SIMULTANEOUS_OBSTACLE_TONES = 5  // density limiter
 ```
 
-Apply these values to the Tone.js nodes on every update.
+Copilot must create these constants in a config file and import them everywhere.
 
 ---
 
-## 3. Deliverables Copilot must generate
+# 2. RADAR–SONAR SYSTEM (PRIMARY AWARENESS)
 
-Copilot should output:
+You must implement **two layers**, like Swamp:
 
-1. A complete JavaScript module containing:
+## Layer A — Passive Sweeping Sonar (continuous)
 
-   * Player structure
-   * Raycasting grid and raycast implementation
-   * SweepingSonar class
-   * Tone.js oscillator, filter, panner setup
-   * Working update loop
-   * Public interface (start, stop, update player position, enable/disable)
+A slow 360° rotating beam.
 
-2. The code must:
+### Behavior
 
-   * Be fully functional
-   * Have no missing functions
-   * Include comments after **every closing brace** (for screen reader clarity)
-   * Use consistent naming conventions
-   * Be readable and well structured
+* The sweep turns at a fixed speed = **one full rotation every 2.5 seconds**
+* It casts **one ray per sonar tick** (NOT per frame)
+* Only objects up to **12 tiles away** may respond
+* Sweep direction = clockwise
 
-3. Include an example usage block at the bottom:
+### Audio cue from the sweep beam
 
-   * Create a player
-   * Create the sonar
-   * Start the sonar
-   * Update player facing on keypress events
+* A soft oscillating tone (already implemented)
+* Pitch rises slightly as the sweep angle increases
+* Must be low volume
 
 ---
 
-## 4. Additional notes to Copilot
+## Layer B — Active Sonar Ping (manual ping like Swamp)
 
-* Do not leave any placeholder logic for raycasting; implement full working ray steps.
-* Use degrees→radians conversion where needed.
-* All constants should be declared near the top of the module.
-* Keep the code modular, not scattered.
-* No pseudocode. Generate production-ready JavaScript.
-* Everything must run in a web environment using Tone.js.
+Triggered by user input.
+
+### Behavior
+
+* Emits **16 rays** in a starburst at equal angular spacing
+* Each ray reports **the nearest obstacle OR nearest enemy**, whichever is closer
+* Obstacles respond with short filtered blips
+* Enemies respond with stronger signature pings
+
+### Active ping ranges
+
+```
+Obstacle detection: 12 tiles max
+Enemy detection: 20 tiles max
+```
+
+---
+
+# 3. OBSTACLE TONAL RESPONSES (SWAMP-STYLE)
+
+Obstacles responding to sonar must produce **tonal pips** based on:
+
+### 3.1 Distance → Volume
+
+Use this falloff formula:
+
+```
+volume = clamp(1 - (distance / OBSTACLE_AUDIO_MAX_DISTANCE), 0.05, 1)
+```
+
+### 3.2 Type of obstacle → Timbre
+
+Copilot must give each 1-tile cell type its own tone:
+
+```
+Wall (cell=1): sine tone at 480Hz
+Cover block: triangle at 520Hz
+Tall rock: square at 420Hz
+Boundary wall: sawtooth at 400Hz
+```
+
+(Use placeholder synthesis unless real assets exist.)
+
+### 3.3 Bearing → Stereo position
+
+Determine stereo pan using:
+
+```
+bearing = angleBetween(playerFacing, directionToObstacle)
+panner.pan.value = sin(bearing)
+```
+
+### 3.4 Elevation (if any)
+
+If elevation is used later:
+higher = slightly brighter (increase filter cutoff).
+
+---
+
+# 4. OBSTACLE DENSITY FILTER (THE BIG MISSING PIECE)
+
+Swamp solves “too many obstacle sounds” using a density-limited nearest-neighbor filter.
+
+You must implement the same rule:
+
+### Rule:
+
+**At any sonar tick, only the closest N obstacles may make sound.**
+
+```
+MAX_SIMULTANEOUS_OBSTACLE_TONES = 5
+```
+
+Steps:
+
+1. Collect all obstacles hit by sonar beams
+2. Sort by distance ascending
+3. Keep top 5
+4. Discard any further sounds entirely
+5. For the survivors, play their tones normally
+
+This is critical—without it the audio becomes cluttered.
+
+---
+
+# 5. NEAR-FIELD COLLISION AWARENESS (LIKE SWAMP)
+
+When the player mech is within **1.5 tiles** of a wall:
+
+### Always play a soft “wall proximity buzz”
+
+* filtered at 300Hz
+* volume based on inverse distance
+* stronger on the side the wall is on
+
+### If the player **touches** the wall (collides):
+
+* play a short muted thud
+* pan toward the impact side
+
+Copilot must call this **every frame**, not per sonar tick.
+
+---
+
+# 6. CARDINAL DIRECTION ORIENTATION CUES
+
+Your map uses tiles, so cardinal alignment is important.
+
+Implement a Swamp-style system:
+
+### Pressing the orientation keys snaps facing to:
+
+```
+0°   = North (toward row decreasing)
+90°  = East  (col increasing)
+180° = South (row increasing)
+270° = West  (col decreasing)
+```
+
+### Each snap produces a distinct audio cue:
+
+* North: rising triad (C–E–G)
+* East: single bright ping
+* South: descending triad
+* West: soft double-click
+
+Copilot must implement a small utility to produce these.
+
+---
+
+# 7. ENEMY AWARENESS (TANK, MECH, ETC.)
+
+Enemies use a **different audio channel** than obstacles.
+
+## 7.1 Enemy Idle Presence
+
+Always on if within 25 tiles.
+
+Tank example:
+
+* looping treads
+* low-pass filter when around corners
+
+## 7.2 Enemy Line-of-sight Check
+
+If enemy has LOS to player:
+
+* play a brief “lock-on tick”
+* every 300ms
+* must be directional
+
+## 7.3 Enemy Movement Sound
+
+Pitch reflects speed:
+
+```
+pitch = basePitch + (velocity * 12)
+```
+
+### Bearing pan:
+
+Same rule as obstacles.
+
+---
+
+# 8. SONAR → ENEMY RESPONSE PRIORITY
+
+When the sweep beam hits both an obstacle and enemy in the same direction:
+
+**Enemy wins**.
+
+Rule:
+
+```
+if enemyDistance < obstacleDistance + 1 tile:
+    enemy responds
+else:
+    obstacle responds
+```
+
+This mirrors Swamp’s “enemies override clutter” behavior.
+
+---
+
+# 9. RAYCAST-LEVEL INTEGRATION RULES
+
+Your sonar, proximity, and sweep logic MUST use the **same raycasting system** your renderer uses.
+
+For each sonar ray:
+
+1. Use the same DDA or stepping algorithm
+2. Stop at the first collision
+3. Determine:
+
+   * cell type
+   * hit distance
+   * hit bearing relative to player
+4. Pass to the sonar audio engine
+
+---
+
+# 10. AUDIO UPDATE RATE
+
+Copilot must update:
+
+* **positional panners every frame**
+* sonar sweep at **30Hz**
+* active ping rays instantly
+* collision bubbles every frame
+* enemy tracking every frame
+
+---
+
+# 11. REQUIRED UTILITY FUNCTIONS
+
+Copilot must ensure these exist:
+
+```
+getRayHit(tileMap, startPos, angle): {col, row, distance, type}
+
+getBearing(playerFacing, worldAngle): number  // -PI to +PI
+
+distanceToVolume(distance, maxRange): number
+
+sortByDistance(list): array
+
+filterClosest(list, n): array
+
+playWallProximityCue(direction, intensity): void
+playCollisionThud(direction): void
+playCardinalOrientationCue(newFacing): void
+```
+
+All must be placed in `audioUtils.ts`.
+
+---
+
+# 12. PLACEHOLDER AUDIO ASSETS NEEDED
+
+Copilot must create placeholder Tone.js synths if files don’t exist.
+
+If the user wants audio files, use:
+
+```
+assets/audio/sonar/sweep.wav
+assets/audio/sonar/ping.wav
+assets/audio/enemies/tank_treads_loop.wav
+assets/audio/ui/cardinal_north.wav
+assets/audio/ui/cardinal_east.wav
+assets/audio/ui/cardinal_south.wav
+assets/audio/ui/cardinal_west.wav
+assets/audio/collision/thud.wav
+```
+
+But synths are acceptable for prototyping.
+
+---
+
+# 13. COMPLETE TASK FOR COPILOT
+
+Copilot must now:
+
+1. Implement the above sonar and obstacle system
+2. Add obstacle density filtering
+3. Add near-field collision bubble cues
+4. Add cardinal snap orientation with cues
+5. Add correct panning math
+6. Update all audio based on frame rate and sonar rate
+7. Ensure everything uses tile-based distances
+8. Integrate with existing raycasting and scene loops
+9. Ensure zero hardcoded magic numbers
+10. Keep all audio separated into `audio/` folder
+
+---
+
+# End of Document
 

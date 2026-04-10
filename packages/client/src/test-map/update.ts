@@ -1,12 +1,11 @@
 import {
   FOOTSTEP_INTERVAL_SECONDS,
   LOOK_SPEED,
-  MAP_HEIGHT,
-  MAP_WIDTH,
   MAX_LOOK_PITCH,
   PLAYER_SPEED,
   TURN_SPEED
 } from './constants.js'
+import { normalizeAngle } from './audio-utils.js'
 import { isSolidSpriteAt, isWall } from './collision.js'
 import type { AudioController, InputState, Player, SpriteObject } from './types.js'
 
@@ -41,6 +40,32 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   const { input, player, audio, sprites, mapData, state } = environment
   let isMoving = false
   let collided = false
+  let collisionDirection = 0
+
+  let snappedFacing: number | null = null
+  if (input.snapNorthPending) {
+    snappedFacing = -Math.PI / 2
+  } // end if north snap requested
+  if (input.snapEastPending) {
+    snappedFacing = 0
+  } // end if east snap requested
+  if (input.snapSouthPending) {
+    snappedFacing = Math.PI / 2
+  } // end if south snap requested
+  if (input.snapWestPending) {
+    snappedFacing = Math.PI
+  } // end if west snap requested
+
+  if (snappedFacing !== null) {
+    player.angle = snappedFacing
+    input.snapNorthPending = false
+    input.snapEastPending = false
+    input.snapSouthPending = false
+    input.snapWestPending = false
+    if (audio.isAudioStarted()) {
+      audio.playCardinalOrientationCue(snappedFacing)
+    } // end if orientation cue should play
+  } // end if snap handled
 
   if (input.turnLeft) {
     player.angle -= turnAmount
@@ -91,6 +116,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
       moved = true
     } else {
       collided = true
+      collisionDirection = normalizeAngle(Math.atan2(0, directionX) - player.angle)
     } // end if canMoveX
 
     const canMoveY = !isWall(mapData, player.x, nextY) && !isSolidSpriteAt(sprites, player.x, nextY, null)
@@ -99,6 +125,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
       moved = true
     } else {
       collided = true
+      collisionDirection = normalizeAngle(Math.atan2(directionY, 0) - player.angle)
     } // end if canMoveY
 
     if (moved) {
@@ -131,7 +158,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   if (collided && audio.isAudioStarted()) {
     const nowSeconds = performance.now() / 1000
     if (nowSeconds - state.lastBumpTimeSeconds > 0.4) {
-      audio.playBump()
+      audio.playCollisionThud(collisionDirection)
       state.lastBumpTimeSeconds = nowSeconds
     } // end if bump throttle
   } // end if collided
@@ -140,13 +167,4 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     state.muzzleFlashTimer = Math.max(0, state.muzzleFlashTimer - deltaSeconds)
   } // end if muzzle flash active
 
-  if (audio.isAudioStarted()) {
-    const distanceToBoundary = Math.min(
-      player.x,
-      player.y,
-      MAP_WIDTH - 1 - player.x,
-      MAP_HEIGHT - 1 - player.y
-    )
-    audio.updateBoundaryZoneCue(distanceToBoundary, deltaSeconds)
-  } // end if boundary cue should update
 } // end function updateFrame

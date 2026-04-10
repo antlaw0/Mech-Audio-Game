@@ -4,7 +4,11 @@ function shouldPreventDefault(code: string): boolean {
   return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(code)
 } // end function shouldPreventDefault
 
-export function bindInput(input: InputState, audio: AudioController): void {
+export function bindInput(
+  input: InputState,
+  audio: AudioController,
+  isInputBlocked: () => boolean = () => false
+): void {
   const keys: Record<string, boolean> = {}
 
   const resumeAudioOnInteraction = (): void => {
@@ -15,6 +19,13 @@ export function bindInput(input: InputState, audio: AudioController): void {
   document.addEventListener('touchstart', resumeAudioOnInteraction, { passive: true })
 
   document.addEventListener('keydown', async (event) => {
+    if (isInputBlocked()) {
+      if (shouldPreventDefault(event.code)) {
+        event.preventDefault()
+      } // end if prevent default while blocked
+      return
+    } // end if input blocked
+
     await audio.ensureAudio()
 
     if (!keys[event.code]) {
@@ -70,6 +81,34 @@ export function bindInput(input: InputState, audio: AudioController): void {
         input.sonarPingPending = true
       } // end if KeyE
 
+      if (event.code === 'KeyI') {
+        input.snapNorthPending = true
+      } // end if KeyI
+
+      if (event.code === 'KeyL') {
+        input.snapEastPending = true
+      } // end if KeyL
+
+      if (event.code === 'KeyK') {
+        input.snapSouthPending = true
+      } // end if KeyK
+
+      if (event.code === 'KeyJ') {
+        input.snapWestPending = true
+      } // end if KeyJ
+
+      if (event.code === 'Numpad1') {
+        input.spawnTankPending = true
+      } // end if Numpad1
+
+      if (event.code === 'Numpad2') {
+        input.spawnStrikerPending = true
+      } // end if Numpad2
+
+      if (event.code === 'Numpad3') {
+        input.spawnBrutePending = true
+      } // end if Numpad3
+
       if (event.code === 'KeyQ') {
         audio.setAimAssistEnabled(!audio.isAimAssistEnabled())
       } // end if KeyQ toggle aim assist
@@ -122,6 +161,34 @@ export function bindInput(input: InputState, audio: AudioController): void {
     if (event.code === 'KeyE') {
       input.sonarPingPending = false
     } // end if KeyE
+
+    if (event.code === 'KeyI') {
+      input.snapNorthPending = false
+    } // end if KeyI
+
+    if (event.code === 'KeyL') {
+      input.snapEastPending = false
+    } // end if KeyL
+
+    if (event.code === 'KeyK') {
+      input.snapSouthPending = false
+    } // end if KeyK
+
+    if (event.code === 'KeyJ') {
+      input.snapWestPending = false
+    } // end if KeyJ
+
+    if (event.code === 'Numpad1') {
+      input.spawnTankPending = false
+    } // end if Numpad1
+
+    if (event.code === 'Numpad2') {
+      input.spawnStrikerPending = false
+    } // end if Numpad2
+
+    if (event.code === 'Numpad3') {
+      input.spawnBrutePending = false
+    } // end if Numpad3
 
     if (
       (event.code === 'ArrowLeft' || event.code === 'ArrowRight' || event.code === 'ArrowUp' || event.code === 'ArrowDown') &&

@@ -17,6 +17,13 @@ export interface InputState {
   pitchResetPending: boolean
   firePending: boolean
   sonarPingPending: boolean
+  snapNorthPending: boolean
+  snapEastPending: boolean
+  snapSouthPending: boolean
+  snapWestPending: boolean
+  spawnTankPending: boolean
+  spawnStrikerPending: boolean
+  spawnBrutePending: boolean
 } // end interface InputState
 
 export interface WorldPosition {
@@ -42,6 +49,7 @@ export interface EnemyAudioState {
   type: string
   category: string
   position: WorldPosition
+  radius: number
   velocity: WorldVelocity
   facingAngle: number
   isMoving: boolean
@@ -84,6 +92,7 @@ export interface TankRender {
   id: number
   x: number
   y: number
+  radius: number
   angle: number
   velocityX: number
   velocityY: number
@@ -119,16 +128,22 @@ export interface RenderContext {
 
 export interface AudioController {
   ensureAudio: () => Promise<void>
+  playPauseOpenChirp: () => void
+  playPauseCloseChirp: () => void
+  pauseAllAudio: () => Promise<void>
+  resumeAllAudio: () => Promise<void>
   startServo: () => void
   stopServo: () => void
   playFootstep: () => void
   playBump: () => void
   playPitchCenterConfirm: () => void
   fireGunshot: () => void
+  playCollisionThud: (direction: number) => void
+  playCardinalOrientationCue: (newFacing: number) => void
   setAimAssistEnabled: (enabled: boolean) => void
   isAimAssistEnabled: () => boolean
-  updateFrameAudio: (dt: number, player: PlayerAudioState, enemies: EnemyAudioState[]) => void
-  triggerActiveSonar: () => void
+  updateFrameAudio: (dt: number, player: PlayerAudioState, enemies: EnemyAudioState[], mapData: Uint8Array, sprites: SpriteObject[]) => void
+  triggerActiveSonar: (player: PlayerAudioState, enemies: EnemyAudioState[], mapData: Uint8Array, sprites: SpriteObject[]) => void
   playEnemyThreatCue: (enemyId: string) => void
   playEnemyAttack: (enemyId: string) => void
   playEnemyHurt: (enemyId: string) => void
