@@ -72,6 +72,29 @@ export interface SonarEcho {
   obstacleType: 'wall' | SpriteType
 } // end interface SonarEcho
 
+export interface TargetLockState {
+  lockedTankId: number | null
+} // end interface TargetLockState
+
+export interface WeaponStats {
+  /** 0.0 (chaotic) – 1.0 (perfect): controls the accuracy cone half-angle. */
+  accuracy: number
+  /** World-unit radius within which target lock engages. */
+  lockOnRange: number
+  /** Hit damage applied per shot. */
+  damagePerShot: number
+  /** Bullet travel speed in world units per second. */
+  bulletSpeed: number
+  /** Maximum bullet travel distance in world units. */
+  maxRange: number
+  /** Minimum seconds between player shots (0 = unlimited). */
+  fireRateCooldownSeconds: number
+  /** Horizontal lock-on window as percent of full FOV (0–100, default 100). */
+  lockOnWindowWidthPercent: number
+  /** Vertical lock-on window as percent of full pitch range (0–100, default 100). */
+  lockOnWindowHeightPercent: number
+} // end interface WeaponStats
+
 export interface Bullet {
   x: number
   y: number
@@ -102,7 +125,18 @@ export interface TankRender {
   explosionIntensity: number
 } // end interface TankRender
 
+export interface IncomingProjectileAudioState {
+  id: number
+  x: number
+  y: number
+  velocityX: number
+  velocityY: number
+  distanceToPlayer: number
+} // end interface IncomingProjectileAudioState
+
 export type SpriteType = 'tree' | 'rock'
+
+export type AudioCategory = 'proximity' | 'objects' | 'enemies' | 'navigation'
 
 export interface SpriteObject {
   x: number
@@ -153,8 +187,24 @@ export interface AudioController {
   emitEnvironmentalSonar: (echoes: SonarEcho[]) => void
   playTankHitConfirm: (worldX: number, worldY: number, playerX: number, playerY: number, playerAngle: number) => void
   playTankDeathConfirm: (worldX: number, worldY: number, playerX: number, playerY: number, playerAngle: number) => void
-  playImpact: (worldX: number, worldY: number, playerX: number, playerY: number, playerAngle: number) => void
+  playImpact: (worldX: number, worldY: number, playerX: number, playerY: number, playerAngle: number, timeOffsetSeconds?: number) => void
+  playPlayerMechHit: () => void
+  updateIncomingProjectileAudio: (projectiles: IncomingProjectileAudioState[], playerX: number, playerY: number, playerAngle: number) => void
+  playProjectileNearMiss: (
+    projectileType: 'bullet' | 'projectile',
+    worldX: number,
+    worldY: number,
+    playerX: number,
+    playerY: number,
+    playerAngle: number,
+    closestDistance: number,
+    nearMissRadius: number
+  ) => void
   isAudioStarted: () => boolean
   getAudioContextState: () => AudioContextState
   isServoPlaying: () => boolean
+  toggleCategory: (name: AudioCategory) => boolean
+  getCategoryEnabled: (name: AudioCategory) => boolean
+  playLockOnChirp: () => void
+  playLockLostChirp: () => void
 } // end interface AudioController

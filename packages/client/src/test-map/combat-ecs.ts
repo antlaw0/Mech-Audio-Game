@@ -14,6 +14,8 @@ import {
   MAP_HEIGHT,
   MAP_WIDTH,
   PLAYER_HEIGHT,
+  WEAPON_MAX_CONE_RADIANS,
+  WEAPON_MOVEMENT_ACCURACY_PENALTY
 } from './constants.js'
 import { isWall } from './collision.js'
 import {
@@ -22,7 +24,7 @@ import {
   getEnemyDefinitionFromNumericId
 } from './enemies/index.js'
 import type { EnemyDefinitionConfig, EnemyId } from './enemies/enemyTypes.js'
-import type { AudioController, Bullet, EnemyRender, Player, TankRender } from './types.js'
+import type { AudioController, Bullet, EnemyRender, IncomingProjectileAudioState, Player, TankRender } from './types.js'
 
 const KIND_BULLET = 1
 const KIND_ENEMY = 2
@@ -71,7 +73,8 @@ const TankExplosion = defineComponent({
 const ProjectileStats = defineComponent({
   speed: Types.f32,
   damage: Types.i16,
-  maxDistance: Types.f32
+  maxDistance: Types.f32,
+  nearMissPlayed: Types.ui8
 })
 
 const CombatQuery = defineQuery([Position, Facing, Meta])
@@ -186,6 +189,7 @@ function spawnTankProjectile(
   ProjectileStats.speed[bullet] = definition.projectileSpeed
   ProjectileStats.damage[bullet] = definition.shotDamage
   ProjectileStats.maxDistance[bullet] = definition.projectileMaxDistance
+  ProjectileStats.nearMissPlayed[bullet] = 0
 } // end function spawnTankProjectile
 
 export function createCombatEcsWorld(): CombatEcsWorld {
@@ -317,7 +321,13 @@ export function spawnRandomTankFromConfig(world: CombatEcsWorld, mapData: Uint8A
   return false
 } // end function spawnRandomTankFromConfig
 
-export function spawnPlayerBullet(world: CombatEcsWorld, player: Player): void {
+export function spawnPlayerBullet(
+  world: CombatEcsWorld,
+  player: Player,
+  damage = 10,
+  speed = BULLET_SPEED,
+  maxDistance = BULLET_MAX_DIST
+): void {
   const bullet = addEntity(world)
   addComponent(world, Position, bullet)
   addComponent(world, Facing, bullet)
@@ -331,10 +341,52 @@ export function spawnPlayerBullet(world: CombatEcsWorld, player: Player): void {
   Meta.radius[bullet] = BULLET_HIT_RADIUS
   Meta.distance[bullet] = 0
   Meta.alive[bullet] = 1
-  ProjectileStats.speed[bullet] = BULLET_SPEED
-  ProjectileStats.damage[bullet] = 10
-  ProjectileStats.maxDistance[bullet] = BULLET_MAX_DIST
+  ProjectileStats.speed[bullet] = speed
+  ProjectileStats.damage[bullet] = damage
+  ProjectileStats.maxDistance[bullet] = maxDistance
+  ProjectileStats.nearMissPlayed[bullet] = 0
 } // end function spawnPlayerBullet
+
+/**
+ * Fires a player bullet aimed at (targetX, targetY) with an accuracy cone.
+ * accuracy: 0.0 = widest cone, 1.0 = perfect aim.
+ * playerSpeedFraction: 0.0 = standing still, 1.0 = full speed (widens cone).
+ */
+export function spawnPlayerBulletToward(
+  world: CombatEcsWorld,
+  player: Player,
+  targetX: number,
+  targetY: number,
+  accuracy: number,
+  playerSpeedFraction: number,
+  damage = 10,
+  speed = BULLET_SPEED,
+  maxDistance = BULLET_MAX_DIST
+): void {
+  const baseAngle = Math.atan2(targetY - player.y, targetX - player.x)
+  const baseHalfAngle = WEAPON_MAX_CONE_RADIANS * Math.max(0, 1 - accuracy)
+  const halfAngle = baseHalfAngle * (1 + Math.min(1, playerSpeedFraction) * WEAPON_MOVEMENT_ACCURACY_PENALTY)
+  const angleOffset = (Math.random() * 2 - 1) * halfAngle
+  const finalAngle = baseAngle + angleOffset
+
+  const bullet = addEntity(world)
+  addComponent(world, Position, bullet)
+  addComponent(world, Facing, bullet)
+  addComponent(world, Meta, bullet)
+  addComponent(world, ProjectileStats, bullet)
+  Position.x[bullet] = player.x
+  Position.y[bullet] = player.y
+  Facing.angle[bullet] = finalAngle
+  Facing.pitch[bullet] = 0
+  Meta.kind[bullet] = KIND_BULLET
+  Meta.radius[bullet] = BULLET_HIT_RADIUS
+  Meta.distance[bullet] = 0
+  Meta.alive[bullet] = 1
+  ProjectileStats.speed[bullet] = speed
+  ProjectileStats.damage[bullet] = damage
+  ProjectileStats.maxDistance[bullet] = maxDistance
+  ProjectileStats.nearMissPlayed[bullet] = 0
+} // end function spawnPlayerBulletToward
 
 function computeFloorCeilHitDistance(pitch: number): number {
   const absPitch = Math.abs(pitch)
@@ -365,6 +417,9 @@ export function stepCombatEcsWorld(
   deltaSeconds: number
 ): void {
   const allEntities = CombatQuery(world)
+  let impactFrameCount = 0
+  const IMPACT_STAGGER_SECONDS = 0.001
+  const incomingProjectileAudioStates: IncomingProjectileAudioState[] = []
   const tankEntities = TankQuery(world)
 
   // --- Update tanks ---
@@ -494,7 +549,8 @@ export function stepCombatEcsWorld(
       const hitX = currentX + cosA * step * hitFraction
       const hitY = currentY + sinA * step * hitFraction
       Meta.alive[entity] = 0
-      audio.playImpact(hitX, hitY, player.x, player.y, player.angle)
+      audio.playImpact(hitX, hitY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
+      impactFrameCount++
       continue
     } // end if floor or ceiling impact
 
@@ -505,7 +561,8 @@ export function stepCombatEcsWorld(
 
     if (isWall(mapData, nextX, nextY)) {
       Meta.alive[entity] = 0
-      audio.playImpact(nextX, nextY, player.x, player.y, player.angle)
+      audio.playImpact(nextX, nextY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
+      impactFrameCount++
       continue
     } // end if wall hit
 
@@ -531,7 +588,8 @@ export function stepCombatEcsWorld(
           Meta.alive[entity] = 0
           const projectileDamage = getNumber(ProjectileStats.damage, entity) ?? 10
           Health.hp[tank] = (Health.hp[tank] ?? 0) - Math.max(1, Math.round(projectileDamage))
-          audio.playImpact(targetX, targetY, player.x, player.y, player.angle)
+          audio.playImpact(targetX, targetY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
+          impactFrameCount++
           audio.playTankHitConfirm(targetX, targetY, player.x, player.y, player.angle)
 
           // Check if tank died
@@ -553,13 +611,25 @@ export function stepCombatEcsWorld(
       const dx = nextX - player.x
       const dy = nextY - player.y
       const playerRadius = 0.25
-      if (Math.hypot(dx, dy) < playerRadius + bulletRadius) {
+      const playerDistance = Math.hypot(dx, dy)
+      if (playerDistance < playerRadius + bulletRadius) {
         // Player hit
         Meta.alive[entity] = 0
-        audio.playImpact(nextX, nextY, player.x, player.y, player.angle)
-        // TODO: Player damage / hitstun feedback not implemented yet
+        ProjectileStats.nearMissPlayed[entity] = 1
+        audio.playImpact(nextX, nextY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
+        impactFrameCount++
+        audio.playPlayerMechHit()
         continue
       } // end if player hit
+
+      incomingProjectileAudioStates.push({
+        id: entity,
+        x: nextX,
+        y: nextY,
+        velocityX: cosA * speed,
+        velocityY: sinA * speed,
+        distanceToPlayer: playerDistance
+      })
     } // end if tank projectile
 
     if ((Meta.alive[entity] ?? 0) !== 1) {
@@ -570,6 +640,8 @@ export function stepCombatEcsWorld(
     Position.y[entity] = nextY
     Meta.distance[entity] = nextDist
   } // end for each projectile
+
+  audio.updateIncomingProjectileAudio(incomingProjectileAudioStates, player.x, player.y, player.angle)
 
   // --- Cleanup dead entities ---
   for (const entity of allEntities) {

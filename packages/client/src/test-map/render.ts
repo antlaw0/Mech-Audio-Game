@@ -16,10 +16,11 @@ interface RenderFrameArgs {
   player: Player
   zBuffer: Float32Array
   muzzleFlashAlpha: number
+  lockedTankId: number | null
 } // end interface RenderFrameArgs
 
 export function renderFrame(args: RenderFrameArgs): void {
-  const { ctx, canvasWidth, canvasHeight, mapData, sprites, enemies, tanks, bullets, player, zBuffer, muzzleFlashAlpha } = args
+  const { ctx, canvasWidth, canvasHeight, mapData, sprites, enemies, tanks, bullets, player, zBuffer, muzzleFlashAlpha, lockedTankId } = args
   const projectionPlane = calculateProjectionPlane(canvasWidth)
   const pitchOffset = Math.tan(player.pitch) * projectionPlane
   const centerY = canvasHeight / 2 + pitchOffset
@@ -232,6 +233,32 @@ export function renderFrame(args: RenderFrameArgs): void {
         ctx.fillStyle = 'rgba(220, 80, 80, 0.9)'
         ctx.fillRect(screenX - barWidth / 2, bodyY - bodyHeight * 0.8, barWidth * healthPercent, barHeight)
       } // end if tank not at full health
+        if (entry.tank.id === lockedTankId) {
+          const bHalf = bodyWidth * 1.4
+          const bTop = bodyY - bodyHeight * 0.85
+          const bBottom = bodyY + bodyHeight * 0.25
+          const arm = bHalf * 0.4
+          ctx.strokeStyle = 'rgba(255, 220, 0, 0.92)'
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          // top-left L
+          ctx.moveTo(screenX - bHalf + arm, bTop)
+          ctx.lineTo(screenX - bHalf, bTop)
+          ctx.lineTo(screenX - bHalf, bTop + arm)
+          // top-right L
+          ctx.moveTo(screenX + bHalf - arm, bTop)
+          ctx.lineTo(screenX + bHalf, bTop)
+          ctx.lineTo(screenX + bHalf, bTop + arm)
+          // bottom-left L
+          ctx.moveTo(screenX - bHalf, bBottom - arm)
+          ctx.lineTo(screenX - bHalf, bBottom)
+          ctx.lineTo(screenX - bHalf + arm, bBottom)
+          // bottom-right L
+          ctx.moveTo(screenX + bHalf, bBottom - arm)
+          ctx.lineTo(screenX + bHalf, bBottom)
+          ctx.lineTo(screenX + bHalf - arm, bBottom)
+          ctx.stroke()
+        } // end if tank is locked on target
     } // end if alive tank model
 
     if (entry.tank.explosionIntensity > 0) {

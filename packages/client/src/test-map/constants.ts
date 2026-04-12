@@ -22,3 +22,16 @@ export const TANK_CANNON_FIRE_INTERVAL = 2000
 export const TANK_THREAT_DELAY_MS = 360
 export const TANK_HEALTH = 30
 export const TANK_PROJECTILE_SPEED = 30
+
+// --- Target-lock / weapon accuracy ---
+// Accuracy is 0.0 (chaotic) → 1.0 (perfect). Controls the half-angle of the
+// accuracy cone used when auto-firing toward a locked target.
+export const WEAPON_DEFAULT_ACCURACY = 0.65
+// Maximum cone half-angle in radians when accuracy = 0 (≈24°).
+export const WEAPON_MAX_CONE_RADIANS = 0.42
+// At full movement speed the cone widens by this fraction of the base half-angle.
+export const WEAPON_MOVEMENT_ACCURACY_PENALTY = 0.55
+// World-unit radius within which lock-on is available.
+export const WEAPON_LOCK_ON_RANGE = 20
+// Seconds between auto-fire shots while locked.
+export const WEAPON_AUTO_FIRE_RATE_SECONDS = 0.55

@@ -1,342 +1,332 @@
+---
 
-> "Follow this document. Update all audio navigation code accordingly."
+# ✅ **RANGED_COMBAT_AUDIO_UPDATE.md**
+
+### **Audio-First Ranged Combat System (Fair, Trackable, Reactable)**
+
+## Purpose
+
+Convert ranged combat into a **fully trackable audio timeline** so the player can:
+
+* detect threats early
+* understand direction and distance
+* react in time
+* dodge or counter
+
+All ranged attacks must follow a **multi-stage audio pipeline**.
 
 ---
 
-# ✅ **AUDIO_SONAR_SYSTEM_UPDATE.md**
+# 1. GLOBAL CONSTANTS
 
-### **Swamp-Style Navigation & Awareness System (Tile-Accurate Implementation)**
+Create in `combatConfig.ts`:
 
-### **Instructions for GitHub Copilot**
+```ts
+export const MIN_REACTION_TIME = 0.4 // seconds
+export const IDEAL_REACTION_TIME_MIN = 0.6
+export const IDEAL_REACTION_TIME_MAX = 0.9
 
-This document defines **exact implementation rules** for directional awareness, sonar operation, radar sweeps, obstacle density filtering, enemy tracking, and collision audio for an accessible audio-FPS using pseudo-3D raycasting.
+export const PROJECTILE_SPEED = 6.0 // tiles per second
+export const PROJECTILE_RADIUS = 0.2 // tiles
+export const PLAYER_RADIUS = 0.25 // tiles
 
-Copilot must follow this document **verbatim** when generating or modifying audio navigation logic.
+export const NEAR_MISS_RADIUS = 1.2 // tiles
+export const MAX_PROJECTILE_RANGE = 20 // tiles
 
----
-
-# 1. WORLD SCALE & CORE CONSTANTS
-
-Copilot must use these fixed world units:
-
-```
-1 tile = 1 meter
-Player radius = 0.5 tiles
-Max map dimension: MAP_WIDTH x MAP_HEIGHT (already defined)
-```
-
-## 1.1 Core distances used throughout the system:
-
-```
-NEAR_FIELD_RADIUS = 1.5 tiles     // collision & wall brushing cues
-MOVEMENT_AWARENESS_RADIUS = 8 tiles
-OBSTACLE_AUDIO_MAX_DISTANCE = 12 tiles // ~12 meters audible space
-ENEMY_AUDIO_MAX_DISTANCE = 25 tiles    // long-range enemy detection
-SONAR_SWEEP_STEP_ANGLE = fieldOfView / rayCount  // auto from renderer
-MAX_SIMULTANEOUS_OBSTACLE_TONES = 5  // density limiter
-```
-
-Copilot must create these constants in a config file and import them everywhere.
-
----
-
-# 2. RADAR–SONAR SYSTEM (PRIMARY AWARENESS)
-
-You must implement **two layers**, like Swamp:
-
-## Layer A — Passive Sweeping Sonar (continuous)
-
-A slow 360° rotating beam.
-
-### Behavior
-
-* The sweep turns at a fixed speed = **one full rotation every 2.5 seconds**
-* It casts **one ray per sonar tick** (NOT per frame)
-* Only objects up to **12 tiles away** may respond
-* Sweep direction = clockwise
-
-### Audio cue from the sweep beam
-
-* A soft oscillating tone (already implemented)
-* Pitch rises slightly as the sweep angle increases
-* Must be low volume
-
----
-
-## Layer B — Active Sonar Ping (manual ping like Swamp)
-
-Triggered by user input.
-
-### Behavior
-
-* Emits **16 rays** in a starburst at equal angular spacing
-* Each ray reports **the nearest obstacle OR nearest enemy**, whichever is closer
-* Obstacles respond with short filtered blips
-* Enemies respond with stronger signature pings
-
-### Active ping ranges
-
-```
-Obstacle detection: 12 tiles max
-Enemy detection: 20 tiles max
+export const ENEMY_FIRE_COOLDOWN = 2.0 // seconds
 ```
 
 ---
 
-# 3. OBSTACLE TONAL RESPONSES (SWAMP-STYLE)
+# 2. ATTACK STATE MACHINE
 
-Obstacles responding to sonar must produce **tonal pips** based on:
+Each enemy must implement:
 
-### 3.1 Distance → Volume
-
-Use this falloff formula:
-
-```
-volume = clamp(1 - (distance / OBSTACLE_AUDIO_MAX_DISTANCE), 0.05, 1)
-```
-
-### 3.2 Type of obstacle → Timbre
-
-Copilot must give each 1-tile cell type its own tone:
-
-```
-Wall (cell=1): sine tone at 480Hz
-Cover block: triangle at 520Hz
-Tall rock: square at 420Hz
-Boundary wall: sawtooth at 400Hz
+```ts
+type AttackState =
+  | "idle"
+  | "intent"
+  | "lock"
+  | "fire"
+  | "cooldown"
 ```
 
-(Use placeholder synthesis unless real assets exist.)
+Add to enemy class:
 
-### 3.3 Bearing → Stereo position
-
-Determine stereo pan using:
-
+```ts
+attackState: AttackState
+attackTimer: number
 ```
-bearing = angleBetween(playerFacing, directionToObstacle)
-panner.pan.value = sin(bearing)
-```
-
-### 3.4 Elevation (if any)
-
-If elevation is used later:
-higher = slightly brighter (increase filter cutoff).
 
 ---
 
-# 4. OBSTACLE DENSITY FILTER (THE BIG MISSING PIECE)
+# 3. FULL ATTACK TIMELINE
 
-Swamp solves “too many obstacle sounds” using a density-limited nearest-neighbor filter.
+## 3.1 Intent Phase (Pre-Telegraph)
 
-You must implement the same rule:
+Duration: **0.3 – 0.6 seconds**
 
-### Rule:
+### Behavior:
 
-**At any sonar tick, only the closest N obstacles may make sound.**
+* Start when enemy decides to attack
+* Play **charging sound**
+* Sound must be positional
 
+### Audio rules:
+
+* Pitch rises over time
+* Volume stable
+* Pan based on enemy position
+
+```ts
+pitch = basePitch + (progress * 200)
 ```
-MAX_SIMULTANEOUS_OBSTACLE_TONES = 5
-```
-
-Steps:
-
-1. Collect all obstacles hit by sonar beams
-2. Sort by distance ascending
-3. Keep top 5
-4. Discard any further sounds entirely
-5. For the survivors, play their tones normally
-
-This is critical—without it the audio becomes cluttered.
 
 ---
 
-# 5. NEAR-FIELD COLLISION AWARENESS (LIKE SWAMP)
+## 3.2 Lock Phase (Target Confirmation)
 
-When the player mech is within **1.5 tiles** of a wall:
+Duration: **0.15 – 0.3 seconds**
 
-### Always play a soft “wall proximity buzz”
+### Behavior:
 
-* filtered at 300Hz
-* volume based on inverse distance
-* stronger on the side the wall is on
+* Enemy has line-of-sight to player
+* Emits repeating “lock tick”
 
-### If the player **touches** the wall (collides):
+### Audio:
 
-* play a short muted thud
-* pan toward the impact side
-
-Copilot must call this **every frame**, not per sonar tick.
+* Short chirp every 0.25s
+* Directional
+* Slightly brighter than idle sounds
 
 ---
 
-# 6. CARDINAL DIRECTION ORIENTATION CUES
+## 3.3 Fire Event
 
-Your map uses tiles, so cardinal alignment is important.
+Instant transition
 
-Implement a Swamp-style system:
+### Behavior:
 
-### Pressing the orientation keys snaps facing to:
+* Spawn projectile
+* Play loud firing sound
 
-```
-0°   = North (toward row decreasing)
-90°  = East  (col increasing)
-180° = South (row increasing)
-270° = West  (col decreasing)
-```
+### Audio:
 
-### Each snap produces a distinct audio cue:
-
-* North: rising triad (C–E–G)
-* East: single bright ping
-* South: descending triad
-* West: soft double-click
-
-Copilot must implement a small utility to produce these.
+* Strong transient (fast attack)
+* Clear stereo positioning
 
 ---
 
-# 7. ENEMY AWARENESS (TANK, MECH, ETC.)
+## 3.4 Projectile Travel (MOST IMPORTANT)
 
-Enemies use a **different audio channel** than obstacles.
+Every projectile must emit continuous sound.
 
-## 7.1 Enemy Idle Presence
+### Create projectile object:
 
-Always on if within 25 tiles.
-
-Tank example:
-
-* looping treads
-* low-pass filter when around corners
-
-## 7.2 Enemy Line-of-sight Check
-
-If enemy has LOS to player:
-
-* play a brief “lock-on tick”
-* every 300ms
-* must be directional
-
-## 7.3 Enemy Movement Sound
-
-Pitch reflects speed:
-
+```ts
+{
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+  active: boolean,
+  audioSourceId: string
+}
 ```
-pitch = basePitch + (velocity * 12)
-```
-
-### Bearing pan:
-
-Same rule as obstacles.
 
 ---
 
-# 8. SONAR → ENEMY RESPONSE PRIORITY
+### Movement:
 
-When the sweep beam hits both an obstacle and enemy in the same direction:
-
-**Enemy wins**.
-
-Rule:
-
+```ts
+x += vx * delta
+y += vy * delta
 ```
-if enemyDistance < obstacleDistance + 1 tile:
-    enemy responds
-else:
-    obstacle responds
-```
-
-This mirrors Swamp’s “enemies override clutter” behavior.
 
 ---
 
-# 9. RAYCAST-LEVEL INTEGRATION RULES
+### Audio behavior (every frame):
 
-Your sonar, proximity, and sweep logic MUST use the **same raycasting system** your renderer uses.
+#### Distance-based volume:
 
-For each sonar ray:
+```ts
+const distance = getDistance(projectile, player)
+const volume = clamp(1 - (distance / MAX_PROJECTILE_RANGE), 0.05, 1)
+```
 
-1. Use the same DDA or stepping algorithm
-2. Stop at the first collision
-3. Determine:
+#### Pitch based on speed:
 
-   * cell type
-   * hit distance
-   * hit bearing relative to player
-4. Pass to the sonar audio engine
+```ts
+const speed = Math.sqrt(vx * vx + vy * vy)
+const pitch = 200 + (speed * 50)
+```
+
+#### Stereo panning:
+
+```ts
+const bearing = getBearing(player.angle, projectile)
+panner.pan.value = Math.sin(bearing)
+```
 
 ---
 
-# 10. AUDIO UPDATE RATE
+# 4. NEAR MISS SYSTEM
 
-Copilot must update:
+If projectile passes close to player:
 
-* **positional panners every frame**
-* sonar sweep at **30Hz**
-* active ping rays instantly
-* collision bubbles every frame
-* enemy tracking every frame
+```ts
+if (distanceToPlayer < NEAR_MISS_RADIUS && !projectile.hasPlayedNearMiss)
+```
+
+### Then:
+
+* Play fast “whoosh past” sound
+* Pan strongly to passing side
+* Mark `hasPlayedNearMiss = true`
 
 ---
 
-# 11. REQUIRED UTILITY FUNCTIONS
+# 5. HIT DETECTION
 
-Copilot must ensure these exist:
+Collision when:
 
-```
-getRayHit(tileMap, startPos, angle): {col, row, distance, type}
-
-getBearing(playerFacing, worldAngle): number  // -PI to +PI
-
-distanceToVolume(distance, maxRange): number
-
-sortByDistance(list): array
-
-filterClosest(list, n): array
-
-playWallProximityCue(direction, intensity): void
-playCollisionThud(direction): void
-playCardinalOrientationCue(newFacing): void
+```ts
+distance(projectile, player) < (PLAYER_RADIUS + PROJECTILE_RADIUS)
 ```
 
-All must be placed in `audioUtils.ts`.
+### On hit:
+
+* Play impact sound (non-positional or centered)
+* Apply damage
+* Destroy projectile
 
 ---
 
-# 12. PLACEHOLDER AUDIO ASSETS NEEDED
+# 6. MISS CLEANUP
 
-Copilot must create placeholder Tone.js synths if files don’t exist.
+If projectile exceeds:
 
-If the user wants audio files, use:
-
-```
-assets/audio/sonar/sweep.wav
-assets/audio/sonar/ping.wav
-assets/audio/enemies/tank_treads_loop.wav
-assets/audio/ui/cardinal_north.wav
-assets/audio/ui/cardinal_east.wav
-assets/audio/ui/cardinal_south.wav
-assets/audio/ui/cardinal_west.wav
-assets/audio/collision/thud.wav
+```ts
+distanceFromOrigin > MAX_PROJECTILE_RANGE
 ```
 
-But synths are acceptable for prototyping.
+Then:
+
+* Stop audio
+* Remove projectile
 
 ---
 
-# 13. COMPLETE TASK FOR COPILOT
+# 7. ENEMY AIMING (FAIRNESS SYSTEM)
 
-Copilot must now:
+Enemies must NOT have perfect accuracy.
 
-1. Implement the above sonar and obstacle system
-2. Add obstacle density filtering
-3. Add near-field collision bubble cues
-4. Add cardinal snap orientation with cues
-5. Add correct panning math
-6. Update all audio based on frame rate and sonar rate
-7. Ensure everything uses tile-based distances
-8. Integrate with existing raycasting and scene loops
-9. Ensure zero hardcoded magic numbers
-10. Keep all audio separated into `audio/` folder
+### Add spread:
+
+```ts
+const spreadAngle = randomRange(-0.1, 0.1) // radians (~6 degrees)
+```
+
+Apply to firing angle.
+
+---
+
+### Optional difficulty scaling:
+
+```ts
+easy:   ±0.15
+normal: ±0.1
+hard:   ±0.05
+```
+
+---
+
+# 8. FIRE RATE CONTROL
+
+Enemy cannot fire continuously.
+
+```ts
+if (timeSinceLastShot < ENEMY_FIRE_COOLDOWN) return
+```
+
+---
+
+# 9. LINE OF SIGHT CHECK
+
+Enemy may only enter **lock phase** if:
+
+```ts
+hasLineOfSight(enemy, player) === true
+```
+
+Reuse your raycasting system.
+
+---
+
+# 10. AUDIO PRIORITY RULES
+
+Projectile audio must:
+
+* override ambient noise
+* be louder than obstacle tones within 8 tiles
+* never be culled by obstacle density filter
+
+---
+
+# 11. REQUIRED AUDIO FILES OR SYNTHS
+
+If no files exist, use Tone.js:
+
+```ts
+Intent:        rising sine synth
+Lock:          short square blip
+Fire:          noise burst + sine click
+Projectile:    continuous filtered sawtooth
+Near miss:     fast filtered noise sweep
+Impact:        low thud (membrane synth)
+```
+
+---
+
+# 12. REQUIRED FUNCTIONS
+
+Ensure these exist:
+
+```ts
+spawnProjectile(enemy, player): Projectile
+updateProjectile(projectile, delta): void
+playIntentSound(enemy): void
+playLockTick(enemy): void
+playFireSound(enemy): void
+playProjectileLoop(projectile): void
+playNearMiss(projectile): void
+playImpact(): void
+```
+
+---
+
+# 13. INTEGRATION
+
+Copilot must:
+
+1. Add attack state machine to all ranged enemies
+2. Add projectile system to game loop
+3. Update audio every frame
+4. Ensure positional audio is correct
+5. Ensure timing meets reaction window
+6. Prevent instant/untelegraphed damage
+
+---
+
+# 14. SUCCESS CRITERIA
+
+The system is correct if:
+
+* Player can hear attack BEFORE it happens
+* Player can track projectile in space
+* Player can dodge based on sound
+* Hits never feel random
+* Combat feels fair and readable
 
 ---
 

@@ -113,6 +113,30 @@ export function bindInput(
         audio.setAimAssistEnabled(!audio.isAimAssistEnabled())
       } // end if KeyQ toggle aim assist
 
+      if (event.code === 'KeyZ') {
+        const enabled = audio.toggleCategory('proximity')
+        window.speechSynthesis.cancel()
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance(`proximity ${enabled ? 'on' : 'off'}`))
+      } // end if KeyZ toggle proximity category
+
+      if (event.code === 'KeyX') {
+        const enabled = audio.toggleCategory('objects')
+        window.speechSynthesis.cancel()
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance(`objects ${enabled ? 'on' : 'off'}`))
+      } // end if KeyX toggle objects category
+
+      if (event.code === 'KeyC') {
+        const enabled = audio.toggleCategory('enemies')
+        window.speechSynthesis.cancel()
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance(`enemies ${enabled ? 'on' : 'off'}`))
+      } // end if KeyC toggle enemies category
+
+      if (event.code === 'KeyV') {
+        const enabled = audio.toggleCategory('navigation')
+        window.speechSynthesis.cancel()
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance(`navigation ${enabled ? 'on' : 'off'}`))
+      } // end if KeyV toggle navigation category
+
       if ((event.code === 'ArrowLeft' || event.code === 'ArrowRight') && audio.isAudioStarted()) {
         audio.startServo()
       } // end if turn key and audio started

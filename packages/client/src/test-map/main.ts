@@ -1,8 +1,13 @@
 import {
   CANVAS_HEIGHT_LIMIT,
-  CANVAS_WIDTH_LIMIT
+  CANVAS_WIDTH_LIMIT,
+  MUZZLE_FLASH_DURATION,
+  PLAYER_SPEED,
+  WEAPON_DEFAULT_ACCURACY,
+  WEAPON_LOCK_ON_RANGE,
+  BULLET_SPEED,
+  BULLET_MAX_DIST
 } from './constants.js'
-import { MUZZLE_FLASH_DURATION } from './constants.js'
 import { createAudioController } from './audio.js'
 import {
   createCombatEcsWorld,
@@ -10,11 +15,14 @@ import {
   spawnRandomEnemy,
   spawnRandomTankFromConfig,
   spawnPlayerBullet,
+  spawnPlayerBulletToward,
   stepCombatEcsWorld
 } from './combat-ecs.js'
+import { createTargetLockState, updateTargetLock } from './target-lock.js'
 import { getEnemyDefinition } from './enemies/index.js'
 import type { EnemyDefinitionConfig, EnemyMovementPattern } from './enemies/enemyTypes.js'
 import type { EnemyId } from './enemies/enemyTypes.js'
+import type { WeaponStats } from './types.js'
 import { bindInput } from './input.js'
 import { computeObstructionAwareness } from './awareness.js'
 import { createMapData } from './map-data.js'
@@ -55,6 +63,16 @@ function setupCanvas(): {
 
 function startTestMap(): void {
   const { ctx, width, height } = setupCanvas()
+
+  const getInput = (id: string): HTMLInputElement | null => {
+    const el = document.getElementById(id)
+    return el instanceof HTMLInputElement ? el : null
+  } // end function getInput
+  const getSelect = (id: string): HTMLSelectElement | null => {
+    const el = document.getElementById(id)
+    return el instanceof HTMLSelectElement ? el : null
+  } // end function getSelect
+
   const awarenessStatusElement = document.getElementById('awarenessStatus')
   const sonarStatusElement = document.getElementById('sonarStatus')
   const pauseOverlayElement = document.getElementById('pauseOverlay')
@@ -66,14 +84,17 @@ function startTestMap(): void {
   const editorSpawnButtonElement = document.getElementById('editorSpawnButton')
   const editorCancelButtonElement = document.getElementById('editorCancelButton')
 
-  const getInput = (id: string): HTMLInputElement | null => {
-    const el = document.getElementById(id)
-    return el instanceof HTMLInputElement ? el : null
-  } // end function getInput
-  const getSelect = (id: string): HTMLSelectElement | null => {
-    const el = document.getElementById(id)
-    return el instanceof HTMLSelectElement ? el : null
-  } // end function getSelect
+  const weaponEditorModalElement = document.getElementById('weaponEditorModal')
+  const weaponEditorApplyButtonElement = document.getElementById('weaponEditorApplyButton')
+  const weaponEditorCancelButtonElement = document.getElementById('weaponEditorCancelButton')
+  const weaponAccuracyInput = getInput('weaponAccuracy')
+  const weaponDamageInput = getInput('weaponDamage')
+  const weaponBulletSpeedInput = getInput('weaponBulletSpeed')
+  const weaponMaxRangeInput = getInput('weaponMaxRange')
+  const weaponFireRateInput = getInput('weaponFireRate')
+  const weaponLockOnRangeInput = getInput('weaponLockOnRange')
+  const weaponLockOnWindowWidthInput = getInput('weaponLockOnWindowWidth')
+  const weaponLockOnWindowHeightInput = getInput('weaponLockOnWindowHeight')
 
   const editorNameInput = getInput('editorName')
   const editorMaxHpInput = getInput('editorMaxHp')
@@ -105,6 +126,19 @@ function startTestMap(): void {
   let queuedEnemySpawn: EnemyDefinitionConfig | null = null
   let isEditorModalOpen = false
   let editorCurrentEnemyId: EnemyId = 'tank'
+  let isWeaponEditorOpen = false
+  let playerFireCooldownSeconds = 0
+
+  const playerWeapon: WeaponStats = {
+    accuracy: WEAPON_DEFAULT_ACCURACY,
+    lockOnRange: WEAPON_LOCK_ON_RANGE,
+    damagePerShot: 10,
+    bulletSpeed: BULLET_SPEED,
+    maxRange: BULLET_MAX_DIST,
+    fireRateCooldownSeconds: 0,
+    lockOnWindowWidthPercent: 100,
+    lockOnWindowHeightPercent: 100
+  } // end object playerWeapon
 
   const clearGameplayInputs = (): void => {
     input.moveForward = false
@@ -143,6 +177,55 @@ function startTestMap(): void {
     enemyEditorModalElement.style.display = visible ? 'flex' : 'none'
     enemyEditorModalElement.setAttribute('aria-hidden', visible ? 'false' : 'true')
   } // end function setEditorModalVisible
+
+  const setWeaponEditorModalVisible = (visible: boolean): void => {
+    if (!(weaponEditorModalElement instanceof HTMLDivElement)) {
+      return
+    } // end if weapon editor modal element missing
+    weaponEditorModalElement.style.display = visible ? 'flex' : 'none'
+    weaponEditorModalElement.setAttribute('aria-hidden', visible ? 'false' : 'true')
+  } // end function setWeaponEditorModalVisible
+
+  const populateWeaponEditorForm = (stats: WeaponStats): void => {
+    if (weaponAccuracyInput) weaponAccuracyInput.value = String(stats.accuracy)
+    if (weaponDamageInput) weaponDamageInput.value = String(stats.damagePerShot)
+    if (weaponBulletSpeedInput) weaponBulletSpeedInput.value = String(stats.bulletSpeed)
+    if (weaponMaxRangeInput) weaponMaxRangeInput.value = String(stats.maxRange)
+    if (weaponFireRateInput) weaponFireRateInput.value = String(stats.fireRateCooldownSeconds)
+    if (weaponLockOnRangeInput) weaponLockOnRangeInput.value = String(stats.lockOnRange)
+    if (weaponLockOnWindowWidthInput) weaponLockOnWindowWidthInput.value = String(stats.lockOnWindowWidthPercent)
+    if (weaponLockOnWindowHeightInput) weaponLockOnWindowHeightInput.value = String(stats.lockOnWindowHeightPercent)
+  } // end function populateWeaponEditorForm
+
+  const readWeaponEditorForm = (): WeaponStats => {
+    const parseNum = (input: HTMLInputElement | null, fallback: number): number => {
+      if (!input) return fallback
+      const val = parseFloat(input.value)
+      return isFinite(val) ? val : fallback
+    } // end function parseNum
+    return {
+      accuracy: Math.max(0.01, Math.min(1, parseNum(weaponAccuracyInput, playerWeapon.accuracy))),
+      damagePerShot: Math.max(1, Math.round(parseNum(weaponDamageInput, playerWeapon.damagePerShot))),
+      bulletSpeed: Math.max(1, parseNum(weaponBulletSpeedInput, playerWeapon.bulletSpeed)),
+      maxRange: Math.max(1, parseNum(weaponMaxRangeInput, playerWeapon.maxRange)),
+      fireRateCooldownSeconds: Math.max(0, parseNum(weaponFireRateInput, playerWeapon.fireRateCooldownSeconds)),
+      lockOnRange: Math.max(1, parseNum(weaponLockOnRangeInput, playerWeapon.lockOnRange)),
+      lockOnWindowWidthPercent: Math.max(0, Math.min(100, Math.round(parseNum(weaponLockOnWindowWidthInput, playerWeapon.lockOnWindowWidthPercent)))),
+      lockOnWindowHeightPercent: Math.max(0, Math.min(100, Math.round(parseNum(weaponLockOnWindowHeightInput, playerWeapon.lockOnWindowHeightPercent))))
+    } // end object weapon stats
+  } // end function readWeaponEditorForm
+
+  const openWeaponEditor = (): void => {
+    populateWeaponEditorForm(playerWeapon)
+    setWeaponEditorModalVisible(true)
+    isWeaponEditorOpen = true
+    weaponAccuracyInput?.focus()
+  } // end function openWeaponEditor
+
+  const closeWeaponEditor = (): void => {
+    setWeaponEditorModalVisible(false)
+    isWeaponEditorOpen = false
+  } // end function closeWeaponEditor
 
   const populateEditorForm = (config: EnemyDefinitionConfig): void => {
     if (editorNameInput) editorNameInput.value = config.name
@@ -262,7 +345,7 @@ function startTestMap(): void {
     await pauseGame()
   } // end function togglePause
 
-  bindInput(input, audio, () => isPaused)
+  bindInput(input, audio, () => isPaused || isWeaponEditorOpen)
 
   document.addEventListener('keydown', (event) => {
     if (event.code !== 'Escape' || event.repeat) {
@@ -275,6 +358,11 @@ function startTestMap(): void {
       closeEnemyEditorModal()
       return
     } // end if closing editor modal
+
+    if (isWeaponEditorOpen) {
+      closeWeaponEditor()
+      return
+    } // end if closing weapon editor
 
     void togglePause()
   })
@@ -304,6 +392,19 @@ function startTestMap(): void {
     })
   } // end if editor cancel button exists
 
+  if (weaponEditorApplyButtonElement instanceof HTMLButtonElement) {
+    weaponEditorApplyButtonElement.addEventListener('click', () => {
+      Object.assign(playerWeapon, readWeaponEditorForm())
+      closeWeaponEditor()
+    })
+  } // end if weapon apply button exists
+
+  if (weaponEditorCancelButtonElement instanceof HTMLButtonElement) {
+    weaponEditorCancelButtonElement.addEventListener('click', () => {
+      closeWeaponEditor()
+    })
+  } // end if weapon cancel button exists
+
   document.addEventListener('keydown', (event) => {
     if (!isPaused || isEditorModalOpen || event.repeat) {
       return
@@ -321,8 +422,16 @@ function startTestMap(): void {
     } // end if numpad enemy editor keys
   })
 
-  const combatWorld = createCombatEcsWorld()
+  document.addEventListener('keydown', (event) => {
+    if (event.code !== 'Numpad0' || event.repeat || isEditorModalOpen || isWeaponEditorOpen) {
+      return
+    } // end if not weapon editor key or already open
+    event.preventDefault()
+    openWeaponEditor()
+  })
 
+  const combatWorld = createCombatEcsWorld()
+  const targetLockState = createTargetLockState()
   let lastTimeMs = 0
   let previousPlayerX = player.x
   let previousPlayerY = player.y
@@ -335,6 +444,8 @@ function startTestMap(): void {
       requestAnimationFrame(gameLoop)
       return
     } // end if game paused
+
+    playerFireCooldownSeconds = Math.max(0, playerFireCooldownSeconds - deltaSeconds)
 
     updateFrame(
       {
@@ -390,6 +501,54 @@ function startTestMap(): void {
 
     stepCombatEcsWorld(combatWorld, mapData, audio, player, deltaSeconds)
     const combatRender = getCombatRenderState(combatWorld)
+
+    // --- Target lock evaluation ---
+    const lockUpdate = updateTargetLock(
+      targetLockState,
+      player,
+      combatRender.tanks,
+      mapData,
+      playerWeapon.lockOnRange,
+      playerWeapon.lockOnWindowWidthPercent,
+      playerWeapon.lockOnWindowHeightPercent
+    )
+
+    if (lockUpdate.justLost || lockUpdate.switchedTarget) {
+      audio.playLockLostChirp()
+    } // end if lock lost or switched
+
+    if (lockUpdate.justLocked || lockUpdate.switchedTarget) {
+      audio.playLockOnChirp()
+    } // end if lock acquired
+
+    if (input.firePending) {
+      input.firePending = false
+      if (playerFireCooldownSeconds <= 0) {
+        audio.fireGunshot()
+        updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
+        if (playerWeapon.fireRateCooldownSeconds > 0) {
+          playerFireCooldownSeconds = playerWeapon.fireRateCooldownSeconds
+        } // end if fire rate applies
+        if (lockUpdate.lockedTank !== null) {
+          const playerSpeed = Math.hypot(player.x - previousPlayerX, player.y - previousPlayerY) / Math.max(deltaSeconds, 0.0001)
+          const speedFraction = Math.min(1, playerSpeed / PLAYER_SPEED)
+          spawnPlayerBulletToward(
+            combatWorld,
+            player,
+            lockUpdate.lockedTank.x,
+            lockUpdate.lockedTank.y,
+            playerWeapon.accuracy,
+            speedFraction,
+            playerWeapon.damagePerShot,
+            playerWeapon.bulletSpeed,
+            playerWeapon.maxRange
+          )
+        } else {
+          spawnPlayerBullet(combatWorld, player, playerWeapon.damagePerShot, playerWeapon.bulletSpeed, playerWeapon.maxRange)
+        } // end if locked target for accuracy cone
+      } // end if fire rate cooldown elapsed
+    } // end if fire pending
+
     const awareness = computeObstructionAwareness(player, combatRender.tanks, mapData, sprites)
 
     const playerAudioState = {
@@ -464,7 +623,8 @@ function startTestMap(): void {
       bullets: combatRender.bullets,
       player,
       zBuffer,
-      muzzleFlashAlpha
+      muzzleFlashAlpha,
+      lockedTankId: targetLockState.lockedTankId
     })
 
     requestAnimationFrame(gameLoop)
