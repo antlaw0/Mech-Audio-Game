@@ -7,6 +7,8 @@ export class StrikerEnemyDefinition extends EnemyDefinitionBase {
       name: 'Striker Walker',
       maxHp: 22,
       collisionRadius: 0.42,
+      airborne: false,
+      flightHeight: 0,
       movementSpeed: 1.8,
       projectileSpeed: 36,
       shotDamage: 12,

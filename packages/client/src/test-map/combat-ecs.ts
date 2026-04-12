@@ -57,6 +57,11 @@ const EnemyProfile = defineComponent({
   id: Types.ui8
 })
 
+const Flight = defineComponent({
+  airborne: Types.ui8,
+  height: Types.f32
+})
+
 const Behavior = defineComponent({
   movementAngle: Types.f32,
   movementTimer: Types.f32,
@@ -109,6 +114,7 @@ function addTank(world: CombatEcsWorld, x: number, y: number, enemyId: EnemyId =
   addComponent(world, Health, tank)
   addComponent(world, Behavior, tank)
   addComponent(world, EnemyProfile, tank)
+  addComponent(world, Flight, tank)
   addComponent(world, TankExplosion, tank)
 
   Position.x[tank] = x
@@ -121,6 +127,8 @@ function addTank(world: CombatEcsWorld, x: number, y: number, enemyId: EnemyId =
   Meta.alive[tank] = 1
   Health.hp[tank] = definition.maxHp
   EnemyProfile.id[tank] = ENEMY_NUMERIC_ID[enemyId]
+  Flight.airborne[tank] = definition.airborne ? 1 : 0
+  Flight.height[tank] = definition.airborne ? Math.max(0, definition.flightHeight) : 0
   Behavior.movementAngle[tank] = Math.random() * Math.PI * 2
   Behavior.movementTimer[tank] = 0
   Behavior.cannonFireCooldown[tank] = 0
@@ -271,6 +279,7 @@ function addTankFromConfig(world: CombatEcsWorld, x: number, y: number, config: 
   addComponent(world, Health, tank)
   addComponent(world, Behavior, tank)
   addComponent(world, EnemyProfile, tank)
+  addComponent(world, Flight, tank)
   addComponent(world, TankExplosion, tank)
   Position.x[tank] = x
   Position.y[tank] = y
@@ -282,6 +291,8 @@ function addTankFromConfig(world: CombatEcsWorld, x: number, y: number, config: 
   Meta.alive[tank] = 1
   Health.hp[tank] = config.maxHp
   EnemyProfile.id[tank] = ENEMY_NUMERIC_ID[config.id]
+  Flight.airborne[tank] = config.airborne ? 1 : 0
+  Flight.height[tank] = config.airborne ? Math.max(0, config.flightHeight) : 0
   Behavior.movementAngle[tank] = Math.random() * Math.PI * 2
   Behavior.movementTimer[tank] = 0
   Behavior.cannonFireCooldown[tank] = 0
@@ -395,7 +406,8 @@ function computeFloorCeilHitDistance(pitch: number): number {
   } // end if no pitch
 
   if (pitch > 0) {
-    return (1 - PLAYER_HEIGHT) / Math.tan(pitch)
+    // No artificial ceiling: upward shots should only expire by max range or world collisions.
+    return BULLET_MAX_DIST
   } // end if upward pitch
 
   return PLAYER_HEIGHT / Math.tan(-pitch)
@@ -496,7 +508,7 @@ export function stepCombatEcsWorld(
       Behavior.attackWindupSeconds[tank] = newWindup
       if (newWindup <= 0 && canShootByLos && dist < enemyDefinition.behavior.preferredEngageRange) {
         spawnTankProjectile(world, tank, nextX, nextY, player.x, player.y)
-        audio.playEnemyAttack(`tank-${tank}`)
+        audio.playEnemyAttack(`tank-${tank}`, enemyDefinition.id)
       } // end if windup completed and target valid
     } else {
       const newCooldown = Math.max(0, cannonCooldown - deltaSeconds)
@@ -504,7 +516,7 @@ export function stepCombatEcsWorld(
       if (canShootByLos && dist < enemyDefinition.behavior.preferredEngageRange && newCooldown <= 0) {
         Behavior.attackWindupSeconds[tank] = threatDelaySeconds
         Behavior.cannonFireCooldown[tank] = enemyDefinition.fireRateSeconds
-        audio.playEnemyThreatCue(`tank-${tank}`)
+        audio.playEnemyThreatCue(`tank-${tank}`, enemyDefinition.id)
       } // end if tank can start cannon telegraph
     } // end if cannon windup or cooldown path
   } // end for each tank
@@ -742,12 +754,15 @@ export function getCombatRenderState(world: CombatEcsWorld): {
 
     tanks.push({
       id: tank,
+      enemyType: profile.id,
       x,
       y,
       radius,
       angle,
       velocityX,
       velocityY,
+      airborne: (Flight.airborne[tank] ?? 0) === 1,
+      height: Math.max(0, Flight.height[tank] ?? 0),
       health: Math.max(0, hp),
       maxHealth: profile.maxHp,
       alive,

@@ -2,6 +2,12 @@ import type { Vec2 } from '../utils/vector.js'
 
 export type ObstacleMaterial = 'metal' | 'concrete' | 'foliage'
 export type EnemyType = 'tank' | 'mech' | 'helicopter' | 'drone'
+export type VerticalLayer = 'ground' | 'air'
+export type ProjectileExpiryMode = 'impact' | 'remove' | 'explode'
+
+export interface VerticalityConfig {
+  airLayerHeight: number
+}
 
 export interface WorldBounds {
   minX: number
@@ -28,6 +34,8 @@ export interface PlayerState {
   velocity: Vec2
   heading: number
   health: number
+  layer: VerticalLayer
+  altitude: number
 }
 
 export interface EnemyState {
@@ -41,6 +49,23 @@ export interface EnemyState {
   inCover: boolean
   seesPlayer: boolean
   fireCooldown: number
+  maxHealth: number
+  layer: VerticalLayer
+  altitude: number
+  movementSpeed: number
+  turnSpeed: number
+  detectionRadius: number
+  attackRange: number
+  shotDamage: number
+  projectileSpeed: number
+  projectileLifeSeconds: number
+  fireIntervalSeconds: number
+  loopSound: string
+  fireSound: string
+  loadSound: string | null
+  hitSound: string
+  deathSound: string
+  explosiveProjectile: boolean
 }
 
 export interface BulletState {
@@ -49,6 +74,10 @@ export interface BulletState {
   position: Vec2
   velocity: Vec2
   lifeSeconds: number
+  damage: number
+  targetLayer: VerticalLayer
+  altitude: number
+  expiryMode: ProjectileExpiryMode
 }
 
 export interface SweepResult {
@@ -85,6 +114,7 @@ export interface DebugValues {
 export interface WorldState {
   devMode: boolean
   timeSeconds: number
+  verticality: VerticalityConfig
   bounds: WorldBounds
   objective: Objective
   player: PlayerState

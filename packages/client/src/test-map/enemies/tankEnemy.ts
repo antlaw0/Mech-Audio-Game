@@ -7,6 +7,8 @@ export class TankEnemyDefinition extends EnemyDefinitionBase {
       name: 'Titan Tank',
       maxHp: 30,
       collisionRadius: 0.5,
+      airborne: false,
+      flightHeight: 0,
       movementSpeed: 1.2,
       projectileSpeed: 30,
       shotDamage: 18,

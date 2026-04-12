@@ -5,6 +5,8 @@ export abstract class EnemyDefinitionBase {
   readonly name: string
   readonly maxHp: number
   readonly collisionRadius: number
+  readonly airborne: boolean
+  readonly flightHeight: number
   readonly movementSpeed: number
   readonly projectileSpeed: number
   readonly shotDamage: number
@@ -19,6 +21,8 @@ export abstract class EnemyDefinitionBase {
     this.name = config.name
     this.maxHp = config.maxHp
     this.collisionRadius = config.collisionRadius
+    this.airborne = config.airborne
+    this.flightHeight = config.flightHeight
     this.movementSpeed = config.movementSpeed
     this.projectileSpeed = config.projectileSpeed
     this.shotDamage = config.shotDamage

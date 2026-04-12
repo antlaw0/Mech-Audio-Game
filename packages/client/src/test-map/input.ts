@@ -109,6 +109,10 @@ export function bindInput(
         input.spawnBrutePending = true
       } // end if Numpad3
 
+      if (event.code === 'Numpad4') {
+        input.spawnHelicopterPending = true
+      } // end if Numpad4
+
       if (event.code === 'KeyQ') {
         audio.setAimAssistEnabled(!audio.isAimAssistEnabled())
       } // end if KeyQ toggle aim assist
@@ -213,6 +217,10 @@ export function bindInput(
     if (event.code === 'Numpad3') {
       input.spawnBrutePending = false
     } // end if Numpad3
+
+    if (event.code === 'Numpad4') {
+      input.spawnHelicopterPending = false
+    } // end if Numpad4
 
     if (
       (event.code === 'ArrowLeft' || event.code === 'ArrowRight' || event.code === 'ArrowUp' || event.code === 'ArrowDown') &&

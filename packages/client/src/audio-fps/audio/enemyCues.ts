@@ -1,34 +1,68 @@
 import * as Tone from 'tone'
 import audioConfig from '../config/audioConfig.json'
+import type { EnemyState } from '../core/worldTypes.js'
 import { clamp, remap } from '../utils/mathUtils.js'
 
 export type EnemyCueType =
-  | 'move-loop'
+  | 'spawn'
   | 'los-enter'
   | 'los-lost'
   | 'fire'
+  | 'hit'
   | 'destroyed'
   | 'cover-enter'
   | 'cover-leave'
 
 interface EnemyCueRuntime {
-  movementOsc: Tone.Oscillator
-  movementGain: Tone.Gain
   oneShotSynth: Tone.Synth
   trackingSynth: Tone.Synth
   inCover: boolean
 }
 
+interface EnemySampleProfile {
+  fireSound: string
+  loadSound: string | null
+  hitSound: string
+  deathSound: string
+}
+
+interface SamplePool {
+  voices: Tone.Player[]
+  cursor: number
+}
+
 export class EnemyCues {
   private readonly runtimes = new Map<string, EnemyCueRuntime>()
+  private readonly sampleProfiles = new Map<string, EnemySampleProfile>()
+  private readonly samplePools = new Map<string, SamplePool>()
 
   constructor(private readonly log: (message: string) => void) {}
 
+  registerEnemy(enemy: EnemyState): void {
+    this.sampleProfiles.set(enemy.id, {
+      fireSound: enemy.fireSound,
+      loadSound: enemy.loadSound,
+      hitSound: enemy.hitSound,
+      deathSound: enemy.deathSound
+    })
+
+    this.primeSample(enemy.fireSound)
+    this.primeSample(enemy.hitSound)
+    this.primeSample(enemy.deathSound)
+    if (enemy.loadSound) {
+      this.primeSample(enemy.loadSound)
+    }
+  }
+
   playEnemyCue(enemyId: string, cueType: EnemyCueType): void {
     const runtime = this.getOrCreate(enemyId)
+    const profile = this.sampleProfiles.get(enemyId)
 
-    if (cueType === 'move-loop') {
-      runtime.movementGain.gain.rampTo(0.08, 0.08)
+    if (cueType === 'spawn') {
+      if (profile?.loadSound) {
+        this.playSample(profile.loadSound)
+      }
+      this.log(`[audio] enemy=${enemyId} spawned`)
       return
     }
 
@@ -45,14 +79,31 @@ export class EnemyCues {
     }
 
     if (cueType === 'fire') {
-      runtime.oneShotSynth.triggerAttackRelease(320, '32n')
+      if (profile) {
+        this.playSample(profile.fireSound)
+      } else {
+        runtime.oneShotSynth.triggerAttackRelease(320, '32n')
+      }
       this.log(`[audio] enemy=${enemyId} fired`)
       return
     }
 
+    if (cueType === 'hit') {
+      if (profile) {
+        this.playSample(profile.hitSound)
+      } else {
+        runtime.oneShotSynth.triggerAttackRelease(150, '32n')
+      }
+      this.log(`[audio] enemy=${enemyId} hit`)
+      return
+    }
+
     if (cueType === 'destroyed') {
-      runtime.oneShotSynth.triggerAttackRelease(90, '8n')
-      runtime.movementGain.gain.rampTo(0, 0.2)
+      if (profile) {
+        this.playSample(profile.deathSound)
+      } else {
+        runtime.oneShotSynth.triggerAttackRelease(90, '8n')
+      }
       this.log(`[audio] enemy=${enemyId} destroyed`)
       return
     }
@@ -101,10 +152,6 @@ export class EnemyCues {
       return existing
     }
 
-    const movementGain = new Tone.Gain(0).toDestination()
-    const movementOsc = new Tone.Oscillator({ frequency: 140, type: 'sawtooth' }).connect(movementGain)
-    movementOsc.start()
-
     const oneShotSynth = new Tone.Synth({
       oscillator: { type: 'triangle' },
       envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.05 }
@@ -116,14 +163,51 @@ export class EnemyCues {
     }).toDestination()
 
     const created: EnemyCueRuntime = {
-      movementOsc,
-      movementGain,
       oneShotSynth,
       trackingSynth,
       inCover: false
     }
 
     this.runtimes.set(enemyId, created)
+    return created
+  }
+
+  playSample(audioFile: string): void {
+    const pool = this.getOrCreateSamplePool(audioFile)
+    for (let offset = 0; offset < pool.voices.length; offset += 1) {
+      const index = (pool.cursor + offset) % pool.voices.length
+      const voice = pool.voices[index]
+      if (!voice) {
+        continue
+      }
+      if (!voice.loaded || voice.state === 'started') {
+        continue
+      }
+
+      voice.start()
+      pool.cursor = (index + 1) % pool.voices.length
+      return
+    }
+  }
+
+  private primeSample(audioFile: string): void {
+    this.getOrCreateSamplePool(audioFile)
+  }
+
+  private getOrCreateSamplePool(audioFile: string): SamplePool {
+    const existing = this.samplePools.get(audioFile)
+    if (existing) {
+      return existing
+    }
+
+    const gain = new Tone.Gain(audioConfig.enemyVolume).toDestination()
+    const voices = Array.from({ length: 3 }, () => new Tone.Player(audioFile).connect(gain))
+    const created: SamplePool = {
+      voices,
+      cursor: 0
+    }
+
+    this.samplePools.set(audioFile, created)
     return created
   }
 }

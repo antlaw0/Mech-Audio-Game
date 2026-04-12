@@ -361,6 +361,56 @@ function createTankProfile(enemyId: string, context: AudioContext): EnemyAudioPr
   } // end object enemy profile
 } // end function createTankProfile
 
+function createHelicopterProfile(enemyId: string, context: AudioContext): EnemyAudioProfile {
+  const filter = new Tone.Filter({ type: 'lowpass', frequency: 3400, Q: 0.5 })
+  const doppler = new Tone.PitchShift(0)
+  const gain = new Tone.Gain(0)
+  const panner = context.createPanner()
+
+  panner.panningModel = 'HRTF'
+  panner.distanceModel = 'inverse'
+  panner.refDistance = 1
+  panner.maxDistance = AUDIO_CONFIG.enemy.maxDistance
+  panner.rolloffFactor = 1.2
+  panner.coneInnerAngle = 360
+  panner.coneOuterAngle = 0
+  panner.coneOuterGain = 0
+
+  return {
+    id: enemyId,
+    type: AUDIO_CONFIG.helicopter.type,
+    category: AUDIO_CONFIG.helicopter.category,
+    sounds: {
+      idleLoop: new Tone.Player('assets/sounds/helicopterLoop.wav'),
+      movementLoop: new Tone.Player('assets/sounds/helicopterLoop.wav'),
+      passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
+      threatCue: new Tone.Player('assets/sounds/reload.ogg'),
+      attackSound: new Tone.Player('assets/sounds/pistol_fire.ogg'),
+      hurtSound: new Tone.Player('assets/sounds/tankHit.ogg'),
+      deathSound: new Tone.Player('assets/sounds/explosion_2a.ogg')
+    },
+    effects: {
+      doppler,
+      filter,
+      gain,
+      panner
+    },
+    params: {
+      baseVolume: AUDIO_CONFIG.helicopter.baseVolume,
+      passivePingRateMs: AUDIO_CONFIG.helicopter.passivePingRateMs,
+      movementVariance: AUDIO_CONFIG.helicopter.movementVariance,
+      threatCueDelayMs: AUDIO_CONFIG.helicopter.threatCueDelayMs
+    }
+  }
+} // end function createHelicopterProfile
+
+function createEnemyProfile(enemyId: string, enemyType: string, context: AudioContext): EnemyAudioProfile {
+  if (enemyType === AUDIO_CONFIG.helicopter.type) {
+    return createHelicopterProfile(enemyId, context)
+  } // end if helicopter
+  return createTankProfile(enemyId, context)
+} // end function createEnemyProfile
+
 export function createAudioController(): AudioController {
   let audioStarted = false
   let audioPaused = false
@@ -1142,32 +1192,32 @@ export function createAudioController(): AudioController {
     } // end for each sonar echo
   } // end function emitEnvironmentalSonar
 
-  const playEnemyThreatCue = (enemyId: string): void => {
+  const playEnemyThreatCue = (enemyId: string, enemyType: string = AUDIO_CONFIG.tank.type): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryEnemies) {
       return
     } // end if audio not started or enemies category disabled
-    getOrCreateEnemyRuntime(enemyId, AUDIO_CONFIG.tank.type).playThreatCue()
+    getOrCreateEnemyRuntime(enemyId, enemyType).playThreatCue()
   } // end function playEnemyThreatCue
 
-  const playEnemyAttack = (enemyId: string): void => {
+  const playEnemyAttack = (enemyId: string, enemyType: string = AUDIO_CONFIG.tank.type): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryEnemies) {
       return
     } // end if audio not started or enemies category disabled
-    getOrCreateEnemyRuntime(enemyId, AUDIO_CONFIG.tank.type).playAttack()
+    getOrCreateEnemyRuntime(enemyId, enemyType).playAttack()
   } // end function playEnemyAttack
 
-  const playEnemyHurt = (enemyId: string): void => {
+  const playEnemyHurt = (enemyId: string, enemyType: string = AUDIO_CONFIG.tank.type): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryEnemies) {
       return
     } // end if audio not started or enemies category disabled
-    getOrCreateEnemyRuntime(enemyId, AUDIO_CONFIG.tank.type).playHurt()
+    getOrCreateEnemyRuntime(enemyId, enemyType).playHurt()
   } // end function playEnemyHurt
 
-  const playEnemyDeath = (enemyId: string): void => {
+  const playEnemyDeath = (enemyId: string, enemyType: string = AUDIO_CONFIG.tank.type): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryEnemies) {
       return
     } // end if audio not started or enemies category disabled
-    getOrCreateEnemyRuntime(enemyId, AUDIO_CONFIG.tank.type).playDeath()
+    getOrCreateEnemyRuntime(enemyId, enemyType).playDeath()
   } // end function playEnemyDeath
 
   const fireGunshot = (): void => {
@@ -1369,6 +1419,15 @@ export function createAudioController(): AudioController {
     void footstepAudio.play().catch(() => undefined)
   } // end function playFootstep
 
+  const stopFootstep = (): void => {
+    if (!audioStarted) {
+      return
+    } // end if audio not started
+
+    footstepAudio.pause()
+    footstepAudio.currentTime = 0
+  } // end function stopFootstep
+
   const playBump = (): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
@@ -1451,12 +1510,15 @@ export function createAudioController(): AudioController {
   const getOrCreateEnemyRuntime = (enemyId: string, enemyType: string): EnemyAudioRuntime => {
     const existing = enemyRuntimes.get(enemyId)
     if (existing) {
-      return existing
+      if (existing.profile.type !== enemyType) {
+        existing.dispose()
+        enemyRuntimes.delete(enemyId)
+      } else {
+        return existing
+      } // end if runtime already matches enemy type
     } // end if runtime already exists
 
-    const profile = enemyType === AUDIO_CONFIG.tank.type
-      ? createTankProfile(enemyId, rawContext)
-      : createTankProfile(enemyId, rawContext)
+    const profile = createEnemyProfile(enemyId, enemyType, rawContext)
     const runtime = new EnemyAudioRuntime(profile)
     runtime.initializeLoops()
     enemyRuntimes.set(enemyId, runtime)
@@ -1472,6 +1534,7 @@ export function createAudioController(): AudioController {
     startServo,
     stopServo,
     playFootstep,
+    stopFootstep,
     playBump,
     playCollisionThud,
     playPitchCenterConfirm,

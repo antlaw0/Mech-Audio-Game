@@ -44,6 +44,15 @@ export const AUDIO_CONFIG = {
     passivePingRateMs: 1650,
     movementVariance: 0.14,
     threatCueDelayMs: 360
+  },
+  helicopter: {
+    type: 'helicopter',
+    category: 'air',
+    height: 2.8,
+    baseVolume: 1.15,
+    passivePingRateMs: 1200,
+    movementVariance: 0.2,
+    threatCueDelayMs: 320
   }
 } as const
 

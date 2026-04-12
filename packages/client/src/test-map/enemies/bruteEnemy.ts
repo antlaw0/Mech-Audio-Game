@@ -7,6 +7,8 @@ export class BruteEnemyDefinition extends EnemyDefinitionBase {
       name: 'Brute Siege Unit',
       maxHp: 55,
       collisionRadius: 0.62,
+      airborne: false,
+      flightHeight: 0,
       movementSpeed: 0.85,
       projectileSpeed: 24,
       shotDamage: 28,

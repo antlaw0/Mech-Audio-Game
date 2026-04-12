@@ -1,4 +1,4 @@
-export type EnemyId = 'tank' | 'striker' | 'brute'
+export type EnemyId = 'tank' | 'striker' | 'brute' | 'helicopter'
 
 export type EnemyMovementPattern = 'wander' | 'aggressive-wander' | 'hold-and-pivot'
 
@@ -21,6 +21,8 @@ export interface EnemyDefinitionConfig {
   name: string
   maxHp: number
   collisionRadius: number
+  airborne: boolean
+  flightHeight: number
   movementSpeed: number
   projectileSpeed: number
   shotDamage: number

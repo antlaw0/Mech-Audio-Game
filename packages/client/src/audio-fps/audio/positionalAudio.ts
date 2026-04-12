@@ -14,9 +14,9 @@ export interface PositionalSourceState {
 
 interface SourceNode {
   state: PositionalSourceState
-  gain: Tone.Gain
   panner: PannerNode
-  synth: Tone.Synth
+  gain: Tone.Gain
+  player: Tone.Player
 }
 
 export class PositionalAudioEngine {
@@ -43,13 +43,20 @@ export class PositionalAudioEngine {
     panner.positionY.value = initialPosition.y
     panner.positionZ.value = initialPosition.z
 
-    gain.connect(panner)
-    panner.connect(this.context.destination)
+    panner.connect(gain.input)
 
-    const synth = new Tone.Synth({
-      oscillator: { type: 'triangle' },
-      envelope: { attack: 0.01, decay: 0.15, sustain: 0, release: 0.08 }
-    }).connect(gain)
+    const player = new Tone.Player({
+      url: audioFile,
+      loop,
+      autostart: false,
+      onload: () => {
+        const source = this.sources.get(id)
+        if (!source || !source.state.active || !source.state.loop || source.player.state === 'started') {
+          return
+        }
+        source.player.start()
+      }
+    }).connect(panner)
 
     this.sources.set(id, {
       state: {
@@ -62,8 +69,12 @@ export class PositionalAudioEngine {
       },
       gain,
       panner,
-      synth
+      player
     })
+
+    if (loop && player.loaded && player.state !== 'started') {
+      player.start()
+    }
 
     this.log(`[audio] create positional source id=${id} file=${audioFile}`)
   }
@@ -96,10 +107,20 @@ export class PositionalAudioEngine {
     }
 
     source.state.active = isActive
-    source.gain.gain.rampTo(isActive ? 0.42 : 0, 0.1)
+    if (isActive && source.state.loop && source.player.loaded && source.player.state !== 'started') {
+      source.player.start()
+    }
+    if (!isActive && source.player.state === 'started') {
+      source.player.stop()
+    }
+    source.gain.gain.rampTo(isActive ? 0.001 : 0, 0.1)
   }
 
   updateFrame(listenerPosition: Vec3): void {
+    this.context.listener.positionX.value = listenerPosition.x
+    this.context.listener.positionY.value = listenerPosition.y
+    this.context.listener.positionZ.value = listenerPosition.z
+
     for (const source of this.sources.values()) {
       if (!source.state.active) {
         continue
@@ -118,11 +139,11 @@ export class PositionalAudioEngine {
       source.gain.gain.rampTo(volume * audioConfig.enemyVolume, 0.08)
 
       const speed = Math.hypot(source.state.velocity.x, source.state.velocity.y, source.state.velocity.z)
-      const dopplerShift = clamp((speed / 15) * 3, -3, 3)
-      source.synth.detune.rampTo(dopplerShift * 100, 0.1)
-
-      if (source.state.loop) {
-        source.synth.triggerAttackRelease(180 + volume * 140, '16n')
+      if (source.player.loaded) {
+        source.player.playbackRate = clamp(0.85 + speed / 12, 0.85, 1.35)
+        if (source.state.loop && source.player.state !== 'started') {
+          source.player.start()
+        }
       }
     }
   }

@@ -28,6 +28,7 @@ export function createInputState(): InputState {
     snapWestPending: false,
     spawnTankPending: false,
     spawnStrikerPending: false,
-    spawnBrutePending: false
+    spawnBrutePending: false,
+    spawnHelicopterPending: false
   } // end object input state
 } // end function createInputState

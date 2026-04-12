@@ -11,11 +11,18 @@ interface PhysicsConfig {
   turnSpeed: number
 }
 
-const DEFAULT_PHYSICS: PhysicsConfig = {
+const GROUND_PHYSICS: PhysicsConfig = {
   acceleration: 11,
   maxSpeed: 5.4,
   friction: 7.2,
   turnSpeed: 2.4
+}
+
+const AIR_PHYSICS: PhysicsConfig = {
+  acceleration: 13,
+  maxSpeed: 7.2,
+  friction: 5.2,
+  turnSpeed: 2.7
 }
 
 export const stepPlayerPhysics = (
@@ -24,7 +31,7 @@ export const stepPlayerPhysics = (
   obstacles: Obstacle[],
   bounds: WorldBounds,
   dt: number,
-  config: PhysicsConfig = DEFAULT_PHYSICS
+  config: PhysicsConfig = player.layer === 'air' ? AIR_PHYSICS : GROUND_PHYSICS
 ): { collided: boolean; boundaryDistance: number } => {
   const moveIntent = vec2(0, 0)
 

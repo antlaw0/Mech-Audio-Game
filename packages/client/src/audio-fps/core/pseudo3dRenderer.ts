@@ -28,12 +28,15 @@ export class Pseudo3dRenderer {
 
   render(world: WorldState, viewportWidth: number, viewportHeight: number): void {
     this.graphics.clear()
+    const horizon = viewportHeight * 0.5
 
     // Sky and floor layers.
     this.graphics.fillStyle(0x081827, 1)
-    this.graphics.fillRect(0, 0, viewportWidth, viewportHeight * 0.5)
+    this.graphics.fillRect(0, 0, viewportWidth, horizon)
     this.graphics.fillStyle(0x0e1115, 1)
-    this.graphics.fillRect(0, viewportHeight * 0.5, viewportWidth, viewportHeight * 0.5)
+    this.graphics.fillRect(0, horizon, viewportWidth, viewportHeight - horizon)
+    this.graphics.fillStyle(0x113247, 0.18)
+    this.graphics.fillRect(0, horizon - 48, viewportWidth, 24)
 
     const projectionPlane = viewportWidth / (2 * Math.tan(FOV / 2))
     const playerX = world.player.position.x
@@ -51,12 +54,14 @@ export class Pseudo3dRenderer {
       const correctedDistance = Math.max(0.001, hit.distance * Math.cos(rayAngle - playerHeading))
       this.depthByColumn[x] = correctedDistance
 
-      const wallHeight = Math.min(viewportHeight, projectionPlane / correctedDistance)
-      const top = viewportHeight * 0.5 - wallHeight * 0.5
+      const top = this.projectScreenY(world.verticality.airLayerHeight, world.player.altitude, correctedDistance, horizon, projectionPlane)
+      const bottom = this.projectScreenY(0, world.player.altitude, correctedDistance, horizon, projectionPlane)
+      const wallTop = Math.min(top, bottom)
+      const wallHeight = Math.max(1, Math.abs(bottom - top))
       const shade = Math.max(0.18, 1 - correctedDistance / 32)
 
       this.graphics.fillStyle(materialColor(hit.material), shade)
-      this.graphics.fillRect(x, top, rayStepPixels, wallHeight)
+      this.graphics.fillRect(x, wallTop, rayStepPixels, wallHeight)
     }
 
     this.renderEnemies(world.enemies, world, viewportWidth, viewportHeight, projectionPlane)
@@ -70,6 +75,7 @@ export class Pseudo3dRenderer {
     viewportHeight: number,
     projectionPlane: number
   ): void {
+    const horizon = viewportHeight * 0.5
     const visible = enemies
       .filter((enemy) => enemy.alive)
       .map((enemy) => {
@@ -90,7 +96,10 @@ export class Pseudo3dRenderer {
 
     for (const entry of visible) {
       const screenX = (0.5 + entry.relative / FOV) * viewportWidth
-      const spriteHeight = Math.max(8, projectionPlane / Math.max(0.001, entry.distance))
+      const spriteHeight = Math.max(
+        8,
+        (projectionPlane * this.getEnemyVisualHeight(entry.enemy)) / Math.max(0.001, entry.distance)
+      )
       const spriteWidth = spriteHeight * 0.45
       const left = Math.floor(screenX - spriteWidth * 0.5)
 
@@ -100,12 +109,22 @@ export class Pseudo3dRenderer {
       }
 
       const alpha = Math.max(0.25, 1 - entry.distance / 28)
-      const bodyColor = entry.enemy.type === 'tank' ? 0xd64933 : entry.enemy.type === 'drone' ? 0xf0cd5d : 0xd36a41
+      const bodyColor =
+        entry.enemy.type === 'tank' ? 0xd64933 :
+          entry.enemy.type === 'drone' ? 0xf0cd5d :
+            entry.enemy.type === 'helicopter' ? 0x7cc7de : 0xd36a41
+      const bottom = this.projectScreenY(
+        entry.enemy.altitude,
+        world.player.altitude,
+        Math.max(0.001, entry.distance),
+        horizon,
+        projectionPlane
+      )
 
       this.graphics.fillStyle(bodyColor, alpha)
       this.graphics.fillRect(
         left,
-        viewportHeight * 0.5 - spriteHeight * 0.4,
+        bottom - spriteHeight,
         spriteWidth,
         spriteHeight
       )
@@ -194,5 +213,19 @@ export class Pseudo3dRenderer {
     const t1 = (-b + sqrtD) / (2 * a)
     const t = t0 > 0.0001 ? t0 : t1 > 0.0001 ? t1 : -1
     return t
+  }
+
+  private getEnemyVisualHeight(enemy: EnemyState): number {
+    return enemy.layer === 'air' ? 0.7 : 0.85
+  }
+
+  private projectScreenY(
+    worldHeight: number,
+    viewerHeight: number,
+    distance: number,
+    horizon: number,
+    projectionPlane: number
+  ): number {
+    return horizon - ((worldHeight - viewerHeight) / Math.max(0.001, distance)) * projectionPlane
   }
 }

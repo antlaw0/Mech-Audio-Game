@@ -100,6 +100,8 @@ function startTestMap(): void {
   const editorMaxHpInput = getInput('editorMaxHp')
   const editorCollisionRadiusInput = getInput('editorCollisionRadius')
   const editorMovementSpeedInput = getInput('editorMovementSpeed')
+  const editorAirborneInput = getInput('editorAirborne')
+  const editorFlightHeightInput = getInput('editorFlightHeight')
   const editorProjectileSpeedInput = getInput('editorProjectileSpeed')
   const editorShotDamageInput = getInput('editorShotDamage')
   const editorFireRateInput = getInput('editorFireRateSeconds')
@@ -159,6 +161,7 @@ function startTestMap(): void {
     input.spawnTankPending = false
     input.spawnStrikerPending = false
     input.spawnBrutePending = false
+    input.spawnHelicopterPending = false
   } // end function clearGameplayInputs
 
   const setPauseOverlayVisible = (visible: boolean): void => {
@@ -231,6 +234,8 @@ function startTestMap(): void {
     if (editorNameInput) editorNameInput.value = config.name
     if (editorMaxHpInput) editorMaxHpInput.value = String(config.maxHp)
     if (editorCollisionRadiusInput) editorCollisionRadiusInput.value = String(config.collisionRadius)
+    if (editorAirborneInput) editorAirborneInput.checked = config.airborne
+    if (editorFlightHeightInput) editorFlightHeightInput.value = String(config.flightHeight)
     if (editorMovementSpeedInput) editorMovementSpeedInput.value = String(config.movementSpeed)
     if (editorProjectileSpeedInput) editorProjectileSpeedInput.value = String(config.projectileSpeed)
     if (editorShotDamageInput) editorShotDamageInput.value = String(config.shotDamage)
@@ -259,6 +264,8 @@ function startTestMap(): void {
       name: editorNameInput?.value.trim() || def.name,
       maxHp: Math.max(1, Math.round(parseNum(editorMaxHpInput, def.maxHp))),
       collisionRadius: Math.max(0.05, parseNum(editorCollisionRadiusInput, def.collisionRadius)),
+      airborne: editorAirborneInput?.checked ?? def.airborne,
+      flightHeight: Math.max(0, parseNum(editorFlightHeightInput, def.flightHeight)),
       movementSpeed: Math.max(0, parseNum(editorMovementSpeedInput, def.movementSpeed)),
       projectileSpeed: Math.max(1, parseNum(editorProjectileSpeedInput, def.projectileSpeed)),
       shotDamage: Math.max(1, Math.round(parseNum(editorShotDamageInput, def.shotDamage))),
@@ -419,6 +426,9 @@ function startTestMap(): void {
     } else if (event.code === 'Numpad3') {
       event.preventDefault()
       openEnemyEditorModal('brute')
+    } else if (event.code === 'Numpad4') {
+      event.preventDefault()
+      openEnemyEditorModal('helicopter')
     } // end if numpad enemy editor keys
   })
 
@@ -499,6 +509,16 @@ function startTestMap(): void {
       } // end if awareness status element exists
     } // end if spawn brute pending
 
+    if (input.spawnHelicopterPending) {
+      input.spawnHelicopterPending = false
+      const spawned = spawnRandomEnemy(combatWorld, mapData, player, 'helicopter')
+      if (awarenessStatusElement) {
+        awarenessStatusElement.textContent = spawned
+          ? 'AWARENESS: HELICOPTER SPAWNED'
+          : 'AWARENESS: NO VALID SPAWN LOCATION'
+      } // end if awareness status element exists
+    } // end if spawn helicopter pending
+
     stepCombatEcsWorld(combatWorld, mapData, audio, player, deltaSeconds)
     const combatRender = getCombatRenderState(combatWorld)
 
@@ -562,15 +582,15 @@ function startTestMap(): void {
     }
     const enemyAudioStates = combatRender.tanks.map((tank) => ({
       id: `tank-${tank.id}`,
-      type: 'tank',
-      category: 'ground',
-      position: { x: tank.x, y: tank.y, z: 0 },
+      type: tank.enemyType,
+      category: tank.airborne ? 'air' : 'ground',
+      position: { x: tank.x, y: tank.y, z: tank.height },
       radius: tank.radius,
       velocity: { x: tank.velocityX, y: tank.velocityY, z: 0 },
       facingAngle: tank.angle,
       isMoving: Math.hypot(tank.velocityX, tank.velocityY) > 0.05,
       isAlive: tank.alive,
-      height: 0
+      height: tank.height
     }))
 
     if (pendingManualPing) {

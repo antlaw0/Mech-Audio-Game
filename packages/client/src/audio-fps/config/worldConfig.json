@@ -1,5 +1,6 @@
 {
   "playerSpawn": { "x": 3, "y": 3, "heading": 0 },
+  "verticality": { "airLayerHeight": 2 },
   "boundaries": { "minX": 0, "minY": 0, "maxX": 64, "maxY": 64 },
   "obstacles": [
     { "id": "w1", "x": 10, "y": 8, "radius": 2.2, "material": "concrete" },
@@ -10,6 +11,7 @@
   ],
   "enemySpawns": [
     { "id": "tank-alpha", "type": "tank", "x": 26, "y": 26 },
+    { "id": "helicopter-delta", "type": "helicopter", "x": 32, "y": 18 },
     { "id": "mech-beta", "type": "mech", "x": 42, "y": 30 },
     { "id": "drone-gamma", "type": "drone", "x": 22, "y": 44 }
   ],

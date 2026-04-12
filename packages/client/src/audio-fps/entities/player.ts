@@ -5,5 +5,7 @@ export const createPlayer = (x: number, y: number, heading: number): PlayerState
   position: vec2(x, y),
   velocity: vec2(0, 0),
   heading,
-  health: 100
+  health: 100,
+  layer: 'ground',
+  altitude: 0
 })

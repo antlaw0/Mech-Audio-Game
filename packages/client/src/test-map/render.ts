@@ -205,7 +205,7 @@ export function renderFrame(args: RenderFrameArgs): void {
 
     const bodyHeight = Math.max(20, (projectionPlane * 1.2) / entry.dist)
     const bodyWidth = Math.max(12, bodyHeight * 0.5)
-    const bodyY = centerY + bodyHeight * 0.15
+    const bodyY = centerY + bodyHeight * 0.15 - (entry.tank.height / entry.dist) * projectionPlane
 
     if (entry.tank.alive) {
       // Tank body is larger than enemy.

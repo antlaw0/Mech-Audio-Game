@@ -40,6 +40,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   const { input, player, audio, sprites, mapData, state } = environment
   let isMoving = false
   let collided = false
+  let movementBlockedByObstacle = false
   let collisionDirection = 0
 
   let snappedFacing: number | null = null
@@ -116,6 +117,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
       moved = true
     } else {
       collided = true
+      movementBlockedByObstacle = true
       collisionDirection = normalizeAngle(Math.atan2(0, directionX) - player.angle)
     } // end if canMoveX
 
@@ -125,6 +127,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
       moved = true
     } else {
       collided = true
+      movementBlockedByObstacle = true
       collisionDirection = normalizeAngle(Math.atan2(directionY, 0) - player.angle)
     } // end if canMoveY
 
@@ -134,7 +137,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     } // end if moved
   } // end if has movement input
 
-  if (isMoving && audio.isAudioStarted()) {
+  if (isMoving && !movementBlockedByObstacle && audio.isAudioStarted()) {
     state.footstepTimerSeconds += deltaSeconds
     if (state.footstepTimerSeconds >= FOOTSTEP_INTERVAL_SECONDS) {
       audio.playFootstep()
@@ -142,6 +145,9 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     } // end if footstep timer reached
   } else {
     state.footstepTimerSeconds = 0
+    if (audio.isAudioStarted()) {
+      audio.stopFootstep()
+    } // end if footsteps should be silenced
   } // end if isMoving
 
   if (audio.isAudioStarted()) {

@@ -24,6 +24,7 @@ export interface InputState {
   spawnTankPending: boolean
   spawnStrikerPending: boolean
   spawnBrutePending: boolean
+  spawnHelicopterPending: boolean
 } // end interface InputState
 
 export interface WorldPosition {
@@ -113,12 +114,15 @@ export interface EnemyRender {
 
 export interface TankRender {
   id: number
+  enemyType: string
   x: number
   y: number
   radius: number
   angle: number
   velocityX: number
   velocityY: number
+  airborne: boolean
+  height: number
   health: number
   maxHealth: number
   alive: boolean
@@ -169,6 +173,7 @@ export interface AudioController {
   startServo: () => void
   stopServo: () => void
   playFootstep: () => void
+  stopFootstep: () => void
   playBump: () => void
   playPitchCenterConfirm: () => void
   fireGunshot: () => void
@@ -178,10 +183,10 @@ export interface AudioController {
   isAimAssistEnabled: () => boolean
   updateFrameAudio: (dt: number, player: PlayerAudioState, enemies: EnemyAudioState[], mapData: Uint8Array, sprites: SpriteObject[]) => void
   triggerActiveSonar: (player: PlayerAudioState, enemies: EnemyAudioState[], mapData: Uint8Array, sprites: SpriteObject[]) => void
-  playEnemyThreatCue: (enemyId: string) => void
-  playEnemyAttack: (enemyId: string) => void
-  playEnemyHurt: (enemyId: string) => void
-  playEnemyDeath: (enemyId: string) => void
+  playEnemyThreatCue: (enemyId: string, enemyType?: string) => void
+  playEnemyAttack: (enemyId: string, enemyType?: string) => void
+  playEnemyHurt: (enemyId: string, enemyType?: string) => void
+  playEnemyDeath: (enemyId: string, enemyType?: string) => void
   updateObstructionAwareness: (dt: number, awareness: ObstructionAwareness) => void
   updateBoundaryZoneCue: (distanceToBoundary: number, dt: number) => void
   emitEnvironmentalSonar: (echoes: SonarEcho[]) => void

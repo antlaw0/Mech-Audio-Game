@@ -10,6 +10,10 @@ export interface InputSnapshot {
   firePressed: boolean
   manualPingPressed: boolean
   compassPressed: boolean
+  spawnTankPressed: boolean
+  spawnMechPressed: boolean
+  spawnHelicopterPressed: boolean
+  spawnDronePressed: boolean
 }
 
 export class InputController {
@@ -27,6 +31,10 @@ export class InputController {
     space: Phaser.Input.Keyboard.Key
     p: Phaser.Input.Keyboard.Key
     c: Phaser.Input.Keyboard.Key
+    numpad1: Phaser.Input.Keyboard.Key
+    numpad2: Phaser.Input.Keyboard.Key
+    numpad3: Phaser.Input.Keyboard.Key
+    numpad4: Phaser.Input.Keyboard.Key
   }
 
   constructor(scene: Phaser.Scene) {
@@ -43,7 +51,11 @@ export class InputController {
       right: scene.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
       space: scene.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
       p: scene.input.keyboard!.addKey('P'),
-      c: scene.input.keyboard!.addKey('C')
+      c: scene.input.keyboard!.addKey('C'),
+      numpad1: scene.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ONE),
+      numpad2: scene.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_TWO),
+      numpad3: scene.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_THREE),
+      numpad4: scene.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_FOUR)
     }
   }
 
@@ -62,7 +74,11 @@ export class InputController {
       turnRight,
       firePressed: Phaser.Input.Keyboard.JustDown(this.keys.space),
       manualPingPressed: Phaser.Input.Keyboard.JustDown(this.keys.p),
-      compassPressed: Phaser.Input.Keyboard.JustDown(this.keys.c)
+      compassPressed: Phaser.Input.Keyboard.JustDown(this.keys.c),
+      spawnTankPressed: Phaser.Input.Keyboard.JustDown(this.keys.numpad1),
+      spawnMechPressed: Phaser.Input.Keyboard.JustDown(this.keys.numpad2),
+      spawnHelicopterPressed: Phaser.Input.Keyboard.JustDown(this.keys.numpad3),
+      spawnDronePressed: Phaser.Input.Keyboard.JustDown(this.keys.numpad4)
     }
   }
 }

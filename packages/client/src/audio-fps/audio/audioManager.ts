@@ -1,6 +1,6 @@
 import * as Tone from 'tone'
 import audioConfig from '../config/audioConfig.json'
-import type { WorldState } from '../core/worldTypes.js'
+import type { EnemyState, WorldState } from '../core/worldTypes.js'
 import { shortestAngleBetween } from '../utils/mathUtils.js'
 import { lengthVec2, subVec2 } from '../utils/vector.js'
 import { EnemyCues } from './enemyCues.js'
@@ -33,8 +33,33 @@ export class AudioManager {
     }
 
     await Tone.start()
+    await Tone.loaded()
     this.started = true
     this.eventLog('[audio] context started')
+  }
+
+  isStarted(): boolean {
+    return this.started
+  }
+
+  registerEnemy(enemy: EnemyState): void {
+    this.enemyCues.registerEnemy(enemy)
+  }
+
+  playEnemyCue(enemyId: string, cueType: 'spawn' | 'fire' | 'hit' | 'destroyed' | 'los-enter' | 'los-lost' | 'cover-enter' | 'cover-leave'): void {
+    if (!this.started) {
+      return
+    }
+
+    this.enemyCues.playEnemyCue(enemyId, cueType)
+  }
+
+  playWorldOneShot(audioFile: string): void {
+    if (!this.started) {
+      return
+    }
+
+    this.enemyCues.playSample(audioFile)
   }
 
   syncWorldAudio(world: WorldState): void {
@@ -45,21 +70,21 @@ export class AudioManager {
     const listener = {
       x: world.player.position.x,
       y: world.player.position.y,
-      z: 0
+      z: world.player.altitude * 8
     }
 
     for (const enemy of world.enemies) {
       const sourceId = `enemy-${enemy.id}`
-      this.positional.createPositionalSource(sourceId, `${enemy.type}.wav`, true, {
+      this.positional.createPositionalSource(sourceId, enemy.loopSound, true, {
         x: enemy.position.x,
         y: enemy.position.y,
-        z: enemy.type === 'helicopter' ? 8 : enemy.type === 'drone' ? 4 : 0
+        z: enemy.altitude * 8
       })
 
       this.positional.updateSourcePosition(sourceId, {
         x: enemy.position.x,
         y: enemy.position.y,
-        z: enemy.type === 'helicopter' ? 8 : enemy.type === 'drone' ? 4 : 0
+        z: enemy.altitude * 8
       })
       this.positional.setSourceVelocity(sourceId, {
         x: enemy.velocity.x,
@@ -67,7 +92,6 @@ export class AudioManager {
         z: 0
       })
       this.positional.setSourceActive(sourceId, enemy.alive)
-      this.enemyCues.playEnemyCue(enemy.id, 'move-loop')
     }
 
     this.positional.updateFrame(listener)

@@ -1,6 +1,6 @@
 import { clamp, remap, shortestAngleBetween } from '../utils/mathUtils.js'
 import { angleVec2, lengthVec2, subVec2, vec2 } from '../utils/vector.js'
-import type { CollisionResult, NavigationPingHit, Obstacle, PlayerState } from './worldTypes.js'
+import type { CollisionResult, NavigationPingHit, Obstacle, PlayerState, VerticalLayer } from './worldTypes.js'
 
 export interface NearbyObstacle {
   obstacle: Obstacle
@@ -14,6 +14,23 @@ export const resolvePlayerCollision = (
   nextY: number,
   obstacles: Obstacle[]
 ): CollisionResult => {
+  if (player.layer === 'air') {
+    return {
+      hit: false,
+      correctedPosition: vec2(nextX, nextY),
+      normal: vec2(0, 0)
+    }
+  }
+
+  return resolvePositionAgainstObstacles(nextX, nextY, obstacles, 0.58)
+}
+
+export const resolvePositionAgainstObstacles = (
+  nextX: number,
+  nextY: number,
+  obstacles: Obstacle[],
+  radius: number
+): CollisionResult => {
   let corrected = vec2(nextX, nextY)
   let hit = false
   let normal = vec2(0, 0)
@@ -22,7 +39,7 @@ export const resolvePlayerCollision = (
     const dx = corrected.x - obstacle.x
     const dy = corrected.y - obstacle.y
     const distance = Math.hypot(dx, dy)
-    const minDistance = obstacle.radius + 0.58
+    const minDistance = obstacle.radius + radius
     if (distance < minDistance) {
       hit = true
       const pushDistance = minDistance - Math.max(distance, 0.0001)
@@ -41,6 +58,10 @@ export const getNearestObstacles = (
   obstacles: Obstacle[],
   range: number
 ): NearbyObstacle[] => {
+  if (player.layer === 'air') {
+    return []
+  }
+
   const result: NearbyObstacle[] = []
   for (const obstacle of obstacles) {
     const offset = subVec2({ x: obstacle.x, y: obstacle.y }, player.position)
@@ -61,6 +82,10 @@ export const castNavigationPingRays = (
   rayCount: number,
   range: number
 ): NavigationPingHit[] => {
+  if (player.layer === 'air') {
+    return []
+  }
+
   const hits: NavigationPingHit[] = []
   const angleStep = (Math.PI * 2) / rayCount
 
@@ -103,4 +128,44 @@ export const obstacleWarningIntensity = (distance: number, nearDistance: number,
     return 0
   }
   return clamp(1 - remap(distance, nearDistance, farDistance, 0, 1), 0, 1)
+}
+
+export const lineOfSightBlockedByObstacles = (
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  startLayer: VerticalLayer,
+  endLayer: VerticalLayer,
+  obstacles: Obstacle[]
+): boolean => {
+  if (startLayer === 'air' || endLayer === 'air') {
+    return false
+  }
+
+  const dx = endX - startX
+  const dy = endY - startY
+  const total = Math.hypot(dx, dy)
+  if (total < 0.1) {
+    return false
+  }
+
+  const step = 0.45
+  const nx = dx / total
+  const ny = dy / total
+
+  for (let t = step; t < total; t += step) {
+    const sampleX = startX + nx * t
+    const sampleY = startY + ny * t
+    const blocked = obstacles.some((obstacle) => {
+      const ox = sampleX - obstacle.x
+      const oy = sampleY - obstacle.y
+      return ox * ox + oy * oy <= obstacle.radius * obstacle.radius
+    })
+    if (blocked) {
+      return true
+    }
+  }
+
+  return false
 }
