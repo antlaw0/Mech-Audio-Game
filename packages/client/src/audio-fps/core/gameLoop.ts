@@ -9,6 +9,7 @@ import type { BulletState, EnemyState, EnemyType, VerticalLayer, WorldState } fr
 import { stepPlayerPhysics } from './physics.js'
 import audioConfig from '../config/audioConfig.json'
 import type { EnemyBase } from '../entities/enemyBase.js'
+import type { AudioPanel } from '../ui/audioPanel.js'
 
 export class GameLoop {
   private autoSweepTimer = audioConfig.navigation.autoSweepIntervalSeconds
@@ -24,7 +25,8 @@ export class GameLoop {
     private readonly world: WorldState,
     private readonly input: InputController,
     private readonly audio: AudioManager,
-    private readonly debugText: Phaser.GameObjects.Text
+    private readonly debugText: Phaser.GameObjects.Text,
+    private readonly audioPanel: AudioPanel
   ) {
     this.enemyControllers = this.world.enemies.map((enemy) =>
       createEnemyControllerByType(
@@ -77,6 +79,9 @@ export class GameLoop {
       this.audio.uiAudio.playUI('impact')
     }
 
+    const playerSpeed = Math.hypot(this.world.player.velocity.x, this.world.player.velocity.y)
+    this.audio.updatePlayerLocomotionAudio(dt, playerSpeed, 'field')
+
     this.audio.updateBoundaryWarning(movement.boundaryDistance)
 
     for (const controller of this.enemyControllers) {
@@ -127,6 +132,10 @@ export class GameLoop {
       const dy = this.world.objective.y - this.world.player.position.y
       const angle = Math.atan2(dy, dx)
       this.audio.uiAudio.playCompassCue(angle)
+    }
+
+    if (controls.toggleAudioPanelPressed) {
+      this.audioPanel.toggle()
     }
 
     if (this.world.devMode) {
@@ -313,6 +322,7 @@ export class GameLoop {
   }
 
   private updateDebugOverlay(): void {
+    const audioStats = this.audio.getDebugStats()
     this.debugText.setText([
       'Audio FPS Prototype (Phaser + Tone.js)',
       'WASD move, Q/E turn, SPACE fire, C compass, P ping',
@@ -322,7 +332,11 @@ export class GameLoop {
       `Layer: ${this.world.player.layer} altitude=${this.world.player.altitude.toFixed(1)}`,
       `Nearest obstacle: ${this.world.debug.nearestObstacleDistance.toFixed(2)}`,
       `Enemies alive: ${this.world.debug.enemyCount}`,
-      `Auto sweep in: ${this.world.debug.sonarSweepSeconds.toFixed(1)}s`
+      `Auto sweep in: ${this.world.debug.sonarSweepSeconds.toFixed(1)}s`,
+      `Audio started=${audioStats.started} transients=${audioStats.activeTransientVoices}/${audioStats.totalTransientVoices} pools=${audioStats.samplePools}`,
+      `Audio req=${audioStats.transientRequests} drop=${audioStats.transientDropped} steal=${audioStats.transientSteals} restart=${audioStats.transientRestarts}`,
+      `Loops active=${audioStats.activeLoopSources}/${audioStats.totalLoopSources} recoveries=${audioStats.loopRecoveries}`,
+      `Terrain ambience active=${audioStats.ambienceActive} pools=${audioStats.terrainStepPools}`
     ])
   }
 

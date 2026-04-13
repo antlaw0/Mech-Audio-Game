@@ -14,6 +14,7 @@ export interface InputSnapshot {
   spawnMechPressed: boolean
   spawnHelicopterPressed: boolean
   spawnDronePressed: boolean
+  toggleAudioPanelPressed: boolean
 }
 
 export class InputController {
@@ -35,6 +36,7 @@ export class InputController {
     numpad2: Phaser.Input.Keyboard.Key
     numpad3: Phaser.Input.Keyboard.Key
     numpad4: Phaser.Input.Keyboard.Key
+    numpadMultiply: Phaser.Input.Keyboard.Key
   }
 
   constructor(scene: Phaser.Scene) {
@@ -55,7 +57,8 @@ export class InputController {
       numpad1: scene.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ONE),
       numpad2: scene.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_TWO),
       numpad3: scene.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_THREE),
-      numpad4: scene.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_FOUR)
+      numpad4: scene.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_FOUR),
+      numpadMultiply: scene.input.keyboard!.addKey('*')
     }
   }
 
@@ -78,7 +81,8 @@ export class InputController {
       spawnTankPressed: Phaser.Input.Keyboard.JustDown(this.keys.numpad1),
       spawnMechPressed: Phaser.Input.Keyboard.JustDown(this.keys.numpad2),
       spawnHelicopterPressed: Phaser.Input.Keyboard.JustDown(this.keys.numpad3),
-      spawnDronePressed: Phaser.Input.Keyboard.JustDown(this.keys.numpad4)
+      spawnDronePressed: Phaser.Input.Keyboard.JustDown(this.keys.numpad4),
+      toggleAudioPanelPressed: Phaser.Input.Keyboard.JustDown(this.keys.numpadMultiply)
     }
   }
 }

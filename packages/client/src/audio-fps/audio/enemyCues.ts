@@ -13,6 +13,25 @@ export type EnemyCueType =
   | 'cover-enter'
   | 'cover-leave'
 
+export type TransientPriority = 'low' | 'normal' | 'high' | 'critical'
+
+const PRIORITY_RANK: Record<TransientPriority, number> = {
+  low: 0,
+  normal: 1,
+  high: 2,
+  critical: 3
+}
+
+export interface EnemyCueMetrics {
+  activeTransientVoices: number
+  totalTransientVoices: number
+  samplePools: number
+  requests: number
+  dropped: number
+  steals: number
+  restarts: number
+}
+
 interface EnemyCueRuntime {
   oneShotSynth: Tone.Synth
   trackingSynth: Tone.Synth
@@ -26,8 +45,15 @@ interface EnemySampleProfile {
   deathSound: string
 }
 
+interface SampleVoice {
+  player: Tone.Player
+  lastStartTime: number
+  priorityRank: number
+}
+
 interface SamplePool {
-  voices: Tone.Player[]
+  gain: Tone.Gain
+  voices: SampleVoice[]
   cursor: number
 }
 
@@ -35,6 +61,13 @@ export class EnemyCues {
   private readonly runtimes = new Map<string, EnemyCueRuntime>()
   private readonly sampleProfiles = new Map<string, EnemySampleProfile>()
   private readonly samplePools = new Map<string, SamplePool>()
+  private readonly maxTransientVoices = audioConfig.voiceManagement?.maxTransientVoices ?? 48
+  private readonly defaultSamplePoolSize = audioConfig.voiceManagement?.defaultSamplePoolSize ?? 6
+  private readonly maxSamplePoolSize = audioConfig.voiceManagement?.maxSamplePoolSize ?? 16
+  private requests = 0
+  private dropped = 0
+  private steals = 0
+  private restarts = 0
 
   constructor(private readonly log: (message: string) => void) {}
 
@@ -60,7 +93,7 @@ export class EnemyCues {
 
     if (cueType === 'spawn') {
       if (profile?.loadSound) {
-        this.playSample(profile.loadSound)
+        this.playSample(profile.loadSound, 'normal')
       }
       this.log(`[audio] enemy=${enemyId} spawned`)
       return
@@ -80,7 +113,7 @@ export class EnemyCues {
 
     if (cueType === 'fire') {
       if (profile) {
-        this.playSample(profile.fireSound)
+        this.playSample(profile.fireSound, 'high')
       } else {
         runtime.oneShotSynth.triggerAttackRelease(320, '32n')
       }
@@ -90,7 +123,7 @@ export class EnemyCues {
 
     if (cueType === 'hit') {
       if (profile) {
-        this.playSample(profile.hitSound)
+        this.playSample(profile.hitSound, 'high')
       } else {
         runtime.oneShotSynth.triggerAttackRelease(150, '32n')
       }
@@ -100,7 +133,7 @@ export class EnemyCues {
 
     if (cueType === 'destroyed') {
       if (profile) {
-        this.playSample(profile.deathSound)
+        this.playSample(profile.deathSound, 'critical')
       } else {
         runtime.oneShotSynth.triggerAttackRelease(90, '8n')
       }
@@ -172,21 +205,61 @@ export class EnemyCues {
     return created
   }
 
-  playSample(audioFile: string): void {
+  playSample(audioFile: string, priority: TransientPriority = 'normal'): void {
     const pool = this.getOrCreateSamplePool(audioFile)
-    for (let offset = 0; offset < pool.voices.length; offset += 1) {
-      const index = (pool.cursor + offset) % pool.voices.length
-      const voice = pool.voices[index]
-      if (!voice) {
-        continue
-      }
-      if (!voice.loaded || voice.state === 'started') {
-        continue
-      }
+    const requestedRank = PRIORITY_RANK[priority]
+    this.requests += 1
 
-      voice.start()
-      pool.cursor = (index + 1) % pool.voices.length
-      return
+    let candidate = this.findAvailableVoice(pool)
+
+    if (!candidate && pool.voices.length < this.maxSamplePoolSize) {
+      pool.voices.push(this.createSampleVoice(audioFile, pool.gain))
+      candidate = this.findAvailableVoice(pool)
+    }
+
+    if (!candidate && this.countActiveTransientVoices() >= this.maxTransientVoices) {
+      const globalCandidate = this.findStealableActiveVoice(requestedRank)
+      if (globalCandidate) {
+        globalCandidate.player.stop()
+        this.steals += 1
+      }
+      candidate = this.findAvailableVoice(pool)
+    }
+
+    if (!candidate) {
+      candidate = this.findOldestPoolVoice(pool)
+      if (!candidate || !candidate.player.loaded || candidate.priorityRank > requestedRank) {
+        this.dropped += 1
+        return
+      }
+      if (candidate.player.state === 'started') {
+        candidate.player.stop()
+      }
+      this.restarts += 1
+      candidate.player.start(Tone.now() + 0.005)
+    } else {
+      candidate.player.start()
+    }
+
+    candidate.lastStartTime = Tone.now()
+    candidate.priorityRank = requestedRank
+    pool.cursor = (pool.cursor + 1) % Math.max(pool.voices.length, 1)
+  }
+
+  getMetrics(): EnemyCueMetrics {
+    let totalVoices = 0
+    for (const pool of this.samplePools.values()) {
+      totalVoices += pool.voices.length
+    }
+
+    return {
+      activeTransientVoices: this.countActiveTransientVoices(),
+      totalTransientVoices: totalVoices,
+      samplePools: this.samplePools.size,
+      requests: this.requests,
+      dropped: this.dropped,
+      steals: this.steals,
+      restarts: this.restarts
     }
   }
 
@@ -201,13 +274,78 @@ export class EnemyCues {
     }
 
     const gain = new Tone.Gain(audioConfig.enemyVolume).toDestination()
-    const voices = Array.from({ length: 3 }, () => new Tone.Player(audioFile).connect(gain))
+    const voices = Array.from(
+      { length: this.defaultSamplePoolSize },
+      () => this.createSampleVoice(audioFile, gain)
+    )
     const created: SamplePool = {
+      gain,
       voices,
       cursor: 0
     }
 
     this.samplePools.set(audioFile, created)
     return created
+  }
+
+  private createSampleVoice(audioFile: string, gain: Tone.Gain): SampleVoice {
+    return {
+      player: new Tone.Player(audioFile).connect(gain),
+      lastStartTime: -Infinity,
+      priorityRank: PRIORITY_RANK.low
+    }
+  }
+
+  private findAvailableVoice(pool: SamplePool): SampleVoice | null {
+    for (let offset = 0; offset < pool.voices.length; offset += 1) {
+      const index = (pool.cursor + offset) % pool.voices.length
+      const voice = pool.voices[index]
+      if (!voice || !voice.player.loaded || voice.player.state === 'started') {
+        continue
+      }
+      return voice
+    }
+
+    return null
+  }
+
+  private findOldestPoolVoice(pool: SamplePool): SampleVoice | null {
+    let oldest: SampleVoice | null = null
+    for (const voice of pool.voices) {
+      if (!voice) {
+        continue
+      }
+      if (!oldest || voice.lastStartTime < oldest.lastStartTime) {
+        oldest = voice
+      }
+    }
+    return oldest
+  }
+
+  private findStealableActiveVoice(requestedRank: number): SampleVoice | null {
+    let oldest: SampleVoice | null = null
+    for (const pool of this.samplePools.values()) {
+      for (const voice of pool.voices) {
+        if (!voice || voice.player.state !== 'started' || voice.priorityRank > requestedRank) {
+          continue
+        }
+        if (!oldest || voice.lastStartTime < oldest.lastStartTime) {
+          oldest = voice
+        }
+      }
+    }
+    return oldest
+  }
+
+  private countActiveTransientVoices(): number {
+    let active = 0
+    for (const pool of this.samplePools.values()) {
+      for (const voice of pool.voices) {
+        if (voice?.player.state === 'started') {
+          active += 1
+        }
+      }
+    }
+    return active
   }
 }

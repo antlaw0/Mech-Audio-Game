@@ -4,12 +4,14 @@ import { GameLoop } from './gameLoop.js'
 import { InputController } from './input.js'
 import { createWorldState } from './worldState.js'
 import { Pseudo3dRenderer } from './pseudo3dRenderer.js'
+import { AudioPanel } from '../ui/audioPanel.js'
 import type { WorldState } from './worldTypes.js'
 
 class AudioFpsScene extends Phaser.Scene {
   private loop!: GameLoop
   private world!: WorldState
   private pseudoRenderer!: Pseudo3dRenderer
+  private audioPanel!: AudioPanel
   private logs: string[] = []
 
   constructor() {
@@ -48,10 +50,16 @@ class AudioFpsScene extends Phaser.Scene {
 
     void audio.ensureStarted()
 
-    this.loop = new GameLoop(this, this.world, input, audio, debugText)
+    this.audioPanel = new AudioPanel(this, audio)
+
+    this.loop = new GameLoop(this, this.world, input, audio, debugText, this.audioPanel)
 
     this.input.on('pointerdown', () => {
       void audio.ensureStarted()
+    })
+
+    this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
+      this.audioPanel.handleInput(event.key)
     })
 
     this.events.on('debug-log', (message: string) => {

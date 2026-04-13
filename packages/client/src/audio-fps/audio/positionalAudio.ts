@@ -17,14 +17,27 @@ interface SourceNode {
   panner: PannerNode
   gain: Tone.Gain
   player: Tone.Player
+  hasStartedOnce: boolean
+}
+
+export interface PositionalAudioMetrics {
+  activeSources: number
+  totalSources: number
+  loopRecoveries: number
 }
 
 export class PositionalAudioEngine {
   private readonly context: AudioContext
   private readonly sources = new Map<string, SourceNode>()
+  private readonly loopBus: Tone.Gain
+  private readonly loopLimiter: Tone.Limiter
+  private loopRecoveries = 0
 
   constructor(private readonly log: (message: string) => void) {
     this.context = Tone.getContext().rawContext as AudioContext
+    this.loopBus = new Tone.Gain(1)
+    this.loopLimiter = new Tone.Limiter(-1).toDestination()
+    this.loopBus.connect(this.loopLimiter)
   }
 
   createPositionalSource(id: string, audioFile: string, loop: boolean, initialPosition: Vec3): void {
@@ -32,7 +45,7 @@ export class PositionalAudioEngine {
       return
     }
 
-    const gain = new Tone.Gain(0).toDestination()
+    const gain = new Tone.Gain(0).connect(this.loopBus)
     const panner = this.context.createPanner()
     panner.panningModel = 'HRTF'
     panner.distanceModel = 'inverse'
@@ -54,7 +67,7 @@ export class PositionalAudioEngine {
         if (!source || !source.state.active || !source.state.loop || source.player.state === 'started') {
           return
         }
-        source.player.start()
+        this.startLoopIfNeeded(id)
       }
     }).connect(panner)
 
@@ -69,11 +82,12 @@ export class PositionalAudioEngine {
       },
       gain,
       panner,
-      player
+      player,
+      hasStartedOnce: false
     })
 
     if (loop && player.loaded && player.state !== 'started') {
-      player.start()
+      this.startLoopIfNeeded(id)
     }
 
     this.log(`[audio] create positional source id=${id} file=${audioFile}`)
@@ -108,12 +122,12 @@ export class PositionalAudioEngine {
 
     source.state.active = isActive
     if (isActive && source.state.loop && source.player.loaded && source.player.state !== 'started') {
-      source.player.start()
+      this.startLoopIfNeeded(id)
     }
     if (!isActive && source.player.state === 'started') {
       source.player.stop()
     }
-    source.gain.gain.rampTo(isActive ? 0.001 : 0, 0.1)
+    source.gain.gain.rampTo(isActive ? 1 : 0, 0.08)
   }
 
   updateFrame(listenerPosition: Vec3): void {
@@ -140,11 +154,40 @@ export class PositionalAudioEngine {
 
       const speed = Math.hypot(source.state.velocity.x, source.state.velocity.y, source.state.velocity.z)
       if (source.player.loaded) {
-        source.player.playbackRate = clamp(0.85 + speed / 12, 0.85, 1.35)
+        const targetPlaybackRate = source.state.loop ? 1 : clamp(0.85 + speed / 12, 0.85, 1.35)
+        source.player.playbackRate = targetPlaybackRate
         if (source.state.loop && source.player.state !== 'started') {
-          source.player.start()
+          this.startLoopIfNeeded(source.state.id)
         }
       }
     }
+  }
+
+  getMetrics(): PositionalAudioMetrics {
+    let active = 0
+    for (const source of this.sources.values()) {
+      if (source.state.active) {
+        active += 1
+      }
+    }
+
+    return {
+      activeSources: active,
+      totalSources: this.sources.size,
+      loopRecoveries: this.loopRecoveries
+    }
+  }
+
+  private startLoopIfNeeded(sourceId: string): void {
+    const source = this.sources.get(sourceId)
+    if (!source || !source.state.loop || !source.player.loaded || source.player.state === 'started') {
+      return
+    }
+
+    source.player.start()
+    if (source.hasStartedOnce) {
+      this.loopRecoveries += 1
+    }
+    source.hasStartedOnce = true
   }
 }

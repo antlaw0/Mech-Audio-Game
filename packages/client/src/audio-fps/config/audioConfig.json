@@ -1,12 +1,12 @@
 {
   "masterVolume": 0.9,
   "uiVolume": 0.85,
-  "enemyVolume": 0.8,
+  "enemyVolume": 0.88,
   "obstacleVolume": 0.75,
   "distanceRolloff": {
     "minDistance": 1,
-    "maxDistance": 48,
-    "rolloffFactor": 1.35
+    "maxDistance": 36,
+    "rolloffFactor": 1.0
   },
   "panningCurve": {
     "stereoScale": 1,
@@ -33,5 +33,18 @@
     "autoSweepIntervalSeconds": 2.5,
     "pingRays": 16,
     "pingRange": 18
+  },
+  "voiceManagement": {
+    "maxTransientVoices": 48,
+    "defaultSamplePoolSize": 6,
+    "maxSamplePoolSize": 16
+  },
+  "terrainAudio": {
+    "defaultTerrain": "field",
+    "ambienceTrack": "day",
+    "ambienceVolume": 0.32,
+    "terrainStepVolume": 0.56,
+    "footstepIntervalSeconds": 0.34,
+    "movementSpeedThreshold": 0.28
   }
 }

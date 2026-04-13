@@ -34,7 +34,7 @@ interface EnemyEffects {
   doppler: Tone.PitchShift
   filter: Tone.Filter
   gain: Tone.Gain
-  panner: PannerNode
+  panner: Tone.Panner3D
 } // end interface EnemyEffects
 
 interface EnemyAudioParams {
@@ -103,7 +103,6 @@ class EnemyAudioRuntime {
     profile.effects.filter.connect(profile.effects.doppler)
     profile.effects.doppler.connect(profile.effects.gain)
     profile.effects.gain.connect(profile.effects.panner)
-    profile.effects.panner.connect(Tone.getContext().rawContext.destination)
 
     this.turnCueSynth = new Tone.Synth({
       oscillator: { type: 'triangle' },
@@ -155,13 +154,19 @@ class EnemyAudioRuntime {
     const relSpeed = relativeVelocityForDoppler(enemy.velocity, player.velocity)
     const relSigned = enemy.velocity.x * Math.cos(player.angle) + enemy.velocity.y * Math.sin(player.angle)
     const signedSpeed = relSigned >= 0 ? relSpeed : -relSpeed
-    const cents = clamp(signedSpeed * 16, AUDIO_CONFIG.enemy.dopplerCentsMin, AUDIO_CONFIG.enemy.dopplerCentsMax)
-    this.profile.effects.doppler.pitch = cents / 100
-
-    this.setPlaybackRateSafely(
-      this.profile.sounds.movementLoop,
-      clamp(0.9 + Math.hypot(enemy.velocity.x, enemy.velocity.y, enemy.velocity.z) * 0.08, 0.9, 1.35)
-    )
+    const isHelicopter = this.profile.type === AUDIO_CONFIG.helicopter.type
+    if (isHelicopter) {
+      // Keep rotor loops at a stable rate to avoid expensive real-time time-stretch artifacts.
+      this.profile.effects.doppler.pitch = 0
+      this.setPlaybackRateSafely(this.profile.sounds.movementLoop, 1)
+    } else {
+      const cents = clamp(signedSpeed * 16, AUDIO_CONFIG.enemy.dopplerCentsMin, AUDIO_CONFIG.enemy.dopplerCentsMax)
+      this.profile.effects.doppler.pitch = cents / 100
+      this.setPlaybackRateSafely(
+        this.profile.sounds.movementLoop,
+        clamp(0.9 + Math.hypot(enemy.velocity.x, enemy.velocity.y, enemy.velocity.z) * 0.08, 0.9, 1.35)
+      )
+    } // end if helicopter rotor stabilization
 
     this.idleGain.gain.rampTo(0, AUDIO_CONFIG.enemy.idleFadeSeconds)
     this.movementGain.gain.rampTo(enemy.isAlive ? 1 : 0, AUDIO_CONFIG.enemy.movementFadeSeconds)
@@ -257,7 +262,7 @@ class EnemyAudioRuntime {
     this.profile.effects.filter.dispose()
     this.profile.effects.doppler.dispose()
     this.profile.effects.gain.dispose()
-    this.profile.effects.panner.disconnect()
+    this.profile.effects.panner.dispose()
   } // end method dispose
 
   private triggerPassivePing(height: number): void {
@@ -318,20 +323,20 @@ class EnemyAudioRuntime {
   } // end method triggerTurnCue
 } // end class EnemyAudioRuntime
 
-function createTankProfile(enemyId: string, context: AudioContext): EnemyAudioProfile {
+function createTankProfile(enemyId: string): EnemyAudioProfile {
   const filter = new Tone.Filter({ type: 'lowpass', frequency: 2600, Q: 0.7 })
   const doppler = new Tone.PitchShift(0)
   const gain = new Tone.Gain(0)
-  const panner = context.createPanner()
-
-  panner.panningModel = 'HRTF'
-  panner.distanceModel = 'inverse'
-  panner.refDistance = 1
-  panner.maxDistance = AUDIO_CONFIG.enemy.maxDistance
-  panner.rolloffFactor = 1.4
-  panner.coneInnerAngle = 360
-  panner.coneOuterAngle = 0
-  panner.coneOuterGain = 0
+  const panner = new Tone.Panner3D({
+    panningModel: 'HRTF',
+    distanceModel: 'inverse',
+    refDistance: 1,
+    maxDistance: AUDIO_CONFIG.enemy.maxDistance,
+    rolloffFactor: 1.4,
+    coneInnerAngle: 360,
+    coneOuterAngle: 0,
+    coneOuterGain: 0
+  }).toDestination()
 
   return {
     id: enemyId,
@@ -341,7 +346,7 @@ function createTankProfile(enemyId: string, context: AudioContext): EnemyAudioPr
       idleLoop: new Tone.Player('assets/sounds/tankMoving.ogg'),
       movementLoop: new Tone.Player('assets/sounds/tankMoving.ogg'),
       passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
-      threatCue: new Tone.Player('assets/sounds/reloadCannon.wav'),
+      threatCue: new Tone.Player('assets/sounds/reloadCannon.ogg'),
       attackSound: new Tone.Player('assets/sounds/explosion_1A.ogg'),
       hurtSound: new Tone.Player('assets/sounds/explosion_1B.ogg'),
       deathSound: new Tone.Player('assets/sounds/explosion_2a.ogg')
@@ -361,28 +366,28 @@ function createTankProfile(enemyId: string, context: AudioContext): EnemyAudioPr
   } // end object enemy profile
 } // end function createTankProfile
 
-function createHelicopterProfile(enemyId: string, context: AudioContext): EnemyAudioProfile {
+function createHelicopterProfile(enemyId: string): EnemyAudioProfile {
   const filter = new Tone.Filter({ type: 'lowpass', frequency: 3400, Q: 0.5 })
   const doppler = new Tone.PitchShift(0)
   const gain = new Tone.Gain(0)
-  const panner = context.createPanner()
-
-  panner.panningModel = 'HRTF'
-  panner.distanceModel = 'inverse'
-  panner.refDistance = 1
-  panner.maxDistance = AUDIO_CONFIG.enemy.maxDistance
-  panner.rolloffFactor = 1.2
-  panner.coneInnerAngle = 360
-  panner.coneOuterAngle = 0
-  panner.coneOuterGain = 0
+  const panner = new Tone.Panner3D({
+    panningModel: 'HRTF',
+    distanceModel: 'inverse',
+    refDistance: 1,
+    maxDistance: AUDIO_CONFIG.enemy.maxDistance,
+    rolloffFactor: 1.2,
+    coneInnerAngle: 360,
+    coneOuterAngle: 0,
+    coneOuterGain: 0
+  }).toDestination()
 
   return {
     id: enemyId,
     type: AUDIO_CONFIG.helicopter.type,
     category: AUDIO_CONFIG.helicopter.category,
     sounds: {
-      idleLoop: new Tone.Player('assets/sounds/helicopterLoop.wav'),
-      movementLoop: new Tone.Player('assets/sounds/helicopterLoop.wav'),
+      idleLoop: new Tone.Player('assets/sounds/helicopterLoop.ogg'),
+      movementLoop: new Tone.Player('assets/sounds/helicopterLoop.ogg'),
       passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
       threatCue: new Tone.Player('assets/sounds/reload.ogg'),
       attackSound: new Tone.Player('assets/sounds/pistol_fire.ogg'),
@@ -404,11 +409,11 @@ function createHelicopterProfile(enemyId: string, context: AudioContext): EnemyA
   }
 } // end function createHelicopterProfile
 
-function createEnemyProfile(enemyId: string, enemyType: string, context: AudioContext): EnemyAudioProfile {
+function createEnemyProfile(enemyId: string, enemyType: string): EnemyAudioProfile {
   if (enemyType === AUDIO_CONFIG.helicopter.type) {
-    return createHelicopterProfile(enemyId, context)
+    return createHelicopterProfile(enemyId)
   } // end if helicopter
-  return createTankProfile(enemyId, context)
+  return createTankProfile(enemyId)
 } // end function createEnemyProfile
 
 export function createAudioController(): AudioController {
@@ -419,6 +424,8 @@ export function createAudioController(): AudioController {
   let servoTimeBeforePause = 0
   let footstepWasPlayingBeforePause = false
   let footstepTimeBeforePause = 0
+  let ambienceWasPlayingBeforePause = false
+  let ambienceTimeBeforePause = 0
   let contextWasRunningBeforePause = false
   let aimAssistEnabled = true
   let previousPlayerX = 0
@@ -428,6 +435,7 @@ export function createAudioController(): AudioController {
   let activeSonarStamp = 0
   let passiveSweepAccumulatorSeconds = 0
   let passiveSweepAngle = 0
+  let lastPassiveSweepTriggerTime = -1
   let obstructionCueCooldownSeconds = 0
   let obstructionWasBlocked = false
   let sonarEchoVoiceCursor = 0
@@ -440,6 +448,8 @@ export function createAudioController(): AudioController {
   let projectileNearMissVoiceCursor = 0
   let playerMechHitBaseVoiceCursor = 0
   let playerMechHitDetailVoiceCursor = 0
+  let lastImpactTimeSeconds = -1
+  let lastTankHitConfirmTimeSeconds = -1
 
   let categoryProximity = true
   let categoryObjects = true
@@ -451,9 +461,25 @@ export function createAudioController(): AudioController {
   const rawContext = Tone.getContext().rawContext as AudioContext
   const enemyRuntimes = new Map<string, EnemyAudioRuntime>()
 
-  const footstepAudio = new Audio('assets/sounds/footstep.mp3')
+  const footstepAudio = new Audio('assets/sounds/footstep.ogg')
   footstepAudio.preload = 'auto'
   footstepAudio.volume = 0.25
+
+  const terrainStepFiles = Array.from(
+    { length: 16 },
+    (_, index) => `assets/sounds/steps/${AUDIO_CONFIG.player.terrainType}/${index + 1}.ogg`
+  )
+  const terrainStepAudios = terrainStepFiles.map((file) => {
+    const audio = new Audio(file)
+    audio.preload = 'auto'
+    audio.volume = AUDIO_CONFIG.player.terrainStepVolume
+    return audio
+  })
+
+  const ambienceAudio = new Audio(`assets/sounds/ambience/${AUDIO_CONFIG.player.terrainType}/${AUDIO_CONFIG.player.ambienceTrack}.ogg`)
+  ambienceAudio.preload = 'auto'
+  ambienceAudio.loop = true
+  ambienceAudio.volume = AUDIO_CONFIG.player.ambienceVolume
 
   const servoAudio = new Audio('assets/sounds/servomotor.ogg')
   servoAudio.preload = 'auto'
@@ -487,10 +513,10 @@ export function createAudioController(): AudioController {
   }).toDestination()
   const bulletNearMissGain = new Tone.Gain(0.001).connect(bulletNearMissPanner)
   const bulletNearMissVoices = [
-    new Tone.Player('assets/sounds/bulletWiz.wav').connect(bulletNearMissGain),
-    new Tone.Player('assets/sounds/bulletWiz.wav').connect(bulletNearMissGain),
-    new Tone.Player('assets/sounds/bulletWiz.wav').connect(bulletNearMissGain),
-    new Tone.Player('assets/sounds/bulletWiz.wav').connect(bulletNearMissGain)
+    new Tone.Player('assets/sounds/bulletWiz.ogg').connect(bulletNearMissGain),
+    new Tone.Player('assets/sounds/bulletWiz.ogg').connect(bulletNearMissGain),
+    new Tone.Player('assets/sounds/bulletWiz.ogg').connect(bulletNearMissGain),
+    new Tone.Player('assets/sounds/bulletWiz.ogg').connect(bulletNearMissGain)
   ]
 
   const projectileNearMissPanner = new Tone.Panner3D({
@@ -502,10 +528,10 @@ export function createAudioController(): AudioController {
   }).toDestination()
   const projectileNearMissGain = new Tone.Gain(0.001).connect(projectileNearMissPanner)
   const projectileNearMissVoices = [
-    new Tone.Player('assets/sounds/projectileWiz.wav').connect(projectileNearMissGain),
-    new Tone.Player('assets/sounds/projectileWiz.wav').connect(projectileNearMissGain),
-    new Tone.Player('assets/sounds/projectileWiz.wav').connect(projectileNearMissGain),
-    new Tone.Player('assets/sounds/projectileWiz.wav').connect(projectileNearMissGain)
+    new Tone.Player('assets/sounds/projectileWiz.ogg').connect(projectileNearMissGain),
+    new Tone.Player('assets/sounds/projectileWiz.ogg').connect(projectileNearMissGain),
+    new Tone.Player('assets/sounds/projectileWiz.ogg').connect(projectileNearMissGain),
+    new Tone.Player('assets/sounds/projectileWiz.ogg').connect(projectileNearMissGain)
   ]
 
   const incomingProjectileVoices: IncomingProjectileVoice[] = Array.from({ length: 8 }, () => {
@@ -517,7 +543,7 @@ export function createAudioController(): AudioController {
       rolloffFactor: 1.15
     }).toDestination()
     const gain = new Tone.Gain(0.001).connect(panner)
-    const player = new Tone.Player('assets/sounds/projectileWiz.wav').connect(gain)
+    const player = new Tone.Player('assets/sounds/projectileWiz.ogg').connect(gain)
     player.loop = true
     return {
       id: null,
@@ -531,10 +557,10 @@ export function createAudioController(): AudioController {
   const playerMechHitBaseFilter = new Tone.Filter(1200, 'bandpass').connect(playerMechHitGain)
   const playerMechHitBasePitch = new Tone.PitchShift(0).connect(playerMechHitBaseFilter)
   const playerMechHitBaseVoices = [
-    new Tone.Player('assets/sounds/mechHit.wav').connect(playerMechHitBasePitch),
-    new Tone.Player('assets/sounds/mechHit.wav').connect(playerMechHitBasePitch),
-    new Tone.Player('assets/sounds/mechHit.wav').connect(playerMechHitBasePitch),
-    new Tone.Player('assets/sounds/mechHit.wav').connect(playerMechHitBasePitch)
+    new Tone.Player('assets/sounds/mechHit.ogg').connect(playerMechHitBasePitch),
+    new Tone.Player('assets/sounds/mechHit.ogg').connect(playerMechHitBasePitch),
+    new Tone.Player('assets/sounds/mechHit.ogg').connect(playerMechHitBasePitch),
+    new Tone.Player('assets/sounds/mechHit.ogg').connect(playerMechHitBasePitch)
   ]
   const playerMechHitBaseRates = [0.88, 0.95, 1, 1.06]
   for (let voiceIndex = 0; voiceIndex < playerMechHitBaseVoices.length; voiceIndex += 1) {
@@ -549,12 +575,12 @@ export function createAudioController(): AudioController {
   const playerMechHitDetailFilter = new Tone.Filter(1800, 'highpass').connect(playerMechHitGain)
   const playerMechHitDetailPitch = new Tone.PitchShift(0).connect(playerMechHitDetailFilter)
   const playerMechHitDetailVoices = [
-    new Tone.Player('assets/sounds/damageSmall1.wav').connect(playerMechHitDetailPitch),
-    new Tone.Player('assets/sounds/damageSmall1.wav').connect(playerMechHitDetailPitch),
-    new Tone.Player('assets/sounds/damageSmall1.wav').connect(playerMechHitDetailPitch),
-    new Tone.Player('assets/sounds/damageSmall2.wav').connect(playerMechHitDetailPitch),
-    new Tone.Player('assets/sounds/damageSmall2.wav').connect(playerMechHitDetailPitch),
-    new Tone.Player('assets/sounds/damageSmall2.wav').connect(playerMechHitDetailPitch)
+    new Tone.Player('assets/sounds/damageSmall1.ogg').connect(playerMechHitDetailPitch),
+    new Tone.Player('assets/sounds/damageSmall1.ogg').connect(playerMechHitDetailPitch),
+    new Tone.Player('assets/sounds/damageSmall1.ogg').connect(playerMechHitDetailPitch),
+    new Tone.Player('assets/sounds/damageSmall2.ogg').connect(playerMechHitDetailPitch),
+    new Tone.Player('assets/sounds/damageSmall2.ogg').connect(playerMechHitDetailPitch),
+    new Tone.Player('assets/sounds/damageSmall2.ogg').connect(playerMechHitDetailPitch)
   ]
   const playerMechHitDetailRates = [0.9, 1, 1.1, 0.9, 1, 1.1]
   for (let voiceIndex = 0; voiceIndex < playerMechHitDetailVoices.length; voiceIndex += 1) {
@@ -753,12 +779,25 @@ export function createAudioController(): AudioController {
         await Tone.loaded()
         footstepAudio.muted = true
         servoAudio.muted = true
+        ambienceAudio.muted = true
+        terrainStepAudios.forEach((audio) => {
+          audio.muted = true
+        })
         await footstepAudio.play().catch(() => undefined)
         footstepAudio.pause()
         footstepAudio.currentTime = 0
         await servoAudio.play().catch(() => undefined)
         servoAudio.pause()
         servoAudio.currentTime = 0
+        await ambienceAudio.play().catch(() => undefined)
+        ambienceAudio.pause()
+        ambienceAudio.currentTime = 0
+        const firstTerrainStep = terrainStepAudios[0]
+        if (firstTerrainStep) {
+          await firstTerrainStep.play().catch(() => undefined)
+          firstTerrainStep.pause()
+          firstTerrainStep.currentTime = 0
+        }
         initializeAudioCueUtilities()
         if (!aimAssistOscStarted) {
           aimAssistOsc.start()
@@ -766,6 +805,11 @@ export function createAudioController(): AudioController {
         } // end if aim assist oscillator not started
         footstepAudio.muted = false
         servoAudio.muted = false
+        ambienceAudio.muted = false
+        terrainStepAudios.forEach((audio) => {
+          audio.muted = false
+        })
+        void ambienceAudio.play().catch(() => undefined)
         audioStarted = true
       } // end if audio graph not initialized
     } catch {
@@ -830,6 +874,12 @@ export function createAudioController(): AudioController {
       footstepAudio.pause()
     } // end if footstep was playing
 
+    ambienceWasPlayingBeforePause = !ambienceAudio.paused
+    ambienceTimeBeforePause = ambienceAudio.currentTime
+    if (ambienceWasPlayingBeforePause) {
+      ambienceAudio.pause()
+    } // end if ambience was playing
+
     if (contextWasRunningBeforePause) {
       try {
         await rawContext.suspend()
@@ -863,8 +913,14 @@ export function createAudioController(): AudioController {
       void footstepAudio.play().catch(() => undefined)
     } // end if footstep should resume
 
+    if (ambienceWasPlayingBeforePause) {
+      ambienceAudio.currentTime = ambienceTimeBeforePause
+      void ambienceAudio.play().catch(() => undefined)
+    } // end if ambience should resume
+
     servoWasPlayingBeforePause = false
     footstepWasPlayingBeforePause = false
+    ambienceWasPlayingBeforePause = false
     contextWasRunningBeforePause = false
     audioPaused = false
   } // end function resumeAllAudio
@@ -944,6 +1000,22 @@ export function createAudioController(): AudioController {
     playWallProximityCue(nearest.bearing, intensity)
   } // end function updateNearFieldNavigation
 
+  const triggerPassiveSweepTone = (frequency: number, gain: number): void => {
+    const now = Tone.now()
+    const triggerTime = lastPassiveSweepTriggerTime >= 0
+      ? Math.max(now, lastPassiveSweepTriggerTime + 0.002)
+      : now
+
+    sonarSweepSynth.volume.value = Tone.gainToDb(gain)
+
+    try {
+      sonarSweepSynth.triggerAttackRelease(frequency, '64n', triggerTime)
+      lastPassiveSweepTriggerTime = triggerTime
+    } catch {
+      // Ignore tightly-packed passive sweep scheduling conflicts.
+    } // end try/catch passive sweep schedule
+  } // end function triggerPassiveSweepTone
+
   const runPassiveSweepTick = (player: PlayerAudioState, enemies: EnemyAudioState[], mapData: Uint8Array, sprites: SpriteObject[]): void => {
     const stepAngle = (Math.PI * 2) / (AUDIO_NAVIGATION_CONFIG.passiveSweepRotationSeconds * AUDIO_NAVIGATION_CONFIG.passiveSweepTickRateHz)
     const currentAngle = passiveSweepAngle
@@ -961,14 +1033,12 @@ export function createAudioController(): AudioController {
     if (contact?.kind === 'enemy' && categoryEnemies) {
       const normalizedSweep = ((currentAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
       const sweepFrequency = AUDIO_NAVIGATION_CONFIG.sweepBaseFrequency + (normalizedSweep / (Math.PI * 2)) * AUDIO_NAVIGATION_CONFIG.sweepPitchSpan
-      sonarSweepSynth.volume.value = Tone.gainToDb(0.04)
-      sonarSweepSynth.triggerAttackRelease(sweepFrequency, '64n')
+      triggerPassiveSweepTone(sweepFrequency, 0.04)
       playEnemyContact(contact.distance, contact.bearing, contact.enemyId, true)
     } else if (contact && contact.kind !== 'enemy' && categoryObjects) {
       const normalizedSweep = ((currentAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
       const sweepFrequency = AUDIO_NAVIGATION_CONFIG.sweepBaseFrequency + (normalizedSweep / (Math.PI * 2)) * AUDIO_NAVIGATION_CONFIG.sweepPitchSpan
-      sonarSweepSynth.volume.value = Tone.gainToDb(0.035)
-      sonarSweepSynth.triggerAttackRelease(sweepFrequency, '64n')
+      triggerPassiveSweepTone(sweepFrequency, 0.035)
       playObstacleContact(contact.distance, contact.bearing, contact.kind, true)
     } // end if passive sweep contact found
 
@@ -982,6 +1052,11 @@ export function createAudioController(): AudioController {
     mapData: Uint8Array,
     sprites: SpriteObject[]
   ): void => {
+    ambienceAudio.volume = AUDIO_CONFIG.player.ambienceVolume
+    terrainStepAudios.forEach((audio) => {
+      audio.volume = AUDIO_CONFIG.player.terrainStepVolume
+    })
+
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
@@ -1346,6 +1421,12 @@ export function createAudioController(): AudioController {
       return
     } // end if audio not started
 
+    const now = Tone.now()
+    if (lastTankHitConfirmTimeSeconds >= 0 && (now - lastTankHitConfirmTimeSeconds) < 0.04) {
+      return
+    } // end if hit-confirm is being spammed this frame window
+    lastTankHitConfirmTimeSeconds = now
+
     const pan = computePanForWorldPosition(worldX, worldY, playerX, playerY, playerAngle)
     tankHitConfirmPanner.pan.rampTo(pan, 0.01)
     retriggerLoadedPlayer(tankHitConfirmSound)
@@ -1379,6 +1460,12 @@ export function createAudioController(): AudioController {
       return
     } // end if audio not started
 
+    const now = Tone.now()
+    if (lastImpactTimeSeconds >= 0 && (now - lastImpactTimeSeconds) < 0.012) {
+      return
+    } // end if impacts are being emitted too densely
+    lastImpactTimeSeconds = now
+
     const relative = worldToListenerSpace(
       { x: worldX, y: worldY, z: 0 },
       { x: playerX, y: playerY, z: 0 },
@@ -1387,7 +1474,7 @@ export function createAudioController(): AudioController {
     impactPanner.positionX.value = relative.x
     impactPanner.positionY.value = relative.y
     impactPanner.positionZ.value = relative.z
-    impactSynth.triggerAttackRelease(220, '16n', Tone.now() + timeOffsetSeconds)
+    impactSynth.triggerAttackRelease(220, '16n', now + timeOffsetSeconds)
   } // end function playImpact
 
   const startServo = (): void => {
@@ -1417,6 +1504,15 @@ export function createAudioController(): AudioController {
 
     footstepAudio.currentTime = 0
     void footstepAudio.play().catch(() => undefined)
+
+    if (terrainStepAudios.length > 0) {
+      const randomIndex = Math.floor(Math.random() * terrainStepAudios.length)
+      const terrainStep = terrainStepAudios[randomIndex]
+      if (terrainStep) {
+        terrainStep.currentTime = 0
+        void terrainStep.play().catch(() => undefined)
+      }
+    }
   } // end function playFootstep
 
   const stopFootstep = (): void => {
@@ -1518,7 +1614,7 @@ export function createAudioController(): AudioController {
       } // end if runtime already matches enemy type
     } // end if runtime already exists
 
-    const profile = createEnemyProfile(enemyId, enemyType, rawContext)
+    const profile = createEnemyProfile(enemyId, enemyType)
     const runtime = new EnemyAudioRuntime(profile)
     runtime.initializeLoops()
     enemyRuntimes.set(enemyId, runtime)
