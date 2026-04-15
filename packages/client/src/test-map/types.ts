@@ -1,8 +1,13 @@
+export type PlayerFlightState = 'grounded' | 'ascending' | 'airborne' | 'descending'
+
 export interface Player {
   x: number
   y: number
   angle: number
   pitch: number
+  z?: number
+  flightState?: PlayerFlightState
+  isFlying?: boolean
 } // end interface Player
 
 export interface InputState {
@@ -16,6 +21,7 @@ export interface InputState {
   lookDown: boolean
   pitchResetPending: boolean
   firePending: boolean
+  flightTogglePending: boolean
   sonarPingPending: boolean
   snapNorthPending: boolean
   snapEastPending: boolean
@@ -43,6 +49,7 @@ export interface PlayerAudioState {
   position: WorldPosition
   angle: number
   velocity: WorldVelocity
+  isFlying: boolean
 } // end interface PlayerAudioState
 
 export interface EnemyAudioState {
@@ -101,6 +108,7 @@ export interface Bullet {
   y: number
   angle: number
   pitch: number
+  zOrigin: number
   distance: number
   alive: boolean
 } // end interface Bullet
@@ -177,6 +185,9 @@ export interface AudioController {
   playBump: () => void
   playPitchCenterConfirm: () => void
   fireGunshot: () => void
+  startFlightLoop: () => void
+  stopFlightLoop: () => void
+  playHardLanding: () => void
   playCollisionThud: (direction: number) => void
   playCardinalOrientationCue: (newFacing: number) => void
   setAimAssistEnabled: (enabled: boolean) => void

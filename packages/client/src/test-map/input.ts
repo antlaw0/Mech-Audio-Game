@@ -56,8 +56,8 @@ export function bindInput(
       } // end if ArrowRight
 
       if (event.code === 'ArrowUp') {
-        input.lookDown = true
-        if (input.lookUp) {
+        input.lookUp = true
+        if (input.lookDown) {
           input.lookUp = false
           input.lookDown = false
           input.pitchResetPending = true
@@ -65,8 +65,8 @@ export function bindInput(
       } // end if ArrowUp
 
       if (event.code === 'ArrowDown') {
-        input.lookUp = true
-        if (input.lookDown) {
+        input.lookDown = true
+        if (input.lookUp) {
           input.lookUp = false
           input.lookDown = false
           input.pitchResetPending = true
@@ -76,6 +76,10 @@ export function bindInput(
       if (event.code === 'Space') {
         input.firePending = true
       } // end if Space
+
+      if (event.code === 'KeyF') {
+        input.flightTogglePending = true
+      } // end if KeyF
 
       if (event.code === 'KeyE') {
         input.sonarPingPending = true
@@ -179,12 +183,16 @@ export function bindInput(
     } // end if ArrowRight
 
     if (event.code === 'ArrowUp') {
-      input.lookDown = false
+      input.lookUp = false
     } // end if ArrowUp
 
     if (event.code === 'ArrowDown') {
-      input.lookUp = false
+      input.lookDown = false
     } // end if ArrowDown
+
+    if (event.code === 'KeyF') {
+      input.flightTogglePending = false
+    } // end if KeyF
 
     if (event.code === 'KeyE') {
       input.sonarPingPending = false

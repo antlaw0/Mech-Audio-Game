@@ -2,6 +2,7 @@ import {
   CANVAS_HEIGHT_LIMIT,
   CANVAS_WIDTH_LIMIT,
   MUZZLE_FLASH_DURATION,
+  PLAYER_FLIGHT_SPEED,
   PLAYER_SPEED,
   WEAPON_DEFAULT_ACCURACY,
   WEAPON_LOCK_ON_RANGE,
@@ -16,20 +17,50 @@ import {
   spawnRandomTankFromConfig,
   spawnPlayerBullet,
   spawnPlayerBulletToward,
+  syncDynamicFlightHeights,
   stepCombatEcsWorld
 } from './combat-ecs.js'
 import { createTargetLockState, updateTargetLock } from './target-lock.js'
 import { getEnemyDefinition } from './enemies/index.js'
 import type { EnemyDefinitionConfig, EnemyMovementPattern } from './enemies/enemyTypes.js'
 import type { EnemyId } from './enemies/enemyTypes.js'
+import { getSharedFlightHeight, setSharedFlightHeight } from './runtime-config.js'
 import type { WeaponStats } from './types.js'
 import { bindInput } from './input.js'
 import { computeObstructionAwareness } from './awareness.js'
 import { createMapData } from './map-data.js'
 import { createInputState, createPlayer } from './player-state.js'
-import { renderFrame } from './render.js'
 import { createSprites } from './sprites.js'
+import { createThreeRenderSystem } from './three-render.js'
 import { createUpdateState, updateFrame } from './update.js'
+import { createWorldCollisionWorld } from './world-collision.js'
+
+interface TestMapDevConsole {
+  help(): string[]
+  getState(): {
+    sharedFlightHeight: number
+    player: {
+      x: number
+      y: number
+      z: number
+      flightState: string
+      isFlying: boolean
+    }
+    weapon: WeaponStats
+    paused: boolean
+  }
+  setSharedFlightHeight(value: number): number
+  setPlayerAltitude(value: number): number
+  spawnEnemy(enemyId: EnemyId): boolean
+  pause(): Promise<void>
+  resume(): Promise<void>
+} // end interface TestMapDevConsole
+
+declare global {
+  interface Window {
+    mechDev?: TestMapDevConsole
+  }
+} // end declare global
 
 function getCanvasDimensions(): { width: number; height: number } {
   return {
@@ -39,7 +70,6 @@ function getCanvasDimensions(): { width: number; height: number } {
 } // end function getCanvasDimensions
 
 function setupCanvas(): {
-  ctx: CanvasRenderingContext2D
   canvas: HTMLCanvasElement
   width: number
   height: number
@@ -53,16 +83,11 @@ function setupCanvas(): {
   canvas.width = width
   canvas.height = height
 
-  const ctx = canvas.getContext('2d')
-  if (!ctx) {
-    throw new Error('Failed to acquire 2D context.')
-  } // end if no context
-
-  return { ctx, canvas, width, height } // end object setup result
+  return { canvas, width, height } // end object setup result
 } // end function setupCanvas
 
 function startTestMap(): void {
-  const { ctx, width, height } = setupCanvas()
+  const { canvas, width, height } = setupCanvas()
 
   const getInput = (id: string): HTMLInputElement | null => {
     const el = document.getElementById(id)
@@ -118,11 +143,18 @@ function startTestMap(): void {
 
   const mapData = createMapData()
   const sprites = createSprites()
+  const collisionWorld = createWorldCollisionWorld(mapData, sprites)
+  const threeRenderer = createThreeRenderSystem({
+    canvas,
+    canvasWidth: width,
+    canvasHeight: height,
+    mapData,
+    sprites
+  })
   const player = createPlayer()
   const input = createInputState()
   const updateState = createUpdateState()
   const audio = createAudioController()
-  const zBuffer = new Float32Array(width)
 
   let isPaused = false
   let queuedEnemySpawn: EnemyDefinitionConfig | null = null
@@ -153,6 +185,7 @@ function startTestMap(): void {
     input.lookDown = false
     input.pitchResetPending = false
     input.firePending = false
+    input.flightTogglePending = false
     input.sonarPingPending = false
     input.snapNorthPending = false
     input.snapEastPending = false
@@ -339,7 +372,7 @@ function startTestMap(): void {
     lastTimeMs = performance.now()
 
     if (pendingSpawnConfig !== null) {
-      spawnRandomTankFromConfig(combatWorld, mapData, player, pendingSpawnConfig)
+      spawnRandomTankFromConfig(combatWorld, collisionWorld, player, pendingSpawnConfig)
     } // end if pending custom enemy spawn
   } // end function resumeGame
 
@@ -445,6 +478,57 @@ function startTestMap(): void {
   let lastTimeMs = 0
   let previousPlayerX = player.x
   let previousPlayerY = player.y
+  let previousPlayerZ = player.z ?? 0
+
+  const applySharedFlightHeight = (value: number): number => {
+    const nextHeight = setSharedFlightHeight(value)
+    syncDynamicFlightHeights(combatWorld)
+
+    if (player.flightState === 'airborne') {
+      player.z = nextHeight
+      player.isFlying = nextHeight > 0
+    } // end if player already airborne
+
+    return nextHeight
+  } // end function applySharedFlightHeight
+
+  window.mechDev = {
+    help: () => [
+      'window.mechDev.getState()',
+      'window.mechDev.setSharedFlightHeight(4)',
+      'window.mechDev.setPlayerAltitude(1.5)',
+      "window.mechDev.spawnEnemy('helicopter')",
+      'window.mechDev.pause()',
+      'window.mechDev.resume()'
+    ],
+    getState: () => ({
+      sharedFlightHeight: getSharedFlightHeight(),
+      player: {
+        x: player.x,
+        y: player.y,
+        z: player.z ?? 0,
+        flightState: player.flightState ?? 'grounded',
+        isFlying: !!player.isFlying
+      },
+      weapon: { ...playerWeapon },
+      paused: isPaused
+    }),
+    setSharedFlightHeight: (value: number) => applySharedFlightHeight(value),
+    setPlayerAltitude: (value: number) => {
+      const nextAltitude = Math.max(0, value)
+      player.z = nextAltitude
+      player.isFlying = nextAltitude > 0
+      player.flightState = nextAltitude > 0 ? 'airborne' : 'grounded'
+      return nextAltitude
+    },
+    spawnEnemy: (enemyId: EnemyId) => spawnRandomEnemy(combatWorld, collisionWorld, player, enemyId),
+    pause: async () => {
+      await pauseGame()
+    },
+    resume: async () => {
+      await resumeGame()
+    }
+  }
 
   const gameLoop = (timestampMs: number): void => {
     const deltaSeconds = Math.min((timestampMs - lastTimeMs) / 1000, 0.05)
@@ -459,29 +543,23 @@ function startTestMap(): void {
 
     updateFrame(
       {
-        mapData,
-        sprites,
         player,
         input,
         audio,
-        state: updateState
+        state: updateState,
+        flightAltitude: getSharedFlightHeight(),
+        collisionWorld
       },
       deltaSeconds
     )
 
-    if (input.firePending) {
-      input.firePending = false
-      audio.fireGunshot()
-      updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
-      spawnPlayerBullet(combatWorld, player)
-    } // end if fire pending
-
     const pendingManualPing = input.sonarPingPending
     input.sonarPingPending = false
+    const shouldTriggerManualPing = pendingManualPing && !player.isFlying
 
     if (input.spawnTankPending) {
       input.spawnTankPending = false
-      const spawned = spawnRandomEnemy(combatWorld, mapData, player, 'tank')
+      const spawned = spawnRandomEnemy(combatWorld, collisionWorld, player, 'tank')
       if (awarenessStatusElement) {
         awarenessStatusElement.textContent = spawned
           ? 'AWARENESS: TANK SPAWNED'
@@ -491,7 +569,7 @@ function startTestMap(): void {
 
     if (input.spawnStrikerPending) {
       input.spawnStrikerPending = false
-      const spawned = spawnRandomEnemy(combatWorld, mapData, player, 'striker')
+      const spawned = spawnRandomEnemy(combatWorld, collisionWorld, player, 'striker')
       if (awarenessStatusElement) {
         awarenessStatusElement.textContent = spawned
           ? 'AWARENESS: STRIKER SPAWNED'
@@ -501,7 +579,7 @@ function startTestMap(): void {
 
     if (input.spawnBrutePending) {
       input.spawnBrutePending = false
-      const spawned = spawnRandomEnemy(combatWorld, mapData, player, 'brute')
+      const spawned = spawnRandomEnemy(combatWorld, collisionWorld, player, 'brute')
       if (awarenessStatusElement) {
         awarenessStatusElement.textContent = spawned
           ? 'AWARENESS: BRUTE SPAWNED'
@@ -511,7 +589,7 @@ function startTestMap(): void {
 
     if (input.spawnHelicopterPending) {
       input.spawnHelicopterPending = false
-      const spawned = spawnRandomEnemy(combatWorld, mapData, player, 'helicopter')
+      const spawned = spawnRandomEnemy(combatWorld, collisionWorld, player, 'helicopter')
       if (awarenessStatusElement) {
         awarenessStatusElement.textContent = spawned
           ? 'AWARENESS: HELICOPTER SPAWNED'
@@ -519,7 +597,7 @@ function startTestMap(): void {
       } // end if awareness status element exists
     } // end if spawn helicopter pending
 
-    stepCombatEcsWorld(combatWorld, mapData, audio, player, deltaSeconds)
+    stepCombatEcsWorld(combatWorld, collisionWorld, audio, player, deltaSeconds)
     const combatRender = getCombatRenderState(combatWorld)
 
     // --- Target lock evaluation ---
@@ -527,7 +605,7 @@ function startTestMap(): void {
       targetLockState,
       player,
       combatRender.tanks,
-      mapData,
+      collisionWorld,
       playerWeapon.lockOnRange,
       playerWeapon.lockOnWindowWidthPercent,
       playerWeapon.lockOnWindowHeightPercent
@@ -551,12 +629,14 @@ function startTestMap(): void {
         } // end if fire rate applies
         if (lockUpdate.lockedTank !== null) {
           const playerSpeed = Math.hypot(player.x - previousPlayerX, player.y - previousPlayerY) / Math.max(deltaSeconds, 0.0001)
-          const speedFraction = Math.min(1, playerSpeed / PLAYER_SPEED)
+          const maxMoveSpeed = player.isFlying ? PLAYER_FLIGHT_SPEED : PLAYER_SPEED
+          const speedFraction = Math.min(1, playerSpeed / maxMoveSpeed)
           spawnPlayerBulletToward(
             combatWorld,
             player,
             lockUpdate.lockedTank.x,
             lockUpdate.lockedTank.y,
+            lockUpdate.lockedTank.height + 0.5,
             playerWeapon.accuracy,
             speedFraction,
             playerWeapon.damagePerShot,
@@ -569,16 +649,17 @@ function startTestMap(): void {
       } // end if fire rate cooldown elapsed
     } // end if fire pending
 
-    const awareness = computeObstructionAwareness(player, combatRender.tanks, mapData, sprites)
+    const awareness = computeObstructionAwareness(player, combatRender.tanks, collisionWorld, sprites)
 
     const playerAudioState = {
-      position: { x: player.x, y: player.y, z: 0 },
+      position: { x: player.x, y: player.y, z: player.z ?? 0 },
       angle: player.angle,
       velocity: {
         x: (player.x - previousPlayerX) / Math.max(deltaSeconds, 0.0001),
         y: (player.y - previousPlayerY) / Math.max(deltaSeconds, 0.0001),
-        z: 0
-      }
+        z: ((player.z ?? 0) - previousPlayerZ) / Math.max(deltaSeconds, 0.0001)
+      },
+      isFlying: !!player.isFlying
     }
     const enemyAudioStates = combatRender.tanks.map((tank) => ({
       id: `tank-${tank.id}`,
@@ -593,7 +674,7 @@ function startTestMap(): void {
       height: tank.height
     }))
 
-    if (pendingManualPing) {
+    if (shouldTriggerManualPing) {
       audio.triggerActiveSonar(playerAudioState, enemyAudioStates, mapData, sprites)
     } // end if manual sonar ping was requested
 
@@ -622,29 +703,30 @@ function startTestMap(): void {
         sonarStatusElement.textContent = 'SONAR: AUDIO SUSPENDED (PRESS ANY KEY OR CLICK)'
       } else {
         sonarStatusElement.textContent = pendingManualPing
-          ? 'SONAR: PASSIVE SWEEP ACTIVE | MANUAL PING FIRED'
-          : 'SONAR: PASSIVE SWEEP ACTIVE | E: MANUAL PING'
+          ? (shouldTriggerManualPing
+              ? 'SONAR: PASSIVE SWEEP ACTIVE | MANUAL PING FIRED'
+              : 'SONAR: FLIGHT MODE | MANUAL PING DISABLED')
+          : player.isFlying
+            ? 'SONAR: FLIGHT MODE | MANUAL PING DISABLED'
+            : 'SONAR: PASSIVE SWEEP ACTIVE | E: MANUAL PING'
       } // end if context running and timer active
     } // end if sonar status element exists
 
     previousPlayerX = player.x
     previousPlayerY = player.y
+    previousPlayerZ = player.z ?? 0
 
     const muzzleFlashAlpha = updateState.muzzleFlashTimer / MUZZLE_FLASH_DURATION
 
-    renderFrame({
-      ctx,
-      canvasWidth: width,
-      canvasHeight: height,
-      mapData,
-      sprites,
+    threeRenderer.renderFrame({
       enemies: combatRender.enemies,
       tanks: combatRender.tanks,
       bullets: combatRender.bullets,
       player,
-      zBuffer,
       muzzleFlashAlpha,
-      lockedTankId: targetLockState.lockedTankId
+      lockedTankId: targetLockState.lockedTankId,
+      lockOnWindowWidthPercent: playerWeapon.lockOnWindowWidthPercent,
+      lockOnWindowHeightPercent: playerWeapon.lockOnWindowHeightPercent
     })
 
     requestAnimationFrame(gameLoop)

@@ -1,3 +1,4 @@
+import { getSharedFlightHeight } from '../runtime-config.js'
 import type { EnemyBehaviorDefinition, EnemyDefinitionConfig, EnemyId, EnemySoundDefinition } from './enemyTypes.js'
 
 export abstract class EnemyDefinitionBase {
@@ -6,7 +7,6 @@ export abstract class EnemyDefinitionBase {
   readonly maxHp: number
   readonly collisionRadius: number
   readonly airborne: boolean
-  readonly flightHeight: number
   readonly movementSpeed: number
   readonly projectileSpeed: number
   readonly shotDamage: number
@@ -15,6 +15,15 @@ export abstract class EnemyDefinitionBase {
   readonly projectileMaxDistance: number
   readonly behavior: EnemyBehaviorDefinition
   readonly sounds: EnemySoundDefinition
+  private readonly configuredFlightHeight?: number
+
+  get flightHeight(): number {
+    if (!this.airborne) {
+      return 0
+    } // end if ground unit
+
+    return Math.max(0, this.configuredFlightHeight ?? getSharedFlightHeight())
+  } // end getter flightHeight
 
   protected constructor(config: EnemyDefinitionConfig) {
     this.id = config.id
@@ -22,7 +31,7 @@ export abstract class EnemyDefinitionBase {
     this.maxHp = config.maxHp
     this.collisionRadius = config.collisionRadius
     this.airborne = config.airborne
-    this.flightHeight = config.flightHeight
+    this.configuredFlightHeight = config.flightHeight
     this.movementSpeed = config.movementSpeed
     this.projectileSpeed = config.projectileSpeed
     this.shotDamage = config.shotDamage

@@ -13,11 +13,17 @@ import {
   BULLET_SPEED,
   MAP_HEIGHT,
   MAP_WIDTH,
+  PLAYER_RADIUS,
   PLAYER_HEIGHT,
   WEAPON_MAX_CONE_RADIANS,
   WEAPON_MOVEMENT_ACCURACY_PENALTY
 } from './constants.js'
-import { isWall } from './collision.js'
+import {
+  hasWorldLineOfSight3D,
+  isPlayerBlocked,
+  isWorldBlockedAtHeight,
+  type WorldCollisionWorld
+} from './world-collision.js'
 import {
   ENEMY_NUMERIC_ID,
   getEnemyDefinition,
@@ -31,6 +37,8 @@ const KIND_ENEMY = 2
 const KIND_TANK = 3
 const KIND_TANK_PROJECTILE = 4
 const BULLET_HIT_RADIUS = 0.25
+const PLAYER_HIT_HALF_HEIGHT = 0.55
+const TANK_HIT_HALF_HEIGHT = 0.6
 
 const Position = defineComponent({
   x: Types.f32,
@@ -79,6 +87,7 @@ const ProjectileStats = defineComponent({
   speed: Types.f32,
   damage: Types.i16,
   maxDistance: Types.f32,
+  originHeight: Types.f32,
   nearMissPlayed: Types.ui8
 })
 
@@ -138,49 +147,22 @@ function addTank(world: CombatEcsWorld, x: number, y: number, enemyId: EnemyId =
   TankExplosion.maxDuration[tank] = 0.7
 } // end function addTank
 
-function hasLineOfSight(
-  mapData: Uint8Array,
-  fromX: number,
-  fromY: number,
-  toX: number,
-  toY: number
-): boolean {
-  // Simple LOS using DDA raycasting
-  const dx = toX - fromX
-  const dy = toY - fromY
-  const dist = Math.hypot(dx, dy)
-  if (dist < 0.01) {
-    return true
-  } // end if at same position
-
-  const steps = Math.ceil(dist * 4)
-  for (let i = 0; i <= steps; i++) {
-    const t = steps > 0 ? i / steps : 0
-    const checkX = fromX + dx * t
-    const checkY = fromY + dy * t
-    if (isWall(mapData, checkX, checkY)) {
-      // Check if wall is interposing (not start or end pos)
-      if (i > 0 && i < steps) {
-        return false
-      } // end if wall blocks path
-    } // end if wall found
-  } // end for each step
-
-  return true
-} // end function hasLineOfSight
-
 function spawnTankProjectile(
   world: CombatEcsWorld,
   tankEntity: number,
   tankX: number,
   tankY: number,
   targetX: number,
-  targetY: number
+  targetY: number,
+  targetZ: number
 ): void {
   const enemyProfileId = EnemyProfile.id[tankEntity] ?? ENEMY_NUMERIC_ID.tank
   const customConfig = world.customConfigs.get(tankEntity)
   const definition = customConfig ?? getEnemyDefinitionFromNumericId(enemyProfileId)
   const angle = Math.atan2(targetY - tankY, targetX - tankX)
+  const originHeight = Math.max(0, Flight.height[tankEntity] ?? 0) + PLAYER_HEIGHT
+  const horizontalDistance = Math.hypot(targetX - tankX, targetY - tankY)
+  const pitch = Math.atan2(targetZ - originHeight, Math.max(horizontalDistance, 0.0001))
   const bullet = addEntity(world)
   addComponent(world, Position, bullet)
   addComponent(world, Facing, bullet)
@@ -189,7 +171,7 @@ function spawnTankProjectile(
   Position.x[bullet] = tankX
   Position.y[bullet] = tankY
   Facing.angle[bullet] = angle
-  Facing.pitch[bullet] = 0
+  Facing.pitch[bullet] = pitch
   Meta.kind[bullet] = KIND_TANK_PROJECTILE
   Meta.radius[bullet] = 0.2
   Meta.distance[bullet] = 0
@@ -197,6 +179,7 @@ function spawnTankProjectile(
   ProjectileStats.speed[bullet] = definition.projectileSpeed
   ProjectileStats.damage[bullet] = definition.shotDamage
   ProjectileStats.maxDistance[bullet] = definition.projectileMaxDistance
+  ProjectileStats.originHeight[bullet] = originHeight
   ProjectileStats.nearMissPlayed[bullet] = 0
 } // end function spawnTankProjectile
 
@@ -207,7 +190,7 @@ export function createCombatEcsWorld(): CombatEcsWorld {
   return world
 } // end function createCombatEcsWorld
 
-function canSpawnTankAt(world: CombatEcsWorld, mapData: Uint8Array, x: number, y: number, player: Player, collisionRadius?: number): boolean {
+function canSpawnTankAt(world: CombatEcsWorld, collisionWorld: WorldCollisionWorld, x: number, y: number, player: Player, collisionRadius?: number): boolean {
   const tankRadius = collisionRadius ?? getEnemyDefinition('tank').collisionRadius
   const collisionPadding = 0.18
 
@@ -220,15 +203,9 @@ function canSpawnTankAt(world: CombatEcsWorld, mapData: Uint8Array, x: number, y
     return false
   } // end if too close to map boundaries
 
-  if (
-    isWall(mapData, x, y) ||
-    isWall(mapData, x + tankRadius, y) ||
-    isWall(mapData, x - tankRadius, y) ||
-    isWall(mapData, x, y + tankRadius) ||
-    isWall(mapData, x, y - tankRadius)
-  ) {
+  if (isPlayerBlocked(collisionWorld, x, y, 0, tankRadius, 1.2)) {
     return false
-  } // end if spawn intersects a wall tile
+  } // end if spawn intersects world collision
 
   if (Math.hypot(x - player.x, y - player.y) < 4.5) {
     return false
@@ -255,12 +232,12 @@ function canSpawnTankAt(world: CombatEcsWorld, mapData: Uint8Array, x: number, y
   return true
 } // end function canSpawnTankAt
 
-export function spawnRandomTank(world: CombatEcsWorld, mapData: Uint8Array, player: Player): boolean {
+export function spawnRandomTank(world: CombatEcsWorld, collisionWorld: WorldCollisionWorld, player: Player): boolean {
   const maxAttempts = 90
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const x = 1.25 + Math.random() * (MAP_WIDTH - 2.5)
     const y = 1.25 + Math.random() * (MAP_HEIGHT - 2.5)
-    if (!canSpawnTankAt(world, mapData, x, y, player)) {
+    if (!canSpawnTankAt(world, collisionWorld, x, y, player)) {
       continue
     } // end if random spawn candidate invalid
 
@@ -292,7 +269,7 @@ function addTankFromConfig(world: CombatEcsWorld, x: number, y: number, config: 
   Health.hp[tank] = config.maxHp
   EnemyProfile.id[tank] = ENEMY_NUMERIC_ID[config.id]
   Flight.airborne[tank] = config.airborne ? 1 : 0
-  Flight.height[tank] = config.airborne ? Math.max(0, config.flightHeight) : 0
+  Flight.height[tank] = config.airborne ? Math.max(0, config.flightHeight ?? 0) : 0
   Behavior.movementAngle[tank] = Math.random() * Math.PI * 2
   Behavior.movementTimer[tank] = 0
   Behavior.cannonFireCooldown[tank] = 0
@@ -303,13 +280,13 @@ function addTankFromConfig(world: CombatEcsWorld, x: number, y: number, config: 
   world.customConfigs.set(tank, config)
 } // end function addTankFromConfig
 
-export function spawnRandomEnemy(world: CombatEcsWorld, mapData: Uint8Array, player: Player, enemyId: EnemyId = 'tank'): boolean {
+export function spawnRandomEnemy(world: CombatEcsWorld, collisionWorld: WorldCollisionWorld, player: Player, enemyId: EnemyId = 'tank'): boolean {
   const definition = getEnemyDefinition(enemyId)
   const maxAttempts = 90
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const x = 1.25 + Math.random() * (MAP_WIDTH - 2.5)
     const y = 1.25 + Math.random() * (MAP_HEIGHT - 2.5)
-    if (!canSpawnTankAt(world, mapData, x, y, player, definition.collisionRadius)) {
+    if (!canSpawnTankAt(world, collisionWorld, x, y, player, definition.collisionRadius)) {
       continue
     } // end if random spawn candidate invalid
     addTank(world, x, y, enemyId)
@@ -318,12 +295,12 @@ export function spawnRandomEnemy(world: CombatEcsWorld, mapData: Uint8Array, pla
   return false
 } // end function spawnRandomEnemy
 
-export function spawnRandomTankFromConfig(world: CombatEcsWorld, mapData: Uint8Array, player: Player, config: EnemyDefinitionConfig): boolean {
+export function spawnRandomTankFromConfig(world: CombatEcsWorld, collisionWorld: WorldCollisionWorld, player: Player, config: EnemyDefinitionConfig): boolean {
   const maxAttempts = 90
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const x = 1.25 + Math.random() * (MAP_WIDTH - 2.5)
     const y = 1.25 + Math.random() * (MAP_HEIGHT - 2.5)
-    if (!canSpawnTankAt(world, mapData, x, y, player, config.collisionRadius)) {
+    if (!canSpawnTankAt(world, collisionWorld, x, y, player, config.collisionRadius)) {
       continue
     } // end if random spawn candidate invalid
     addTankFromConfig(world, x, y, config)
@@ -331,6 +308,25 @@ export function spawnRandomTankFromConfig(world: CombatEcsWorld, mapData: Uint8A
   } // end for each spawn attempt
   return false
 } // end function spawnRandomTankFromConfig
+
+export function syncDynamicFlightHeights(world: CombatEcsWorld): void {
+  const tankEntities = TankQuery(world)
+
+  for (const tank of tankEntities) {
+    if ((Flight.airborne[tank] ?? 0) !== 1) {
+      continue
+    } // end if tank is not airborne
+
+    const customConfig = world.customConfigs.get(tank)
+    if (customConfig) {
+      Flight.height[tank] = customConfig.airborne ? Math.max(0, customConfig.flightHeight ?? 0) : 0
+      continue
+    } // end if spawned from custom config
+
+    const definition = getEnemyDefinitionFromNumericId(EnemyProfile.id[tank] ?? ENEMY_NUMERIC_ID.tank)
+    Flight.height[tank] = definition.airborne ? Math.max(0, definition.flightHeight) : 0
+  } // end for each tank
+} // end function syncDynamicFlightHeights
 
 export function spawnPlayerBullet(
   world: CombatEcsWorld,
@@ -355,6 +351,7 @@ export function spawnPlayerBullet(
   ProjectileStats.speed[bullet] = speed
   ProjectileStats.damage[bullet] = damage
   ProjectileStats.maxDistance[bullet] = maxDistance
+  ProjectileStats.originHeight[bullet] = (player.z ?? 0) + PLAYER_HEIGHT
   ProjectileStats.nearMissPlayed[bullet] = 0
 } // end function spawnPlayerBullet
 
@@ -368,6 +365,7 @@ export function spawnPlayerBulletToward(
   player: Player,
   targetX: number,
   targetY: number,
+  targetZ: number,
   accuracy: number,
   playerSpeedFraction: number,
   damage = 10,
@@ -375,6 +373,9 @@ export function spawnPlayerBulletToward(
   maxDistance = BULLET_MAX_DIST
 ): void {
   const baseAngle = Math.atan2(targetY - player.y, targetX - player.x)
+  const originHeight = (player.z ?? 0) + PLAYER_HEIGHT
+  // Player-fired projectiles should follow the current look pitch, even with lock-on enabled.
+  const basePitch = player.pitch
   const baseHalfAngle = WEAPON_MAX_CONE_RADIANS * Math.max(0, 1 - accuracy)
   const halfAngle = baseHalfAngle * (1 + Math.min(1, playerSpeedFraction) * WEAPON_MOVEMENT_ACCURACY_PENALTY)
   const angleOffset = (Math.random() * 2 - 1) * halfAngle
@@ -388,7 +389,7 @@ export function spawnPlayerBulletToward(
   Position.x[bullet] = player.x
   Position.y[bullet] = player.y
   Facing.angle[bullet] = finalAngle
-  Facing.pitch[bullet] = 0
+  Facing.pitch[bullet] = basePitch
   Meta.kind[bullet] = KIND_BULLET
   Meta.radius[bullet] = BULLET_HIT_RADIUS
   Meta.distance[bullet] = 0
@@ -396,22 +397,27 @@ export function spawnPlayerBulletToward(
   ProjectileStats.speed[bullet] = speed
   ProjectileStats.damage[bullet] = damage
   ProjectileStats.maxDistance[bullet] = maxDistance
+  ProjectileStats.originHeight[bullet] = originHeight
   ProjectileStats.nearMissPlayed[bullet] = 0
 } // end function spawnPlayerBulletToward
 
-function computeFloorCeilHitDistance(pitch: number): number {
+function computeFloorCeilHitDistance(originHeight: number, pitch: number): number {
   const absPitch = Math.abs(pitch)
   if (absPitch < 0.001) {
     return BULLET_MAX_DIST
   } // end if no pitch
 
-  if (pitch > 0) {
+  if (pitch < 0) {
     // No artificial ceiling: upward shots should only expire by max range or world collisions.
     return BULLET_MAX_DIST
   } // end if upward pitch
 
-  return PLAYER_HEIGHT / Math.tan(-pitch)
+  return originHeight / Math.tan(pitch)
 } // end function computeFloorCeilHitDistance
+
+function getProjectileHeight(originHeight: number, distance: number, pitch: number): number {
+  return originHeight - Math.tan(pitch) * distance
+} // end function getProjectileHeight
 
 function getNumber(store: ArrayLike<number>, entity: number): number | null {
   const value = store[entity]
@@ -423,7 +429,7 @@ function getNumber(store: ArrayLike<number>, entity: number): number | null {
 
 export function stepCombatEcsWorld(
   world: CombatEcsWorld,
-  mapData: Uint8Array,
+  collisionWorld: WorldCollisionWorld,
   audio: AudioController,
   player: Player,
   deltaSeconds: number
@@ -473,10 +479,15 @@ export function stepCombatEcsWorld(
     const nextX = tankX + Math.cos(movementAngle) * moveStep
     const nextY = tankY + Math.sin(movementAngle) * moveStep
 
-    let canMove = true
-    if (isWall(mapData, nextX, nextY)) {
-      canMove = false
-    } // end if wall
+    const tankRadius = Math.max(0.15, enemyDefinition.collisionRadius)
+    const canMove = !isPlayerBlocked(
+      collisionWorld,
+      nextX,
+      nextY,
+      Math.max(0, Flight.height[tank] ?? 0),
+      tankRadius,
+      1.2
+    )
 
     if (!canMove) {
       Behavior.isMoving[tank] = 0
@@ -499,7 +510,12 @@ export function stepCombatEcsWorld(
 
     // --- LOS check and cannon fire ---
     const dist = Math.hypot(nextX - player.x, nextY - player.y)
-    const hasLos = hasLineOfSight(mapData, nextX, nextY, player.x, player.y)
+    const tankHeight = Math.max(0, Flight.height[tank] ?? 0)
+    const hasLos = hasWorldLineOfSight3D(
+      collisionWorld,
+      { x: nextX, y: nextY, z: tankHeight + PLAYER_HEIGHT },
+      { x: player.x, y: player.y, z: (player.z ?? 0) + PLAYER_HEIGHT }
+    )
     const canShootByLos = enemyDefinition.behavior.lineOfSightRequiredToShoot ? hasLos : true
     const threatDelaySeconds = enemyDefinition.threatDelaySeconds
 
@@ -507,7 +523,7 @@ export function stepCombatEcsWorld(
       const newWindup = Math.max(0, attackWindup - deltaSeconds)
       Behavior.attackWindupSeconds[tank] = newWindup
       if (newWindup <= 0 && canShootByLos && dist < enemyDefinition.behavior.preferredEngageRange) {
-        spawnTankProjectile(world, tank, nextX, nextY, player.x, player.y)
+        spawnTankProjectile(world, tank, nextX, nextY, player.x, player.y, (player.z ?? 0) + PLAYER_HEIGHT)
         audio.playEnemyAttack(`tank-${tank}`, enemyDefinition.id)
       } // end if windup completed and target valid
     } else {
@@ -548,6 +564,7 @@ export function stepCombatEcsWorld(
 
     const speed = getNumber(ProjectileStats.speed, entity) ?? (kind === KIND_BULLET ? BULLET_SPEED : getEnemyDefinition('tank').projectileSpeed)
     const maxDist = getNumber(ProjectileStats.maxDistance, entity) ?? (kind === KIND_BULLET ? BULLET_MAX_DIST : BULLET_MAX_DIST * 1.2)
+    const originHeight = getNumber(ProjectileStats.originHeight, entity) ?? PLAYER_HEIGHT
     const step = speed * deltaSeconds
     const cosA = Math.cos(angle)
     const sinA = Math.sin(angle)
@@ -555,7 +572,7 @@ export function stepCombatEcsWorld(
     const nextY = currentY + sinA * step
     const nextDist = currentDist + step
 
-    const floorCeilDist = computeFloorCeilHitDistance(pitch)
+    const floorCeilDist = computeFloorCeilHitDistance(originHeight, pitch)
     if (nextDist >= floorCeilDist) {
       const hitFraction = (floorCeilDist - currentDist) / step
       const hitX = currentX + cosA * step * hitFraction
@@ -571,7 +588,8 @@ export function stepCombatEcsWorld(
       continue
     } // end if max distance reached
 
-    if (isWall(mapData, nextX, nextY)) {
+    const nextHeight = getProjectileHeight(originHeight, nextDist, pitch)
+    if (isWorldBlockedAtHeight(collisionWorld, nextX, nextY, nextHeight, Math.max(0.02, bulletRadius * 0.55))) {
       Meta.alive[entity] = 0
       audio.playImpact(nextX, nextY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
       impactFrameCount++
@@ -595,7 +613,8 @@ export function stepCombatEcsWorld(
 
         const dx = nextX - targetX
         const dy = nextY - targetY
-        if (Math.hypot(dx, dy) < targetRadius + bulletRadius) {
+        const tankCenterHeight = Math.max(0, Flight.height[tank] ?? 0) + PLAYER_HEIGHT
+        if (Math.hypot(dx, dy) < targetRadius + bulletRadius && Math.abs(nextHeight - tankCenterHeight) <= TANK_HIT_HALF_HEIGHT) {
           // Tank hit by player bullet
           Meta.alive[entity] = 0
           const projectileDamage = getNumber(ProjectileStats.damage, entity) ?? 10
@@ -622,9 +641,10 @@ export function stepCombatEcsWorld(
     if (kind === KIND_TANK_PROJECTILE) {
       const dx = nextX - player.x
       const dy = nextY - player.y
-      const playerRadius = 0.25
+      const playerRadius = PLAYER_RADIUS
       const playerDistance = Math.hypot(dx, dy)
-      if (playerDistance < playerRadius + bulletRadius) {
+      const playerCenterHeight = (player.z ?? 0) + PLAYER_HEIGHT
+      if (playerDistance < playerRadius + bulletRadius && Math.abs(nextHeight - playerCenterHeight) <= PLAYER_HIT_HALF_HEIGHT) {
         // Player hit
         Meta.alive[entity] = 0
         ProjectileStats.nearMissPlayed[entity] = 1
@@ -704,6 +724,7 @@ export function getCombatRenderState(world: CombatEcsWorld): {
         y,
         angle,
         pitch,
+        zOrigin: getNumber(ProjectileStats.originHeight, entity) ?? PLAYER_HEIGHT,
         distance,
         alive: true
       })

@@ -8,7 +8,6 @@ export class HelicopterEnemyDefinition extends EnemyDefinitionBase {
       maxHp: 30,
       collisionRadius: 0.46,
       airborne: true,
-      flightHeight: 2.8,
       movementSpeed: 2,
       projectileSpeed: 30,
       shotDamage: 5,

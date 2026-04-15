@@ -1,4 +1,5 @@
-import { getCell } from './map-data.js'
+import { PLAYER_HEIGHT } from './constants.js'
+import { traceWorldHit3D, type WorldCollisionWorld } from './world-collision.js'
 import type { ObstructionAwareness, Player, SpriteObject, TankRender } from './types.js'
 
 interface ObstacleHit {
@@ -37,41 +38,6 @@ function findNearestAliveTank(player: Player, tanks: TankRender[]): TankRender |
 
   return nearest
 } // end function findNearestAliveTank
-
-function traceWallHit(
-  mapData: Uint8Array,
-  fromX: number,
-  fromY: number,
-  toX: number,
-  toY: number
-): ObstacleHit | null {
-  const dx = toX - fromX
-  const dy = toY - fromY
-  const totalDistance = Math.hypot(dx, dy)
-  if (totalDistance < 0.001) {
-    return null
-  } // end if too close
-
-  const stepDistance = 0.16
-  const steps = Math.max(1, Math.ceil(totalDistance / stepDistance))
-  for (let step = 1; step < steps; step += 1) {
-    const t = step / steps
-    const sampleX = fromX + dx * t
-    const sampleY = fromY + dy * t
-    const mapCol = Math.floor(sampleX)
-    const mapRow = Math.floor(sampleY)
-    if (getCell(mapData, mapCol, mapRow) !== 0) {
-      return {
-        type: 'wall',
-        distance: totalDistance * t,
-        x: sampleX,
-        y: sampleY
-      } // end object wall hit
-    } // end if wall hit
-  } // end for each trace step
-
-  return null
-} // end function traceWallHit
 
 function traceSpriteHit(
   sprites: SpriteObject[],
@@ -121,7 +87,7 @@ function traceSpriteHit(
 export function computeObstructionAwareness(
   player: Player,
   tanks: TankRender[],
-  mapData: Uint8Array,
+  collisionWorld: WorldCollisionWorld,
   sprites: SpriteObject[]
 ): ObstructionAwareness {
   const target = findNearestAliveTank(player, tanks)
@@ -137,7 +103,19 @@ export function computeObstructionAwareness(
   } // end if no alive targets
 
   const targetDistance = Math.hypot(target.x - player.x, target.y - player.y)
-  const wallHit = traceWallHit(mapData, player.x, player.y, target.x, target.y)
+  const wallTrace = traceWorldHit3D(
+    collisionWorld,
+    { x: player.x, y: player.y, z: (player.z ?? 0) + PLAYER_HEIGHT },
+    { x: target.x, y: target.y, z: target.height + PLAYER_HEIGHT }
+  )
+  const wallHit = wallTrace
+    ? {
+        type: 'wall' as const,
+        distance: wallTrace.distance,
+        x: wallTrace.x,
+        y: wallTrace.y
+      }
+    : null
   const spriteHit = traceSpriteHit(sprites, player.x, player.y, target.x, target.y)
 
   let nearestObstacle: ObstacleHit | null = null

@@ -1,5 +1,6 @@
 import { HALF_FOV } from './constants.js'
-import { hasLineOfSight } from './audio-utils.js'
+import { PLAYER_HEIGHT } from './constants.js'
+import { hasWorldLineOfSight3D, type WorldCollisionWorld } from './world-collision.js'
 import type { Player, TargetLockState, TankRender } from './types.js'
 
 export function createTargetLockState(): TargetLockState {
@@ -34,7 +35,7 @@ export function updateTargetLock(
   state: TargetLockState,
   player: Player,
   tanks: TankRender[],
-  mapData: Uint8Array,
+  collisionWorld: WorldCollisionWorld,
   lockOnRange: number,
   lockOnWindowWidthPercent = 100,
   lockOnWindowHeightPercent = 100
@@ -79,7 +80,11 @@ export function updateTargetLock(
     } // end if player pitch outside lock-on window
 
     // Wall line-of-sight check.
-    if (!hasLineOfSight(mapData, { x: player.x, y: player.y }, { x: tank.x, y: tank.y })) {
+    if (!hasWorldLineOfSight3D(
+      collisionWorld,
+      { x: player.x, y: player.y, z: (player.z ?? 0) + PLAYER_HEIGHT },
+      { x: tank.x, y: tank.y, z: tank.height + PLAYER_HEIGHT }
+    )) {
       continue
     } // end if wall blocking view
 

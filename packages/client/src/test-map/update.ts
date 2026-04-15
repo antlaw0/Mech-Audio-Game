@@ -1,13 +1,18 @@
 import {
   FOOTSTEP_INTERVAL_SECONDS,
   LOOK_SPEED,
+  PLAYER_FLIGHT_SPEED,
+  PLAYER_FLIGHT_VERTICAL_SPEED,
   MAX_LOOK_PITCH,
+  MAP_HEIGHT,
+  MAP_WIDTH,
+  PLAYER_RADIUS,
   PLAYER_SPEED,
   TURN_SPEED
 } from './constants.js'
 import { normalizeAngle } from './audio-utils.js'
-import { isSolidSpriteAt, isWall } from './collision.js'
-import type { AudioController, InputState, Player, SpriteObject } from './types.js'
+import { isPlayerBlocked, type WorldCollisionWorld } from './world-collision.js'
+import type { AudioController, InputState, Player } from './types.js'
 
 export interface UpdateState {
   footstepTimerSeconds: number
@@ -16,12 +21,12 @@ export interface UpdateState {
 } // end interface UpdateState
 
 export interface UpdateEnvironment {
-  mapData: Uint8Array
-  sprites: SpriteObject[]
   player: Player
   input: InputState
   audio: AudioController
   state: UpdateState
+  flightAltitude: number
+  collisionWorld: WorldCollisionWorld
 } // end interface UpdateEnvironment
 
 export function createUpdateState(): UpdateState {
@@ -33,15 +38,74 @@ export function createUpdateState(): UpdateState {
 } // end function createUpdateState
 
 export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number): void {
-  const moveAmount = PLAYER_SPEED * deltaSeconds
+  if (environment.player.flightState === undefined) {
+    environment.player.flightState = 'grounded'
+  } // end if flight state is uninitialized
+  if (environment.player.isFlying === undefined) {
+    environment.player.isFlying = false
+  } // end if flight flag is uninitialized
+  if (environment.player.z === undefined) {
+    environment.player.z = 0
+  } // end if altitude is uninitialized
+
+  const moveSpeed = environment.player.flightState === 'grounded' ? PLAYER_SPEED : PLAYER_FLIGHT_SPEED
+  const moveAmount = moveSpeed * deltaSeconds
   const turnAmount = TURN_SPEED * deltaSeconds
   const lookAmount = LOOK_SPEED * deltaSeconds
 
-  const { input, player, audio, sprites, mapData, state } = environment
+  const { input, player, audio, state } = environment
   let isMoving = false
   let collided = false
   let movementBlockedByObstacle = false
   let collisionDirection = 0
+
+  if (input.flightTogglePending) {
+    input.flightTogglePending = false
+    if (player.flightState === 'grounded') {
+      player.flightState = 'ascending'
+      player.isFlying = true
+      if (audio.isAudioStarted()) {
+        audio.startFlightLoop()
+      } // end if flight loop should start
+    } else {
+      player.flightState = 'descending'
+      player.isFlying = true
+      if (audio.isAudioStarted()) {
+        audio.stopFlightLoop()
+      } // end if flight loop should stop immediately
+    } // end if toggle entering or exiting flight
+  } // end if flight toggle requested
+
+  const targetFlightAltitude = Math.max(0, environment.flightAltitude)
+  const verticalStep = PLAYER_FLIGHT_VERTICAL_SPEED * deltaSeconds
+  let playerAltitude = player.z ?? 0
+  if (player.flightState === 'ascending') {
+    playerAltitude = Math.min(targetFlightAltitude, playerAltitude + verticalStep)
+    if (playerAltitude >= targetFlightAltitude - 0.001) {
+      playerAltitude = targetFlightAltitude
+      player.flightState = 'airborne'
+      player.isFlying = true
+    } // end if reached flight altitude
+  } else if (player.flightState === 'airborne') {
+    playerAltitude = targetFlightAltitude
+    player.isFlying = true
+  } else if (player.flightState === 'descending') {
+    playerAltitude = Math.max(0, playerAltitude - verticalStep)
+    player.isFlying = playerAltitude > 0
+    if (playerAltitude <= 0.001) {
+      playerAltitude = 0
+      player.flightState = 'grounded'
+      player.isFlying = false
+      if (audio.isAudioStarted()) {
+        audio.playHardLanding()
+      } // end if hard landing should play
+    } // end if landed
+  } else {
+    playerAltitude = 0
+    player.flightState = 'grounded'
+    player.isFlying = false
+  } // end if flight state update
+  player.z = playerAltitude
 
   let snappedFacing: number | null = null
   if (input.snapNorthPending) {
@@ -111,9 +175,13 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
 
     let moved = false
 
-    const canMoveX = !isWall(mapData, nextX, player.y) && !isSolidSpriteAt(sprites, nextX, player.y, null)
+    const playerFeet = player.z ?? 0
+    const xWithinMap = Math.max(0.06, Math.min(MAP_WIDTH - 0.06, nextX))
+    const yWithinMap = Math.max(0.06, Math.min(MAP_HEIGHT - 0.06, nextY))
+
+    const canMoveX = !isPlayerBlocked(environment.collisionWorld, xWithinMap, player.y, playerFeet, PLAYER_RADIUS)
     if (canMoveX) {
-      player.x = nextX
+      player.x = xWithinMap
       moved = true
     } else {
       collided = true
@@ -121,9 +189,9 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
       collisionDirection = normalizeAngle(Math.atan2(0, directionX) - player.angle)
     } // end if canMoveX
 
-    const canMoveY = !isWall(mapData, player.x, nextY) && !isSolidSpriteAt(sprites, player.x, nextY, null)
+    const canMoveY = !isPlayerBlocked(environment.collisionWorld, player.x, yWithinMap, playerFeet, PLAYER_RADIUS)
     if (canMoveY) {
-      player.y = nextY
+      player.y = yWithinMap
       moved = true
     } else {
       collided = true
@@ -137,7 +205,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     } // end if moved
   } // end if has movement input
 
-  if (isMoving && !movementBlockedByObstacle && audio.isAudioStarted()) {
+  if (isMoving && !movementBlockedByObstacle && player.flightState === 'grounded' && audio.isAudioStarted()) {
     state.footstepTimerSeconds += deltaSeconds
     if (state.footstepTimerSeconds >= FOOTSTEP_INTERVAL_SECONDS) {
       audio.playFootstep()
@@ -161,7 +229,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     } // end if should stop servo
   } // end if audio started
 
-  if (collided && audio.isAudioStarted()) {
+  if (collided && player.flightState === 'grounded' && audio.isAudioStarted()) {
     const nowSeconds = performance.now() / 1000
     if (nowSeconds - state.lastBumpTimeSeconds > 0.4) {
       audio.playCollisionThud(collisionDirection)

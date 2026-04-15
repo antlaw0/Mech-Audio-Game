@@ -11,8 +11,10 @@
   },
   "dependencies": {
     "@mech-audio/shared": "0.1.0",
+    "@types/three": "^0.183.1",
     "bitecs": "^0.3.40",
     "phaser": "^3.90.0",
+    "three": "^0.170.0",
     "tone": "^15.1.22"
   }
 }

@@ -10,6 +10,7 @@ export function spawnBullet(player: Player): Bullet {
     y: player.y,
     angle: player.angle,
     pitch: player.pitch,
+    zOrigin: (player.z ?? 0) + PLAYER_HEIGHT,
     distance: 0,
     alive: true
   } // end object bullet

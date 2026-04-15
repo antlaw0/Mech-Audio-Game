@@ -40,8 +40,15 @@ export function renderFrame(args: RenderFrameArgs): void {
     zBuffer[col] = distance
 
     const wallHeight = Math.floor(projectionPlane / distance)
-    const top = Math.floor(centerY - wallHeight / 2)
-    const bottom = top + wallHeight
+    
+    // When flying, anchor walls to the ground plane below altitude, not to centerY
+    let wallBaseY = centerY
+    if (player.isFlying && (player.z ?? 0) > 0.1) {
+      wallBaseY = Math.floor(centerY + ((player.z ?? 0) / distance) * projectionPlane)
+    }
+
+    const top = Math.floor(wallBaseY - wallHeight)
+    const bottom = wallBaseY
 
     let red = 0
     let green = 0
@@ -65,8 +72,28 @@ export function renderFrame(args: RenderFrameArgs): void {
       blue = Math.floor(blue * 0.65)
     } // end if y-side shade
 
-    ctx.fillStyle = `rgb(${red},${green},${blue})`
-    ctx.fillRect(col, Math.max(top, 0), 1, Math.min(bottom, canvasHeight) - Math.max(top, 0))
+    const clampedTop = Math.max(top, 0)
+    const clampedBottom = Math.min(bottom, canvasHeight)
+    const drawHeight = clampedBottom - clampedTop
+    if (drawHeight <= 0) {
+      continue
+    } // end if nothing to draw
+
+    if (player.isFlying) {
+      // Distance-based alpha: walls fade with distance; nearby walls remain mostly opaque
+      const MAX_WALL_FOG_DIST = 14
+      const distAlpha = Math.max(0.12, 1.0 - distance / MAX_WALL_FOG_DIST)
+      // Vertical gradient: top of wall fades to near-transparent, lower portion stays solid
+      const grad = ctx.createLinearGradient(0, clampedTop, 0, clampedBottom)
+      grad.addColorStop(0, `rgba(${red},${green},${blue},${(distAlpha * 0.15).toFixed(3)})`)
+      grad.addColorStop(0.4, `rgba(${red},${green},${blue},${distAlpha.toFixed(3)})`)
+      grad.addColorStop(1, `rgba(${red},${green},${blue},${distAlpha.toFixed(3)})`)
+      ctx.fillStyle = grad
+    } else {
+      ctx.fillStyle = `rgb(${red},${green},${blue})`
+    } // end if flying wall fog
+
+    ctx.fillRect(col, clampedTop, 1, drawHeight)
   } // end for wall columns
 
   const sortedSprites = sprites
@@ -107,6 +134,7 @@ export function renderFrame(args: RenderFrameArgs): void {
       canvasWidth,
       canvasHeight,
       centerY,
+      playerAltitude: player.isFlying ? (player.z ?? 0) : 0,
       sprite: entry.sprite
     } // end object spriteArgs
 

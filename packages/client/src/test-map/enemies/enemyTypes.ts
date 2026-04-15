@@ -22,7 +22,7 @@ export interface EnemyDefinitionConfig {
   maxHp: number
   collisionRadius: number
   airborne: boolean
-  flightHeight: number
+  flightHeight?: number
   movementSpeed: number
   projectileSpeed: number
   shotDamage: number

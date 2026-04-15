@@ -9,24 +9,30 @@ interface SpriteRenderArgs {
   canvasWidth: number
   canvasHeight: number
   centerY: number
+  playerAltitude?: number
   sprite: SpriteObject
 } // end interface SpriteRenderArgs
 
 export function renderTree(args: SpriteRenderArgs): void {
-  const { ctx, screenX, dist, projectionPlane, zBuffer, canvasWidth, canvasHeight, centerY } = args
+  const { ctx, screenX, dist, projectionPlane, zBuffer, canvasWidth, canvasHeight, centerY, playerAltitude } = args
   if (dist < 0.1) {
     return
   } // end if too close
 
+  // When airborne, anchor tree base to the actual ground plane below the flight altitude
+  const groundY = (playerAltitude !== undefined && playerAltitude > 0.1)
+    ? Math.floor(centerY + (playerAltitude / dist) * projectionPlane)
+    : centerY
+
   const scale = projectionPlane / dist
   const trunkWidth = Math.floor(0.15 * scale)
   const trunkHeight = Math.floor(0.85 * scale)
-  const trunkTop = Math.floor(centerY - trunkHeight * 0.6)
+  const trunkTop = Math.floor(groundY - trunkHeight)
   const trunkLeft = screenX - Math.floor(trunkWidth / 2)
 
   const canopyRadius = Math.floor(0.35 * scale)
   const canopyCenterX = screenX
-  const canopyCenterY = trunkTop - Math.floor(canopyRadius * 0.3)
+  const canopyCenterY = trunkTop - Math.floor(canopyRadius * 0.5)
 
   const totalWidth = Math.max(trunkWidth, canopyRadius * 2) + 4
   const startCol = screenX - Math.floor(totalWidth / 2)
@@ -57,7 +63,7 @@ export function renderTree(args: SpriteRenderArgs): void {
     } // end if in canopy
 
     if (col >= trunkLeft && col < trunkLeft + trunkWidth) {
-      const trunkBottom = Math.floor(centerY + trunkHeight * 0.4)
+      const trunkBottom = groundY
       ctx.fillStyle = '#5C3A1E'
       ctx.fillRect(col, Math.max(trunkTop, 0), 1, Math.min(trunkBottom, canvasHeight) - Math.max(trunkTop, 0))
     } // end if in trunk
@@ -65,10 +71,15 @@ export function renderTree(args: SpriteRenderArgs): void {
 } // end function renderTree
 
 export function renderRock(args: SpriteRenderArgs): void {
-  const { ctx, screenX, dist, projectionPlane, zBuffer, canvasWidth, canvasHeight, centerY } = args
+  const { ctx, screenX, dist, projectionPlane, zBuffer, canvasWidth, canvasHeight, centerY, playerAltitude } = args
   if (dist < 0.1) {
     return
   } // end if too close
+
+  // When airborne, anchor rock base to the actual ground plane below the flight altitude
+  const groundY = (playerAltitude !== undefined && playerAltitude > 0.1)
+    ? Math.floor(centerY + (playerAltitude / dist) * projectionPlane)
+    : centerY
 
   const scale = projectionPlane / dist
   const ellipseWidth = Math.floor(0.7 * scale)
@@ -77,8 +88,7 @@ export function renderRock(args: SpriteRenderArgs): void {
     return
   } // end if too small
 
-  const wallHeight = Math.floor(projectionPlane / dist)
-  const floorLine = Math.floor(centerY + wallHeight * 0.5)
+  const floorLine = groundY
   const ellipseTop = floorLine - ellipseHeight
 
   const startCol = screenX - ellipseWidth

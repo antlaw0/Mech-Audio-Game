@@ -5,7 +5,10 @@ export function createPlayer(): Player {
     x: 24.5,
     y: 24.5,
     angle: 0,
-    pitch: 0
+    pitch: 0,
+    z: 0,
+    flightState: 'grounded',
+    isFlying: false
   } // end object player
 } // end function createPlayer
 
@@ -21,6 +24,7 @@ export function createInputState(): InputState {
     lookDown: false,
     pitchResetPending: false,
     firePending: false,
+    flightTogglePending: false,
     sonarPingPending: false,
     snapNorthPending: false,
     snapEastPending: false,
