@@ -1,9 +1,8 @@
 import * as Tone from 'tone'
 import { AUDIO_CONFIG, AUDIO_NAVIGATION_CONFIG } from './audio-config.js'
-import { MAX_DEPTH } from './constants.js'
-import { isBoundaryCell } from './map-data.js'
-import { castRay } from './raycast.js'
+import { MAP_HEIGHT, MAP_WIDTH, MAX_DEPTH } from './constants.js'
 import type { EnemyAudioState, SpriteObject, WorldPosition, WorldVelocity } from './types.js'
+import { type WorldCollisionWorld } from './world-collision.js'
 
 export interface TileRayHit {
   hit: boolean
@@ -93,32 +92,73 @@ export function filterClosest<T extends { distance: number }>(list: T[], count: 
 } // end function filterClosest
 
 export function getRayHit(
-  tileMap: Uint8Array,
+  world: WorldCollisionWorld,
   startPos: { x: number; y: number },
   angle: number,
   maxDistance = MAX_DEPTH
 ): TileRayHit {
-  const ray = castRay(tileMap, { x: startPos.x, y: startPos.y, angle: 0, pitch: 0 }, angle)
-  if (!ray.hit || ray.dist > maxDistance) {
-    return {
-      hit: false,
-      col: ray.mapCol,
-      row: ray.mapRow,
-      distance: maxDistance,
-      type: 'none',
-      worldX: startPos.x + Math.cos(angle) * maxDistance,
-      worldY: startPos.y + Math.sin(angle) * maxDistance
-    }
-  } // end if no wall hit in range
+  const dirX = Math.cos(angle)
+  const dirY = Math.sin(angle)
+  let col = Math.floor(startPos.x)
+  let row = Math.floor(startPos.y)
+
+  const deltaX = Math.abs(1 / (dirX === 0 ? 1e-10 : dirX))
+  const deltaY = Math.abs(1 / (dirY === 0 ? 1e-10 : dirY))
+  const stepCol = dirX < 0 ? -1 : 1
+  const stepRow = dirY < 0 ? -1 : 1
+  let sideX = dirX < 0 ? (startPos.x - col) * deltaX : (col + 1 - startPos.x) * deltaX
+  let sideY = dirY < 0 ? (startPos.y - row) * deltaY : (row + 1 - startPos.y) * deltaY
+  let side: 0 | 1 = 0
+
+  for (;;) {
+    if (Math.min(sideX, sideY) > maxDistance) {
+      break
+    } // end if ray has exceeded max distance
+
+    if (sideX < sideY) {
+      sideX += deltaX
+      col += stepCol
+      side = 0
+    } else {
+      sideY += deltaY
+      row += stepRow
+      side = 1
+    } // end if stepping on X or Y axis
+
+    if (col < 0 || col >= MAP_WIDTH || row < 0 || row >= MAP_HEIGHT) {
+      break
+    } // end if ray left map bounds
+
+    if (world.wallSet.has(row * MAP_WIDTH + col)) {
+      const dist = side === 0
+        ? (col - startPos.x + (1 - stepCol) / 2) / dirX
+        : (row - startPos.y + (1 - stepRow) / 2) / dirY
+
+      if (dist > maxDistance) {
+        break
+      } // end if hit is past max distance
+
+      const isBoundary = col <= 0 || col >= MAP_WIDTH - 1 || row <= 0 || row >= MAP_HEIGHT - 1
+      return {
+        hit: true,
+        col,
+        row,
+        distance: dist,
+        type: isBoundary ? 'boundary' : 'wall',
+        worldX: startPos.x + dirX * dist,
+        worldY: startPos.y + dirY * dist
+      }
+    } // end if wall cell hit
+  } // end for DDA loop
 
   return {
-    hit: true,
-    col: ray.mapCol,
-    row: ray.mapRow,
-    distance: ray.dist,
-    type: isBoundaryCell(ray.mapCol, ray.mapRow) ? 'boundary' : 'wall',
-    worldX: startPos.x + Math.cos(angle) * ray.dist,
-    worldY: startPos.y + Math.sin(angle) * ray.dist
+    hit: false,
+    col,
+    row,
+    distance: maxDistance,
+    type: 'none',
+    worldX: startPos.x + dirX * maxDistance,
+    worldY: startPos.y + dirY * maxDistance
   }
 } // end function getRayHit
 
@@ -223,7 +263,7 @@ function getNearestEnemyContact(
 } // end function getNearestEnemyContact
 
 export function scanSonarContact(
-  tileMap: Uint8Array,
+  world: WorldCollisionWorld,
   startPos: { x: number; y: number },
   playerFacing: number,
   angle: number,
@@ -232,7 +272,7 @@ export function scanSonarContact(
   obstacleMaxDistance: number,
   enemyMaxDistance: number
 ): SonarContact | null {
-  const wallHit = getRayHit(tileMap, startPos, angle, obstacleMaxDistance)
+  const wallHit = getRayHit(world, startPos, angle, obstacleMaxDistance)
   const wallContact = wallHit.hit
     ? {
         kind: wallHit.type,
@@ -260,18 +300,18 @@ export function scanSonarContact(
 } // end function scanSonarContact
 
 export function hasLineOfSight(
-  tileMap: Uint8Array,
+  world: WorldCollisionWorld,
   from: { x: number; y: number },
   to: { x: number; y: number }
 ): boolean {
   const angle = Math.atan2(to.y - from.y, to.x - from.x)
   const targetDistance = Math.hypot(to.x - from.x, to.y - from.y)
-  const hit = getRayHit(tileMap, from, angle, targetDistance)
+  const hit = getRayHit(world, from, angle, targetDistance)
   return !hit.hit || hit.distance >= targetDistance - 0.05
 } // end function hasLineOfSight
 
 export function findNearestObstacleContact(
-  tileMap: Uint8Array,
+  world: WorldCollisionWorld,
   startPos: { x: number; y: number },
   playerFacing: number,
   sprites: SpriteObject[],
@@ -281,7 +321,7 @@ export function findNearestObstacleContact(
   const contacts: SonarContact[] = []
   for (let index = 0; index < rayCount; index += 1) {
     const angle = (index / rayCount) * Math.PI * 2
-    const contact = scanSonarContact(tileMap, startPos, playerFacing, angle, sprites, [], maxDistance, 0)
+    const contact = scanSonarContact(world, startPos, playerFacing, angle, sprites, [], maxDistance, 0)
     if (contact && contact.kind !== 'enemy') {
       contacts.push(contact)
     } // end if obstacle contact found
@@ -341,14 +381,14 @@ export function initializeAudioCueUtilities(): void {
   }
 } // end function initializeAudioCueUtilities
 
-export function playWallProximityCue(direction: number, intensity: number): void {
+export function playWallProximityCue(direction: number, intensity: number, gainScale = 1): void {
   if (!cueUtilityState) {
     return
   } // end if cue utility graph not initialized
 
   cueUtilityState.proximityFilter.frequency.rampTo(300 + intensity * 120, 0.03)
   cueUtilityState.proximityPanner.pan.rampTo(clamp(Math.sin(direction), -1, 1), 0.03)
-  cueUtilityState.proximityGain.gain.rampTo(clamp(intensity * 0.18, 0, 0.18), 0.03)
+  cueUtilityState.proximityGain.gain.rampTo(clamp(intensity * 0.18 * gainScale, 0, 0.36), 0.03)
 } // end function playWallProximityCue
 
 export function silenceWallProximityCue(): void {
@@ -359,21 +399,23 @@ export function silenceWallProximityCue(): void {
   cueUtilityState.proximityGain.gain.rampTo(0, 0.04)
 } // end function silenceWallProximityCue
 
-export function playCollisionThud(direction: number): void {
+export function playCollisionThud(direction: number, gainScale = 1): void {
   if (!cueUtilityState) {
     return
   } // end if cue utility graph not initialized
 
   cueUtilityState.collisionPanner.pan.rampTo(clamp(Math.sin(direction), -1, 1), 0.01)
+  cueUtilityState.collisionSynth.volume.value = Tone.gainToDb(clamp(gainScale, 0.001, 2))
   cueUtilityState.collisionSynth.triggerAttackRelease('C2', '32n')
 } // end function playCollisionThud
 
-export function playCardinalOrientationCue(newFacing: number): void {
+export function playCardinalOrientationCue(newFacing: number, gainScale = 1): void {
   if (!cueUtilityState) {
     return
   } // end if cue utility graph not initialized
 
   const now = Tone.now()
+  cueUtilityState.cardinalSynth.volume.value = Tone.gainToDb(clamp(gainScale, 0.001, 2))
   const northDelta = Math.abs(normalizeAngle(newFacing + Math.PI / 2))
   const eastDelta = Math.abs(normalizeAngle(newFacing))
   const southDelta = Math.abs(normalizeAngle(newFacing - Math.PI / 2))

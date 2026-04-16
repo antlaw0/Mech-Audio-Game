@@ -1,8 +1,12 @@
 import {
   CANVAS_HEIGHT_LIMIT,
   CANVAS_WIDTH_LIMIT,
+  MAP_HEIGHT,
+  MAP_WIDTH,
   MUZZLE_FLASH_DURATION,
+  MAX_LOOK_PITCH,
   PLAYER_FLIGHT_SPEED,
+  PLAYER_RADIUS,
   PLAYER_SPEED,
   WEAPON_DEFAULT_ACCURACY,
   WEAPON_LOCK_ON_RANGE,
@@ -28,15 +32,18 @@ import { getSharedFlightHeight, setSharedFlightHeight } from './runtime-config.j
 import type { WeaponStats } from './types.js'
 import { bindInput } from './input.js'
 import { computeObstructionAwareness } from './awareness.js'
+import { createDeveloperConsole } from './dev-console.js'
 import { createMapData } from './map-data.js'
 import { createInputState, createPlayer } from './player-state.js'
 import { createSprites } from './sprites.js'
 import { createThreeRenderSystem } from './three-render.js'
 import { createUpdateState, updateFrame } from './update.js'
-import { createWorldCollisionWorld } from './world-collision.js'
+import { createWorldCollisionWorld, isPlayerBlocked, PLAYER_COLLISION_HEIGHT } from './world-collision.js'
+import type { AudioCategory, AudioVolumeChannel } from './types.js'
 
 interface TestMapDevConsole {
   help(): string[]
+  execute(commandLine: string): Promise<string[]>
   getState(): {
     sharedFlightHeight: number
     player: {
@@ -55,6 +62,17 @@ interface TestMapDevConsole {
   pause(): Promise<void>
   resume(): Promise<void>
 } // end interface TestMapDevConsole
+
+interface DeveloperConsoleBinding {
+  description: string
+  get: () => unknown
+  set?: (rawValue: string) => unknown
+} // end interface DeveloperConsoleBinding
+
+interface DeveloperConsoleCommandHelp {
+  syntax: string
+  description: string
+} // end interface DeveloperConsoleCommandHelp
 
 declare global {
   interface Window {
@@ -103,6 +121,10 @@ function startTestMap(): void {
   const pauseOverlayElement = document.getElementById('pauseOverlay')
   const resumeButtonElement = document.getElementById('pauseResumeButton')
   const exitButtonElement = document.getElementById('pauseExitButton')
+  const devConsoleOverlayElement = document.getElementById('devConsoleOverlay')
+  const devConsoleOutputElement = document.getElementById('devConsoleOutput')
+  const devConsoleInputElement = document.getElementById('devConsoleInput')
+  const devConsoleStatusElement = document.getElementById('devConsoleStatus')
 
   const enemyEditorModalElement = document.getElementById('enemyEditorModal')
   const enemyEditorTitleElement = document.getElementById('enemyEditorTitle')
@@ -157,6 +179,8 @@ function startTestMap(): void {
   const audio = createAudioController()
 
   let isPaused = false
+  let isConsoleOpen = false
+  let consoleResumeOnClose = false
   let queuedEnemySpawn: EnemyDefinitionConfig | null = null
   let isEditorModalOpen = false
   let editorCurrentEnemyId: EnemyId = 'tank'
@@ -340,27 +364,35 @@ function startTestMap(): void {
     } // end if resume button exists
   } // end function closeEnemyEditorModal
 
-  const pauseGame = async (): Promise<void> => {
-    if (isPaused) {
-      return
-    } // end if already paused
-
-    isPaused = true
+  const enterPausedState = async (showPauseOverlay: boolean): Promise<void> => {
     clearGameplayInputs()
 
-    await audio.ensureAudio()
-    audio.playPauseOpenChirp()
-    await new Promise<void>((resolve) => {
-      window.setTimeout(() => resolve(), 90)
-    })
-    await audio.pauseAllAudio()
-    setPauseOverlayVisible(true)
+    if (!isPaused) {
+      isPaused = true
+      await audio.ensureAudio()
+      audio.playPauseOpenChirp()
+      await new Promise<void>((resolve) => {
+        window.setTimeout(() => resolve(), 90)
+      })
+      await audio.pauseAllAudio()
+    } // end if game was not already paused
+
+    setPauseOverlayVisible(showPauseOverlay)
+  } // end function enterPausedState
+
+  const pauseGame = async (): Promise<void> => {
+    await enterPausedState(true)
   } // end function pauseGame
 
   const resumeGame = async (): Promise<void> => {
     if (!isPaused) {
       return
     } // end if not paused
+
+    if (isConsoleOpen) {
+      isConsoleOpen = false
+      devConsole?.close()
+    } // end if console is still open while resuming
 
     const pendingSpawnConfig = queuedEnemySpawn
     queuedEnemySpawn = null
@@ -385,7 +417,7 @@ function startTestMap(): void {
     await pauseGame()
   } // end function togglePause
 
-  bindInput(input, audio, () => isPaused || isWeaponEditorOpen)
+  bindInput(input, audio, () => isPaused || isWeaponEditorOpen || isConsoleOpen)
 
   document.addEventListener('keydown', (event) => {
     if (event.code !== 'Escape' || event.repeat) {
@@ -393,6 +425,11 @@ function startTestMap(): void {
     } // end if not pause toggle key
 
     event.preventDefault()
+
+    if (isConsoleOpen) {
+      void closeDeveloperConsole()
+      return
+    } // end if closing developer console first
 
     if (isEditorModalOpen) {
       closeEnemyEditorModal()
@@ -405,6 +442,20 @@ function startTestMap(): void {
     } // end if closing weapon editor
 
     void togglePause()
+  })
+
+  document.addEventListener('keydown', (event) => {
+    if (event.code !== 'Backquote' || event.repeat || isEditorModalOpen || isWeaponEditorOpen) {
+      return
+    } // end if not developer console key or another editor is open
+
+    event.preventDefault()
+    if (isConsoleOpen) {
+      void closeDeveloperConsole()
+      return
+    } // end if toggling console closed
+
+    void openDeveloperConsole()
   })
 
   if (resumeButtonElement instanceof HTMLButtonElement) {
@@ -446,7 +497,7 @@ function startTestMap(): void {
   } // end if weapon cancel button exists
 
   document.addEventListener('keydown', (event) => {
-    if (!isPaused || isEditorModalOpen || event.repeat) {
+    if (!isPaused || isConsoleOpen || isEditorModalOpen || event.repeat) {
       return
     } // end if not in pause-only editor trigger state
 
@@ -466,7 +517,7 @@ function startTestMap(): void {
   })
 
   document.addEventListener('keydown', (event) => {
-    if (event.code !== 'Numpad0' || event.repeat || isEditorModalOpen || isWeaponEditorOpen) {
+    if (event.code !== 'Numpad0' || event.repeat || isEditorModalOpen || isWeaponEditorOpen || isConsoleOpen) {
       return
     } // end if not weapon editor key or already open
     event.preventDefault()
@@ -492,9 +543,626 @@ function startTestMap(): void {
     return nextHeight
   } // end function applySharedFlightHeight
 
+  const syncTrackedPlayerPosition = (): void => {
+    previousPlayerX = player.x
+    previousPlayerY = player.y
+    previousPlayerZ = player.z ?? 0
+  } // end function syncTrackedPlayerPosition
+
+  const parseFiniteNumber = (rawValue: string, label: string): number => {
+    const parsed = Number(rawValue)
+    if (!Number.isFinite(parsed)) {
+      throw new Error(`${label} must be a finite number.`)
+    } // end if parsed value is invalid
+    return parsed
+  } // end function parseFiniteNumber
+
+  const parseBooleanValue = (rawValue: string): boolean => {
+    const normalized = rawValue.trim().toLowerCase()
+    if (['true', '1', 'on', 'yes'].includes(normalized)) {
+      return true
+    } // end if truthy token
+    if (['false', '0', 'off', 'no'].includes(normalized)) {
+      return false
+    } // end if falsy token
+    throw new Error(`Expected boolean value, received "${rawValue}".`)
+  } // end function parseBooleanValue
+
+  const normalizeDegrees = (value: number): number => {
+    let normalized = value % 360
+    if (normalized < 0) {
+      normalized += 360
+    } // end if negative wrapped angle
+    return normalized
+  } // end function normalizeDegrees
+
+  const tokenizeCommandLine = (commandLine: string): string[] => {
+    const tokens: string[] = []
+    let current = ''
+    let quote: '"' | '\'' | null = null
+
+    for (let index = 0; index < commandLine.length; index += 1) {
+      const char = commandLine[index]
+      if (!char) {
+        continue
+      } // end if char missing
+
+      if (quote !== null) {
+        if (char === quote) {
+          quote = null
+        } else {
+          current += char
+        } // end if quote closes or content continues
+        continue
+      } // end if inside quotes
+
+      if (char === '"' || char === '\'') {
+        quote = char
+        continue
+      } // end if quote begins
+
+      if (/\s/.test(char)) {
+        if (current.length > 0) {
+          tokens.push(current)
+          current = ''
+        } // end if token completed by whitespace
+        continue
+      } // end if whitespace found
+
+      current += char
+    } // end for each command character
+
+    if (current.length > 0) {
+      tokens.push(current)
+    } // end if final token remains
+
+    return tokens
+  } // end function tokenizeCommandLine
+
+  const formatConsoleValue = (value: unknown): string => {
+    if (typeof value === 'number') {
+      return Number.isInteger(value) ? String(value) : value.toFixed(3)
+    } // end if numeric value
+    if (typeof value === 'boolean') {
+      return value ? 'true' : 'false'
+    } // end if boolean value
+    if (typeof value === 'string') {
+      return value
+    } // end if string value
+    return JSON.stringify(value, null, 2)
+  } // end function formatConsoleValue
+
+  const setPlayerAltitude = (value: number): number => {
+    const nextAltitude = Math.max(0, value)
+    player.z = nextAltitude
+    player.isFlying = nextAltitude > 0
+    player.flightState = nextAltitude > 0 ? 'airborne' : 'grounded'
+    syncTrackedPlayerPosition()
+    return nextAltitude
+  } // end function setPlayerAltitude
+
+  const setPlayerFlightState = (value: string): string => {
+    const normalized = value.trim().toLowerCase()
+    if (!['grounded', 'ascending', 'airborne', 'descending'].includes(normalized)) {
+      throw new Error('player.flightState must be grounded, ascending, airborne, or descending.')
+    } // end if invalid flight state
+
+    player.flightState = normalized as typeof player.flightState
+    player.isFlying = normalized !== 'grounded'
+    if (!player.isFlying) {
+      player.z = 0
+    } else if ((player.z ?? 0) <= 0) {
+      player.z = getSharedFlightHeight()
+    } // end if state requires airborne altitude
+    syncTrackedPlayerPosition()
+    return player.flightState ?? 'grounded'
+  } // end function setPlayerFlightState
+
+  const placePlayer = (nextX: number, nextY: number, nextZ: number = player.z ?? 0): string => {
+    const clampedX = Math.max(PLAYER_RADIUS + 0.01, Math.min(MAP_WIDTH - PLAYER_RADIUS - 0.01, nextX))
+    const clampedY = Math.max(PLAYER_RADIUS + 0.01, Math.min(MAP_HEIGHT - PLAYER_RADIUS - 0.01, nextY))
+    const clampedZ = Math.max(0, nextZ)
+    if (isPlayerBlocked(collisionWorld, clampedX, clampedY, clampedZ, PLAYER_RADIUS, PLAYER_COLLISION_HEIGHT)) {
+      throw new Error('Requested player position intersects world geometry.')
+    } // end if requested position is blocked
+
+    player.x = clampedX
+    player.y = clampedY
+    setPlayerAltitude(clampedZ)
+    syncTrackedPlayerPosition()
+    return `Player moved to (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${(player.z ?? 0).toFixed(2)})`
+  } // end function placePlayer
+
+  const setPlayerAngleDegrees = (value: number): number => {
+    const nextAngle = normalizeDegrees(value)
+    player.angle = (nextAngle * Math.PI) / 180
+    return nextAngle
+  } // end function setPlayerAngleDegrees
+
+  const setPlayerPitchDegrees = (value: number): number => {
+    const maxPitchDegrees = (MAX_LOOK_PITCH * 180) / Math.PI
+    const nextPitchDegrees = Math.max(-maxPitchDegrees, Math.min(maxPitchDegrees, value))
+    player.pitch = (nextPitchDegrees * Math.PI) / 180
+    return nextPitchDegrees
+  } // end function setPlayerPitchDegrees
+
+  const audioCategories: AudioCategory[] = ['proximity', 'objects', 'enemies', 'navigation']
+  const enemyIds: EnemyId[] = ['tank', 'striker', 'brute', 'helicopter']
+
+  const getStateLines = (): string[] => [
+    `paused = ${isPaused}`,
+    `console.open = ${isConsoleOpen}`,
+    `player = x:${player.x.toFixed(2)} y:${player.y.toFixed(2)} z:${(player.z ?? 0).toFixed(2)} angle:${((player.angle * 180) / Math.PI).toFixed(1)} pitch:${((player.pitch * 180) / Math.PI).toFixed(1)}`,
+    `player.flight = state:${player.flightState ?? 'grounded'} flying:${player.isFlying ? 'true' : 'false'} sharedHeight:${getSharedFlightHeight().toFixed(2)}`,
+    `weapon = accuracy:${playerWeapon.accuracy.toFixed(2)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)}`,
+    `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)}`,
+    `audio categories = proximity:${audio.getCategoryEnabled('proximity')}@${audio.getVolumeChannel('proximity').toFixed(2)} objects:${audio.getCategoryEnabled('objects')}@${audio.getVolumeChannel('objects').toFixed(2)} enemies:${audio.getCategoryEnabled('enemies')}@${audio.getVolumeChannel('enemies').toFixed(2)} navigation:${audio.getCategoryEnabled('navigation')}@${audio.getVolumeChannel('navigation').toFixed(2)}`
+  ]
+
+  const getConsoleBindings = (): Record<string, DeveloperConsoleBinding> => ({
+    'player.x': {
+      description: 'Player world X position.',
+      get: () => player.x,
+      set: (rawValue) => {
+        placePlayer(parseFiniteNumber(rawValue, 'player.x'), player.y, player.z ?? 0)
+        return player.x
+      }
+    },
+    'player.y': {
+      description: 'Player world Y position.',
+      get: () => player.y,
+      set: (rawValue) => {
+        placePlayer(player.x, parseFiniteNumber(rawValue, 'player.y'), player.z ?? 0)
+        return player.y
+      }
+    },
+    'player.z': {
+      description: 'Player altitude above ground.',
+      get: () => player.z ?? 0,
+      set: (rawValue) => {
+        placePlayer(player.x, player.y, parseFiniteNumber(rawValue, 'player.z'))
+        return player.z ?? 0
+      }
+    },
+    'player.angle': {
+      description: 'Player facing angle in degrees.',
+      get: () => (player.angle * 180) / Math.PI,
+      set: (rawValue) => setPlayerAngleDegrees(parseFiniteNumber(rawValue, 'player.angle'))
+    },
+    'player.pitch': {
+      description: 'Player look pitch in degrees.',
+      get: () => (player.pitch * 180) / Math.PI,
+      set: (rawValue) => setPlayerPitchDegrees(parseFiniteNumber(rawValue, 'player.pitch'))
+    },
+    'player.isFlying': {
+      description: 'Whether the player is airborne.',
+      get: () => !!player.isFlying,
+      set: (rawValue) => {
+        const enabled = parseBooleanValue(rawValue)
+        if (!enabled) {
+          return setPlayerAltitude(0) > 0
+        } // end if disabling flight
+        if ((player.z ?? 0) <= 0) {
+          setPlayerAltitude(getSharedFlightHeight())
+        } // end if player needs lift to fly
+        player.isFlying = true
+        player.flightState = 'airborne'
+        return !!player.isFlying
+      }
+    },
+    'player.flightState': {
+      description: 'Player flight state: grounded, ascending, airborne, or descending.',
+      get: () => player.flightState ?? 'grounded',
+      set: (rawValue) => setPlayerFlightState(rawValue)
+    },
+    'flight.sharedHeight': {
+      description: 'Shared airborne hover height used by the player and dynamic flight sync.',
+      get: () => getSharedFlightHeight(),
+      set: (rawValue) => applySharedFlightHeight(parseFiniteNumber(rawValue, 'flight.sharedHeight'))
+    },
+    'weapon.accuracy': {
+      description: 'Player weapon accuracy from 0 to 1.',
+      get: () => playerWeapon.accuracy,
+      set: (rawValue) => {
+        playerWeapon.accuracy = Math.max(0.01, Math.min(1, parseFiniteNumber(rawValue, 'weapon.accuracy')))
+        return playerWeapon.accuracy
+      }
+    },
+    'weapon.damagePerShot': {
+      description: 'Player weapon damage per shot.',
+      get: () => playerWeapon.damagePerShot,
+      set: (rawValue) => {
+        playerWeapon.damagePerShot = Math.max(1, Math.round(parseFiniteNumber(rawValue, 'weapon.damagePerShot')))
+        return playerWeapon.damagePerShot
+      }
+    },
+    'weapon.bulletSpeed': {
+      description: 'Player weapon projectile speed.',
+      get: () => playerWeapon.bulletSpeed,
+      set: (rawValue) => {
+        playerWeapon.bulletSpeed = Math.max(1, parseFiniteNumber(rawValue, 'weapon.bulletSpeed'))
+        return playerWeapon.bulletSpeed
+      }
+    },
+    'weapon.maxRange': {
+      description: 'Player weapon maximum range.',
+      get: () => playerWeapon.maxRange,
+      set: (rawValue) => {
+        playerWeapon.maxRange = Math.max(1, parseFiniteNumber(rawValue, 'weapon.maxRange'))
+        return playerWeapon.maxRange
+      }
+    },
+    'weapon.fireRateCooldownSeconds': {
+      description: 'Seconds between player shots.',
+      get: () => playerWeapon.fireRateCooldownSeconds,
+      set: (rawValue) => {
+        playerWeapon.fireRateCooldownSeconds = Math.max(0, parseFiniteNumber(rawValue, 'weapon.fireRateCooldownSeconds'))
+        return playerWeapon.fireRateCooldownSeconds
+      }
+    },
+    'weapon.lockOnRange': {
+      description: 'Target-lock acquisition range.',
+      get: () => playerWeapon.lockOnRange,
+      set: (rawValue) => {
+        playerWeapon.lockOnRange = Math.max(1, parseFiniteNumber(rawValue, 'weapon.lockOnRange'))
+        return playerWeapon.lockOnRange
+      }
+    },
+    'weapon.lockOnWindowWidthPercent': {
+      description: 'Horizontal lock window percentage.',
+      get: () => playerWeapon.lockOnWindowWidthPercent,
+      set: (rawValue) => {
+        playerWeapon.lockOnWindowWidthPercent = Math.max(0, Math.min(100, Math.round(parseFiniteNumber(rawValue, 'weapon.lockOnWindowWidthPercent'))))
+        return playerWeapon.lockOnWindowWidthPercent
+      }
+    },
+    'weapon.lockOnWindowHeightPercent': {
+      description: 'Vertical lock window percentage.',
+      get: () => playerWeapon.lockOnWindowHeightPercent,
+      set: (rawValue) => {
+        playerWeapon.lockOnWindowHeightPercent = Math.max(0, Math.min(100, Math.round(parseFiniteNumber(rawValue, 'weapon.lockOnWindowHeightPercent'))))
+        return playerWeapon.lockOnWindowHeightPercent
+      }
+    },
+    'aimAssist.enabled': {
+      description: 'Aim assist enabled flag.',
+      get: () => audio.isAimAssistEnabled(),
+      set: (rawValue) => {
+        const enabled = parseBooleanValue(rawValue)
+        audio.setAimAssistEnabled(enabled)
+        return audio.isAimAssistEnabled()
+      }
+    },
+    'audio.master.volume': {
+      description: 'Master volume scalar from 0 to 2.',
+      get: () => audio.getVolumeChannel('master'),
+      set: (rawValue) => audio.setVolumeChannel('master', parseFiniteNumber(rawValue, 'audio.master.volume'))
+    },
+    'audio.ambience.volume': {
+      description: 'Ambience volume scalar from 0 to 2.',
+      get: () => audio.getVolumeChannel('ambience'),
+      set: (rawValue) => audio.setVolumeChannel('ambience', parseFiniteNumber(rawValue, 'audio.ambience.volume'))
+    },
+    'audio.footsteps.volume': {
+      description: 'Footstep volume scalar from 0 to 2.',
+      get: () => audio.getVolumeChannel('footsteps'),
+      set: (rawValue) => audio.setVolumeChannel('footsteps', parseFiniteNumber(rawValue, 'audio.footsteps.volume'))
+    },
+    'audio.servo.volume': {
+      description: 'Servo motor volume scalar from 0 to 2.',
+      get: () => audio.getVolumeChannel('servo'),
+      set: (rawValue) => audio.setVolumeChannel('servo', parseFiniteNumber(rawValue, 'audio.servo.volume'))
+    },
+    'audio.flightLoop.volume': {
+      description: 'Player flight loop volume scalar from 0 to 2.',
+      get: () => audio.getVolumeChannel('flightLoop'),
+      set: (rawValue) => audio.setVolumeChannel('flightLoop', parseFiniteNumber(rawValue, 'audio.flightLoop.volume'))
+    },
+    'audio.proximity.enabled': {
+      description: 'Enable or disable the proximity audio category.',
+      get: () => audio.getCategoryEnabled('proximity'),
+      set: (rawValue) => audio.setCategoryEnabled('proximity', parseBooleanValue(rawValue))
+    },
+    'audio.objects.enabled': {
+      description: 'Enable or disable the objects audio category.',
+      get: () => audio.getCategoryEnabled('objects'),
+      set: (rawValue) => audio.setCategoryEnabled('objects', parseBooleanValue(rawValue))
+    },
+    'audio.enemies.enabled': {
+      description: 'Enable or disable the enemies audio category.',
+      get: () => audio.getCategoryEnabled('enemies'),
+      set: (rawValue) => audio.setCategoryEnabled('enemies', parseBooleanValue(rawValue))
+    },
+    'audio.navigation.enabled': {
+      description: 'Enable or disable the navigation audio category.',
+      get: () => audio.getCategoryEnabled('navigation'),
+      set: (rawValue) => audio.setCategoryEnabled('navigation', parseBooleanValue(rawValue))
+    },
+    'audio.proximity.volume': {
+      description: 'Proximity audio volume scalar from 0 to 2.',
+      get: () => audio.getVolumeChannel('proximity'),
+      set: (rawValue) => audio.setVolumeChannel('proximity', parseFiniteNumber(rawValue, 'audio.proximity.volume'))
+    },
+    'audio.objects.volume': {
+      description: 'Objects audio volume scalar from 0 to 2.',
+      get: () => audio.getVolumeChannel('objects'),
+      set: (rawValue) => audio.setVolumeChannel('objects', parseFiniteNumber(rawValue, 'audio.objects.volume'))
+    },
+    'audio.enemies.volume': {
+      description: 'Enemies audio volume scalar from 0 to 2.',
+      get: () => audio.getVolumeChannel('enemies'),
+      set: (rawValue) => audio.setVolumeChannel('enemies', parseFiniteNumber(rawValue, 'audio.enemies.volume'))
+    },
+    'audio.navigation.volume': {
+      description: 'Navigation audio volume scalar from 0 to 2.',
+      get: () => audio.getVolumeChannel('navigation'),
+      set: (rawValue) => audio.setVolumeChannel('navigation', parseFiniteNumber(rawValue, 'audio.navigation.volume'))
+    }
+  })
+
+  const commandHelp: DeveloperConsoleCommandHelp[] = [
+    { syntax: 'help [topic]', description: 'Show command help or describe a specific path.' },
+    { syntax: 'state', description: 'Print a high-level snapshot of gameplay, weapon, and audio state.' },
+    { syntax: 'list [prefix]', description: 'List every editable path, optionally filtered by prefix.' },
+    { syntax: 'get <path>', description: 'Read the current value of a bound property.' },
+    { syntax: 'set <path> <value>', description: 'Set a bound property to a numeric, boolean, or string value.' },
+    { syntax: 'toggle <path>', description: 'Invert a boolean path such as audio.enemies.enabled.' },
+    { syntax: 'spawn <enemyId>', description: 'Spawn an enemy: tank, striker, brute, or helicopter.' },
+    { syntax: 'tp <x> <y> [z]', description: 'Teleport the player to a validated world position.' },
+    { syntax: 'pause', description: 'Pause the game and keep the console open.' },
+    { syntax: 'resume', description: 'Resume gameplay and close the console.' },
+    { syntax: 'close', description: 'Close the console and return to the previous pause state.' },
+    { syntax: 'clear', description: 'Clear the console output buffer.' }
+  ]
+
+  const getSortedBindingPaths = (prefix = ''): string[] => Object.keys(getConsoleBindings())
+    .filter((path) => path.startsWith(prefix))
+    .sort((left, right) => left.localeCompare(right))
+
+  const getHelpLines = (topic?: string): string[] => {
+    if (!topic) {
+      return [
+        'Available commands:',
+        ...commandHelp.map((entry) => `  ${entry.syntax} - ${entry.description}`),
+        'Examples:',
+        '  set flight.sharedHeight 5',
+        '  set player.angle 270',
+        '  set audio.enemies.volume 0.35',
+        '  toggle audio.navigation.enabled',
+        '  tp 18 20 0'
+      ]
+    } // end if listing all commands
+
+    const binding = getConsoleBindings()[topic]
+    if (binding) {
+      return [
+        `${topic}`,
+        `  ${binding.description}`,
+        `  current = ${formatConsoleValue(binding.get())}`,
+        `  writable = ${binding.set ? 'true' : 'false'}`
+      ]
+    } // end if topic is a binding path
+
+    const command = commandHelp.find((entry) => entry.syntax.split(' ')[0] === topic)
+    if (command) {
+      return [`${command.syntax}`, `  ${command.description}`]
+    } // end if topic is a command
+
+    return [`No help found for "${topic}".`]
+  } // end function getHelpLines
+
+  let devConsole: ReturnType<typeof createDeveloperConsole> | null = null
+
+  const closeDeveloperConsole = async (resumeGameplay: boolean = consoleResumeOnClose): Promise<void> => {
+    if (!isConsoleOpen) {
+      return
+    } // end if console already closed
+
+    isConsoleOpen = false
+    devConsole?.close()
+    const shouldResume = resumeGameplay
+    consoleResumeOnClose = false
+    if (shouldResume) {
+      await resumeGame()
+      return
+    } // end if gameplay should resume after closing console
+
+    setPauseOverlayVisible(true)
+    if (resumeButtonElement instanceof HTMLButtonElement) {
+      resumeButtonElement.focus()
+    } // end if pause menu should regain focus
+  } // end function closeDeveloperConsole
+
+  const openDeveloperConsole = async (): Promise<void> => {
+    if (isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen) {
+      return
+    } // end if another modal already owns input focus
+
+    if (!isPaused) {
+      consoleResumeOnClose = true
+      await enterPausedState(false)
+    } else {
+      consoleResumeOnClose = false
+      setPauseOverlayVisible(false)
+    } // end if console opened from active gameplay or pause menu
+
+    isConsoleOpen = true
+    devConsole?.open()
+    devConsole?.setStatus(consoleResumeOnClose
+      ? 'PAUSED FOR CONSOLE | ENTER: RUN | TAB: COMPLETE | ESC OR `: RESUME'
+      : 'PAUSE MENU HELD | ENTER: RUN | TAB: COMPLETE | ESC OR `: RETURN')
+  } // end function openDeveloperConsole
+
+  const executeDeveloperCommand = async (commandLine: string): Promise<string[]> => {
+    const tokens = tokenizeCommandLine(commandLine)
+    if (tokens.length === 0) {
+      return []
+    } // end if no tokens produced
+
+    const command = (tokens[0] ?? '').toLowerCase()
+    const args = tokens.slice(1)
+    const bindings = getConsoleBindings()
+
+    if (command === 'help') {
+      return getHelpLines(args[0])
+    } // end if help command
+
+    if (command === 'state' || command === 'status') {
+      return getStateLines()
+    } // end if status command
+
+    if (command === 'list' || command === 'paths') {
+      const prefix = args[0] ?? ''
+      const paths = getSortedBindingPaths(prefix)
+      if (paths.length === 0) {
+        return [`No editable paths match "${prefix}".`]
+      } // end if no paths match prefix
+      return ['Editable paths:', ...paths.map((path) => `  ${path}`)]
+    } // end if list command
+
+    if (command === 'get') {
+      const path = args[0]
+      if (!path) {
+        throw new Error('Usage: get <path>')
+      } // end if missing path
+      const binding = bindings[path]
+      if (!binding) {
+        throw new Error(`Unknown path: ${path}`)
+      } // end if binding missing
+      return [`${path} = ${formatConsoleValue(binding.get())}`]
+    } // end if get command
+
+    if (command === 'set') {
+      const path = args[0]
+      const rawValue = args.slice(1).join(' ')
+      if (!path || rawValue.length === 0) {
+        throw new Error('Usage: set <path> <value>')
+      } // end if command is missing path or value
+      const binding = bindings[path]
+      if (!binding || !binding.set) {
+        throw new Error(`Path is not writable: ${path}`)
+      } // end if binding is not writable
+      const nextValue = await binding.set(rawValue)
+      return [`${path} = ${formatConsoleValue(nextValue)}`]
+    } // end if set command
+
+    if (command === 'toggle') {
+      const path = args[0]
+      if (!path) {
+        throw new Error('Usage: toggle <path>')
+      } // end if toggle path missing
+      const binding = bindings[path]
+      if (!binding || !binding.set) {
+        throw new Error(`Path is not writable: ${path}`)
+      } // end if binding is not toggleable
+      const currentValue = binding.get()
+      if (typeof currentValue !== 'boolean') {
+        throw new Error(`Path is not boolean: ${path}`)
+      } // end if binding value is not boolean
+      const nextValue = await binding.set(currentValue ? 'false' : 'true')
+      return [`${path} = ${formatConsoleValue(nextValue)}`]
+    } // end if toggle command
+
+    if (command === 'spawn') {
+      const enemyId = args[0] as EnemyId | undefined
+      if (!enemyId || !enemyIds.includes(enemyId)) {
+        throw new Error(`Usage: spawn <${enemyIds.join('|')}>`)
+      } // end if enemy id missing or invalid
+      const spawned = spawnRandomEnemy(combatWorld, collisionWorld, player, enemyId)
+      return [spawned ? `${enemyId} spawned.` : `No valid spawn location for ${enemyId}.`]
+    } // end if spawn command
+
+    if (command === 'tp' || command === 'teleport') {
+      if (args.length < 2) {
+        throw new Error('Usage: tp <x> <y> [z]')
+      } // end if teleport command is incomplete
+      const x = parseFiniteNumber(args[0] ?? '', 'tp x')
+      const y = parseFiniteNumber(args[1] ?? '', 'tp y')
+      const z = args[2] !== undefined ? parseFiniteNumber(args[2], 'tp z') : (player.z ?? 0)
+      return [placePlayer(x, y, z)]
+    } // end if teleport command
+
+    if (command === 'pause') {
+      await enterPausedState(false)
+      return ['Game paused.']
+    } // end if pause command
+
+    if (command === 'resume') {
+      consoleResumeOnClose = true
+      await closeDeveloperConsole(true)
+      return []
+    } // end if resume command
+
+    if (command === 'close') {
+      await closeDeveloperConsole(false)
+      return []
+    } // end if close command
+
+    throw new Error(`Unknown command: ${command}`)
+  } // end function executeDeveloperCommand
+
+  const getDeveloperConsoleSuggestions = (commandLine: string): string[] => {
+    const trimmedLine = commandLine.trimStart()
+    const tokens = tokenizeCommandLine(trimmedLine)
+    const hasTrailingWhitespace = /\s$/.test(commandLine)
+    const commandNames = commandHelp.map((entry) => entry.syntax.split(' ')[0] ?? '').filter((name) => name.length > 0)
+
+    if (tokens.length === 0) {
+      return commandNames
+    } // end if no tokens entered yet
+
+    const currentCommand = (tokens[0] ?? '').toLowerCase()
+    if (tokens.length === 1 && !hasTrailingWhitespace) {
+      return commandNames
+        .filter((name) => name.startsWith(currentCommand))
+        .map((name) => `${name} `)
+    } // end if completing command name
+
+    if (['get', 'set', 'toggle', 'help', 'list', 'paths'].includes(currentCommand)) {
+      const currentPath = hasTrailingWhitespace ? '' : (tokens[tokens.length - 1] ?? '')
+      const prefix = currentPath.toLowerCase()
+      return getSortedBindingPaths()
+        .filter((path) => path.toLowerCase().startsWith(prefix))
+        .map((path) => `${currentCommand} ${path}${currentCommand === 'set' ? ' ' : ''}`)
+    } // end if completing a bound path
+
+    if (currentCommand === 'spawn') {
+      const currentEnemy = hasTrailingWhitespace ? '' : ((tokens[1] ?? '').toLowerCase())
+      return enemyIds
+        .filter((enemyId) => enemyId.startsWith(currentEnemy))
+        .map((enemyId) => `spawn ${enemyId}`)
+    } // end if completing spawn target
+
+    return []
+  } // end function getDeveloperConsoleSuggestions
+
+  if (
+    devConsoleOverlayElement instanceof HTMLDivElement &&
+    devConsoleOutputElement instanceof HTMLDivElement &&
+    devConsoleInputElement instanceof HTMLInputElement &&
+    devConsoleStatusElement instanceof HTMLDivElement
+  ) {
+    devConsole = createDeveloperConsole({
+      elements: {
+        overlay: devConsoleOverlayElement,
+        output: devConsoleOutputElement,
+        input: devConsoleInputElement,
+        status: devConsoleStatusElement
+      },
+      executeCommand: executeDeveloperCommand,
+      closeConsole: () => closeDeveloperConsole(),
+      getSuggestions: getDeveloperConsoleSuggestions
+    })
+    devConsole.print([
+      'MECH AUDIO DEV CONSOLE READY',
+      'Type help for commands. Type list to browse editable paths.'
+    ])
+  } // end if developer console DOM is available
+
   window.mechDev = {
     help: () => [
       'window.mechDev.getState()',
+      'window.mechDev.execute("set audio.enemies.volume 0.4")',
       'window.mechDev.setSharedFlightHeight(4)',
       'window.mechDev.setPlayerAltitude(1.5)',
       "window.mechDev.spawnEnemy('helicopter')",
@@ -513,14 +1181,9 @@ function startTestMap(): void {
       weapon: { ...playerWeapon },
       paused: isPaused
     }),
+    execute: async (commandLine: string) => executeDeveloperCommand(commandLine),
     setSharedFlightHeight: (value: number) => applySharedFlightHeight(value),
-    setPlayerAltitude: (value: number) => {
-      const nextAltitude = Math.max(0, value)
-      player.z = nextAltitude
-      player.isFlying = nextAltitude > 0
-      player.flightState = nextAltitude > 0 ? 'airborne' : 'grounded'
-      return nextAltitude
-    },
+    setPlayerAltitude: (value: number) => setPlayerAltitude(value),
     spawnEnemy: (enemyId: EnemyId) => spawnRandomEnemy(combatWorld, collisionWorld, player, enemyId),
     pause: async () => {
       await pauseGame()
@@ -675,14 +1338,14 @@ function startTestMap(): void {
     }))
 
     if (shouldTriggerManualPing) {
-      audio.triggerActiveSonar(playerAudioState, enemyAudioStates, mapData, sprites)
+      audio.triggerActiveSonar(playerAudioState, enemyAudioStates, collisionWorld, sprites)
     } // end if manual sonar ping was requested
 
     audio.updateFrameAudio(
       deltaSeconds,
       playerAudioState,
       enemyAudioStates,
-      mapData,
+      collisionWorld,
       sprites
     )
 

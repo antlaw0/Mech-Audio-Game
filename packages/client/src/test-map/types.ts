@@ -1,4 +1,6 @@
 export type PlayerFlightState = 'grounded' | 'ascending' | 'airborne' | 'descending'
+import { type WorldCollisionWorld } from './world-collision.js'
+
 
 export interface Player {
   x: number
@@ -150,6 +152,8 @@ export type SpriteType = 'tree' | 'rock'
 
 export type AudioCategory = 'proximity' | 'objects' | 'enemies' | 'navigation'
 
+export type AudioVolumeChannel = AudioCategory | 'master' | 'ambience' | 'servo' | 'footsteps' | 'flightLoop'
+
 export interface SpriteObject {
   x: number
   y: number
@@ -192,8 +196,8 @@ export interface AudioController {
   playCardinalOrientationCue: (newFacing: number) => void
   setAimAssistEnabled: (enabled: boolean) => void
   isAimAssistEnabled: () => boolean
-  updateFrameAudio: (dt: number, player: PlayerAudioState, enemies: EnemyAudioState[], mapData: Uint8Array, sprites: SpriteObject[]) => void
-  triggerActiveSonar: (player: PlayerAudioState, enemies: EnemyAudioState[], mapData: Uint8Array, sprites: SpriteObject[]) => void
+  updateFrameAudio: (dt: number, player: PlayerAudioState, enemies: EnemyAudioState[], collisionWorld: WorldCollisionWorld, sprites: SpriteObject[]) => void
+  triggerActiveSonar: (player: PlayerAudioState, enemies: EnemyAudioState[], collisionWorld: WorldCollisionWorld, sprites: SpriteObject[]) => void
   playEnemyThreatCue: (enemyId: string, enemyType?: string) => void
   playEnemyAttack: (enemyId: string, enemyType?: string) => void
   playEnemyHurt: (enemyId: string, enemyType?: string) => void
@@ -220,7 +224,10 @@ export interface AudioController {
   getAudioContextState: () => AudioContextState
   isServoPlaying: () => boolean
   toggleCategory: (name: AudioCategory) => boolean
+  setCategoryEnabled: (name: AudioCategory, enabled: boolean) => boolean
   getCategoryEnabled: (name: AudioCategory) => boolean
+  setVolumeChannel: (name: AudioVolumeChannel, value: number) => number
+  getVolumeChannel: (name: AudioVolumeChannel) => number
   playLockOnChirp: () => void
   playLockLostChirp: () => void
 } // end interface AudioController

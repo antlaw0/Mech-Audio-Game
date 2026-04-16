@@ -76,6 +76,97 @@
       background: rgba(0, 96, 136, 0.58);
       outline: none;
     }
+    #devConsoleOverlay {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: stretch;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.84);
+      backdrop-filter: blur(4px);
+      z-index: 30;
+      padding: 18px;
+    }
+    .dev-console-panel {
+      width: min(1120px, 100%);
+      height: min(78vh, 760px);
+      border: 1px solid rgba(139, 255, 194, 0.34);
+      background:
+        linear-gradient(180deg, rgba(5, 17, 15, 0.96), rgba(2, 8, 10, 0.98)),
+        radial-gradient(circle at top, rgba(60, 255, 160, 0.08), transparent 60%);
+      box-shadow: 0 0 34px rgba(22, 255, 153, 0.14);
+      color: #bfffd8;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .dev-console-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(139, 255, 194, 0.2);
+      background: rgba(14, 36, 31, 0.7);
+      letter-spacing: 2px;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    .dev-console-status {
+      color: #7df8bc;
+      font-size: 11px;
+    }
+    .dev-console-output {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px 16px;
+      white-space: pre-wrap;
+      line-height: 1.45;
+      font-size: 13px;
+      background-image: linear-gradient(rgba(36, 255, 170, 0.04) 1px, transparent 1px);
+      background-size: 100% 24px;
+    }
+    .dev-console-line {
+      margin-bottom: 4px;
+      color: #bfffd8;
+    }
+    .dev-console-line.input {
+      color: #ffe982;
+    }
+    .dev-console-line.error {
+      color: #ff8f8f;
+    }
+    .dev-console-line.system {
+      color: #7df8bc;
+    }
+    .dev-console-input-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      border-top: 1px solid rgba(139, 255, 194, 0.2);
+      background: rgba(8, 21, 20, 0.94);
+    }
+    .dev-console-prompt {
+      color: #7df8bc;
+      font-size: 16px;
+      user-select: none;
+    }
+    #devConsoleInput {
+      flex: 1;
+      border: none;
+      outline: none;
+      background: transparent;
+      color: #f0fff5;
+      font-family: monospace;
+      font-size: 14px;
+      letter-spacing: 0.4px;
+    }
+    .dev-console-hint {
+      font-size: 11px;
+      color: rgba(190, 255, 219, 0.74);
+      user-select: none;
+    }
     #enemyEditorModal {
       position: absolute;
       inset: 0;
@@ -193,7 +284,7 @@
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="hud">
-  WASD: MOVE / STRAFE &nbsp;|&nbsp; ←→: TURN &nbsp;|&nbsp; ↑↓: LOOK (TAP BOTH TO CENTER) &nbsp;|&nbsp; SPACE: FIRE &nbsp;|&nbsp; E: MANUAL SONAR PING &nbsp;|&nbsp; I/J/K/L: SNAP N/W/S/E &nbsp;|&nbsp; NUMPAD 1-4: SPAWN ENEMY (PAUSE+NUMPAD: EDIT STATS) &nbsp;|&nbsp; NUMPAD 0: WEAPON EDITOR &nbsp;|&nbsp; Q: AIM ASSIST TOGGLE
+  WASD: MOVE / STRAFE &nbsp;|&nbsp; ←→: TURN &nbsp;|&nbsp; ↑↓: LOOK (TAP BOTH TO CENTER) &nbsp;|&nbsp; SPACE: FIRE &nbsp;|&nbsp; E: MANUAL SONAR PING &nbsp;|&nbsp; I/J/K/L: SNAP N/W/S/E &nbsp;|&nbsp; NUMPAD 1-4: SPAWN ENEMY (PAUSE+NUMPAD: EDIT STATS) &nbsp;|&nbsp; NUMPAD 0: WEAPON EDITOR &nbsp;|&nbsp; Q: AIM ASSIST TOGGLE &nbsp;|&nbsp; `: DEV CONSOLE
   <div id="awarenessStatus">AWARENESS: SCANNING...</div>
   <div id="sonarStatus">SONAR: PASSIVE SWEEP READY</div>
 </div>
@@ -202,6 +293,20 @@
     <div class="pause-title">Paused</div>
     <button id="pauseResumeButton" class="pause-button" type="button">Resume Game</button>
     <button id="pauseExitButton" class="pause-button" type="button">Exit To Main Screen</button>
+  </div>
+</div>
+<div id="devConsoleOverlay" aria-hidden="true">
+  <div class="dev-console-panel" role="dialog" aria-modal="true" aria-label="Developer Console">
+    <div class="dev-console-header">
+      <div>Developer Console</div>
+      <div id="devConsoleStatus" class="dev-console-status">PAUSED | ENTER: RUN | TAB: COMPLETE | ESC OR `: CLOSE</div>
+    </div>
+    <div id="devConsoleOutput" class="dev-console-output"></div>
+    <div class="dev-console-input-row">
+      <div class="dev-console-prompt">&gt;</div>
+      <input id="devConsoleInput" type="text" spellcheck="false" autocomplete="off" aria-label="Developer console command" />
+      <div class="dev-console-hint">history: ↑↓</div>
+    </div>
   </div>
 </div>
 <div

@@ -17,7 +17,8 @@ import {
   silenceWallProximityCue,
   worldToListenerSpace
 } from './audio-utils.js'
-import type { AudioCategory, AudioController, EnemyAudioState, IncomingProjectileAudioState, ObstructionAwareness, PlayerAudioState, SonarEcho, SpriteObject } from './types.js'
+import type { AudioCategory, AudioController, AudioVolumeChannel, EnemyAudioState, IncomingProjectileAudioState, ObstructionAwareness, PlayerAudioState, SonarEcho, SpriteObject } from './types.js'
+import { type WorldCollisionWorld } from './world-collision.js'
 
 interface EnemySoundSet {
   idleLoop: Tone.Player
@@ -137,7 +138,7 @@ class EnemyAudioRuntime {
     this.movementGain.gain.rampTo(1, AUDIO_CONFIG.enemy.movementFadeSeconds)
   } // end method initializeLoops
 
-  updateAudio(dt: number, enemy: EnemyAudioState, player: PlayerAudioState, hasSightLine: boolean): void {
+  updateAudio(dt: number, enemy: EnemyAudioState, player: PlayerAudioState, hasSightLine: boolean, volumeScale: number): void {
     // Keep trying to start the loop until its buffer is loaded; safeStart is idempotent.
     this.safeStart(this.profile.sounds.movementLoop)
 
@@ -149,7 +150,7 @@ class EnemyAudioRuntime {
     const distance = Math.hypot(relative.x, relative.y, relative.z)
     const distanceVolume = distanceToVolume(distance, AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance)
     const targetVolume = distance <= AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance
-      ? this.profile.params.baseVolume * Math.pow(distanceVolume, 1.35)
+      ? this.profile.params.baseVolume * Math.pow(distanceVolume, 1.35) * volumeScale
       : 0
     this.profile.effects.gain.gain.rampTo(targetVolume, 0.08)
 
@@ -485,11 +486,114 @@ export function createAudioController(): AudioController {
   let categoryObjects = true
   let categoryEnemies = true
   let categoryNavigation = true
+  let masterVolume = 1
+  let ambienceVolume = 1
+  let servoVolume = 1
+  let footstepsVolume = 1
+  let flightLoopVolume = 1
+  let proximityVolume = 1
+  let objectsVolume = 1
+  let enemiesVolume = 1
+  let navigationVolume = 1
 
   const aimAssistProjectileRadius = 0.25
 
   const rawContext = Tone.getContext().rawContext as AudioContext
   const enemyRuntimes = new Map<string, EnemyAudioRuntime>()
+
+  const clampVolumeScalar = (value: number): number => clamp(value, 0, 2)
+
+  const gainToDbSafe = (value: number): number => value <= 0.0001 ? -80 : Tone.gainToDb(value)
+
+  const applyFlightLoopVolume = (): void => {
+    flightLoopGain.gain.value = 0.78 * flightLoopVolume
+  } // end function applyFlightLoopVolume
+
+  const applyHtmlAudioVolumes = (): void => {
+    ambienceAudio.volume = AUDIO_CONFIG.player.ambienceVolume * masterVolume * ambienceVolume
+    servoAudio.volume = AUDIO_CONFIG.player.servoVolume * masterVolume * servoVolume
+    footstepAudio.volume = 0.25 * masterVolume * footstepsVolume
+    terrainStepAudios.forEach((audio) => {
+      audio.volume = AUDIO_CONFIG.player.terrainStepVolume * masterVolume * footstepsVolume
+    })
+  } // end function applyHtmlAudioVolumes
+
+  const getCategoryVolume = (name: AudioCategory): number => {
+    if (name === 'proximity') return proximityVolume
+    if (name === 'objects') return objectsVolume
+    if (name === 'enemies') return enemiesVolume
+    return navigationVolume
+  } // end function getCategoryVolume
+
+  const setCategoryEnabled = (name: AudioCategory, enabled: boolean): boolean => {
+    if (name === 'proximity') {
+      categoryProximity = enabled
+      return categoryProximity
+    } // end if proximity
+    if (name === 'objects') {
+      categoryObjects = enabled
+      return categoryObjects
+    } // end if objects
+    if (name === 'enemies') {
+      categoryEnemies = enabled
+      return categoryEnemies
+    } // end if enemies
+    categoryNavigation = enabled
+    return categoryNavigation
+  } // end function setCategoryEnabled
+
+  const setVolumeChannel = (name: AudioVolumeChannel, value: number): number => {
+    const nextValue = clampVolumeScalar(value)
+    if (name === 'master') {
+      masterVolume = nextValue
+      Tone.getDestination().volume.value = gainToDbSafe(masterVolume)
+      applyHtmlAudioVolumes()
+      return masterVolume
+    } // end if master volume
+    if (name === 'ambience') {
+      ambienceVolume = nextValue
+      applyHtmlAudioVolumes()
+      return ambienceVolume
+    } // end if ambience volume
+    if (name === 'servo') {
+      servoVolume = nextValue
+      applyHtmlAudioVolumes()
+      return servoVolume
+    } // end if servo volume
+    if (name === 'footsteps') {
+      footstepsVolume = nextValue
+      applyHtmlAudioVolumes()
+      return footstepsVolume
+    } // end if footsteps volume
+    if (name === 'flightLoop') {
+      flightLoopVolume = nextValue
+      applyFlightLoopVolume()
+      return flightLoopVolume
+    } // end if flight-loop volume
+    if (name === 'proximity') {
+      proximityVolume = nextValue
+      return proximityVolume
+    } // end if proximity volume
+    if (name === 'objects') {
+      objectsVolume = nextValue
+      return objectsVolume
+    } // end if objects volume
+    if (name === 'enemies') {
+      enemiesVolume = nextValue
+      return enemiesVolume
+    } // end if enemies volume
+    navigationVolume = nextValue
+    return navigationVolume
+  } // end function setVolumeChannel
+
+  const getVolumeChannel = (name: AudioVolumeChannel): number => {
+    if (name === 'master') return masterVolume
+    if (name === 'ambience') return ambienceVolume
+    if (name === 'servo') return servoVolume
+    if (name === 'footsteps') return footstepsVolume
+    if (name === 'flightLoop') return flightLoopVolume
+    return getCategoryVolume(name)
+  } // end function getVolumeChannel
 
   const footstepAudio = new Audio('assets/sounds/footstep.ogg')
   footstepAudio.preload = 'auto'
@@ -536,6 +640,7 @@ export function createAudioController(): AudioController {
   const flightLoopGain = new Tone.Gain(0.78).toDestination()
   const flightLoopSound = new Tone.Player('assets/sounds/jetLoop.ogg').connect(flightLoopGain)
   flightLoopSound.loop = true
+  applyFlightLoopVolume()
   const hardLandingGain = new Tone.Gain(0.92).toDestination()
   const hardLandingSound = new Tone.Player('assets/sounds/hardLanding.ogg').connect(hardLandingGain)
 
@@ -844,6 +949,7 @@ export function createAudioController(): AudioController {
         terrainStepAudios.forEach((audio) => {
           audio.muted = false
         })
+        applyHtmlAudioVolumes()
         void ambienceAudio.play().catch(() => undefined)
         audioStarted = true
       } // end if audio graph not initialized
@@ -1026,7 +1132,7 @@ export function createAudioController(): AudioController {
           ? 'triangle'
           : 'square'
     voice.panner.pan.rampTo(clamp(Math.sin(bearing), -1, 1), 0.01)
-    voice.synth.volume.value = Tone.gainToDb(clamp(distanceToVolume(distance, AUDIO_NAVIGATION_CONFIG.obstacleAudioMaxDistance) * (lowVolume ? 0.18 : 0.42), 0.001, 1))
+    voice.synth.volume.value = gainToDbSafe(clamp(distanceToVolume(distance, AUDIO_NAVIGATION_CONFIG.obstacleAudioMaxDistance) * (lowVolume ? 0.18 : 0.42) * objectsVolume, 0, 2))
     voice.synth.oscillator.type = oscillatorType
     voice.synth.triggerAttackRelease(frequency, lowVolume ? '64n' : '32n')
   } // end function playObstacleContact
@@ -1039,7 +1145,7 @@ export function createAudioController(): AudioController {
     } // end if no enemy voice available
 
     voice.panner.pan.rampTo(clamp(Math.sin(bearing), -1, 1), 0.01)
-    voice.synth.volume.value = Tone.gainToDb(clamp(distanceToVolume(distance, AUDIO_NAVIGATION_CONFIG.activePingEnemyDistance) * (lowVolume ? 0.22 : 0.55), 0.001, 1))
+    voice.synth.volume.value = gainToDbSafe(clamp(distanceToVolume(distance, AUDIO_NAVIGATION_CONFIG.activePingEnemyDistance) * (lowVolume ? 0.22 : 0.55) * enemiesVolume, 0, 2))
     voice.synth.triggerAttackRelease(760 - distance * 8, lowVolume ? '64n' : '16n')
 
     if (enemyId) {
@@ -1047,14 +1153,14 @@ export function createAudioController(): AudioController {
     } // end if enemy runtime should react to ping
   } // end function playEnemyContact
 
-  const updateNearFieldNavigation = (player: PlayerAudioState, mapData: Uint8Array, sprites: SpriteObject[]): void => {
+  const updateNearFieldNavigation = (player: PlayerAudioState, collisionWorld: WorldCollisionWorld, sprites: SpriteObject[]): void => {
     if (!categoryProximity) {
       silenceWallProximityCue()
       return
     } // end if proximity category disabled
 
     const nearest = findNearestObstacleContact(
-      mapData,
+      collisionWorld,
       { x: player.position.x, y: player.position.y },
       player.angle,
       sprites,
@@ -1067,7 +1173,7 @@ export function createAudioController(): AudioController {
     } // end if no near-field obstacle detected
 
     const intensity = clamp(1 - nearest.distance / AUDIO_NAVIGATION_CONFIG.nearFieldRadius, 0, 1)
-    playWallProximityCue(nearest.bearing, intensity)
+    playWallProximityCue(nearest.bearing, intensity, proximityVolume)
   } // end function updateNearFieldNavigation
 
   const triggerPassiveSweepTone = (frequency: number, gain: number): void => {
@@ -1076,7 +1182,7 @@ export function createAudioController(): AudioController {
       ? Math.max(now, lastPassiveSweepTriggerTime + 0.002)
       : now
 
-    sonarSweepSynth.volume.value = Tone.gainToDb(gain)
+    sonarSweepSynth.volume.value = gainToDbSafe(gain * navigationVolume)
 
     try {
       sonarSweepSynth.triggerAttackRelease(frequency, '64n', triggerTime)
@@ -1086,11 +1192,11 @@ export function createAudioController(): AudioController {
     } // end try/catch passive sweep schedule
   } // end function triggerPassiveSweepTone
 
-  const runPassiveSweepTick = (player: PlayerAudioState, enemies: EnemyAudioState[], mapData: Uint8Array, sprites: SpriteObject[]): void => {
+  const runPassiveSweepTick = (player: PlayerAudioState, enemies: EnemyAudioState[], collisionWorld: WorldCollisionWorld, sprites: SpriteObject[]): void => {
     const stepAngle = (Math.PI * 2) / (AUDIO_NAVIGATION_CONFIG.passiveSweepRotationSeconds * AUDIO_NAVIGATION_CONFIG.passiveSweepTickRateHz)
     const currentAngle = passiveSweepAngle
     const contact = scanSonarContact(
-      mapData,
+      collisionWorld,
       { x: player.position.x, y: player.position.y },
       player.angle,
       currentAngle,
@@ -1119,13 +1225,10 @@ export function createAudioController(): AudioController {
     dt: number,
     player: PlayerAudioState,
     enemies: EnemyAudioState[],
-    mapData: Uint8Array,
+    collisionWorld: WorldCollisionWorld,
     sprites: SpriteObject[]
   ): void => {
-    ambienceAudio.volume = AUDIO_CONFIG.player.ambienceVolume
-    terrainStepAudios.forEach((audio) => {
-      audio.volume = AUDIO_CONFIG.player.terrainStepVolume
-    })
+    applyHtmlAudioVolumes()
 
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
@@ -1140,7 +1243,7 @@ export function createAudioController(): AudioController {
       ))
       .sort((a, b) => a - b)[0] ?? Number.POSITIVE_INFINITY
     const nearestObstacleContact = findNearestObstacleContact(
-      mapData,
+      collisionWorld,
       { x: player.position.x, y: player.position.y },
       player.angle,
       sprites,
@@ -1156,7 +1259,7 @@ export function createAudioController(): AudioController {
       .filter((enemy) => enemy.isAlive)
       .map((enemy) => {
         const hasSightLine = hasLineOfSight(
-          mapData,
+          collisionWorld,
           { x: enemy.position.x, y: enemy.position.y },
           { x: player.position.x, y: player.position.y }
         )
@@ -1184,7 +1287,8 @@ export function createAudioController(): AudioController {
         dt,
         enemy,
         player,
-        categoryEnemies && hasNearbySonarContact && hasSightLine && shouldEmitLosTick
+        categoryEnemies && hasNearbySonarContact && hasSightLine && shouldEmitLosTick,
+        categoryEnemies ? enemiesVolume : 0
       )
     } // end for each enemy
 
@@ -1199,13 +1303,13 @@ export function createAudioController(): AudioController {
       silenceWallProximityCue()
       passiveSweepAccumulatorSeconds = 0
     } else {
-      updateNearFieldNavigation(player, mapData, sprites)
+      updateNearFieldNavigation(player, collisionWorld, sprites)
 
       passiveSweepAccumulatorSeconds += dt
       const sweepTickSeconds = 1 / AUDIO_NAVIGATION_CONFIG.passiveSweepTickRateHz
       while (passiveSweepAccumulatorSeconds >= sweepTickSeconds) {
         passiveSweepAccumulatorSeconds -= sweepTickSeconds
-        runPassiveSweepTick(player, enemies, mapData, sprites)
+        runPassiveSweepTick(player, enemies, collisionWorld, sprites)
       } // end while passive sweep ticks are due
     } // end if sonar should be active
 
@@ -1220,7 +1324,7 @@ export function createAudioController(): AudioController {
   const triggerActiveSonar = (
     player: PlayerAudioState,
     enemies: EnemyAudioState[],
-    mapData: Uint8Array,
+    collisionWorld: WorldCollisionWorld,
     sprites: SpriteObject[]
   ): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
@@ -1240,7 +1344,7 @@ export function createAudioController(): AudioController {
       ))
       .sort((a, b) => a - b)[0] ?? Number.POSITIVE_INFINITY
     const nearestObstacleContact = findNearestObstacleContact(
-      mapData,
+      collisionWorld,
       { x: player.position.x, y: player.position.y },
       player.angle,
       sprites,
@@ -1256,14 +1360,14 @@ export function createAudioController(): AudioController {
     } // end if no nearby sonar-worthy contact
 
     activeSonarStamp += 1
-    activePingSynth.volume.value = Tone.gainToDb(0.12)
+    activePingSynth.volume.value = gainToDbSafe(0.12 * navigationVolume)
     activePingSynth.triggerAttackRelease('C4', AUDIO_CONFIG.player.sonarActiveDurationSeconds)
 
     const contacts = []
     for (let index = 0; index < 16; index += 1) {
       const angle = player.angle + (index / 16) * Math.PI * 2
       const contact = scanSonarContact(
-        mapData,
+        collisionWorld,
         { x: player.position.x, y: player.position.y },
         player.angle,
         angle,
@@ -1312,6 +1416,7 @@ export function createAudioController(): AudioController {
     } // end if audio not started or objects category disabled
 
     const now = Tone.now()
+    environmentalSonarScanSynth.volume.value = gainToDbSafe(objectsVolume)
     environmentalSonarScanSynth.triggerAttackRelease('E4', '16n', now)
 
     for (const echo of echoes) {
@@ -1336,6 +1441,7 @@ export function createAudioController(): AudioController {
       } // end if missing sonar voice
 
       voice.panner.pan.rampTo(pan, 0.01)
+      voice.synth.volume.value = gainToDbSafe(objectsVolume)
       voice.synth.oscillator.type = echo.obstacleType === 'wall' ? 'sine' : 'triangle'
       voice.synth.triggerAttackRelease(frequency, duration, now + delaySeconds)
     } // end for each sonar echo
@@ -1398,7 +1504,7 @@ export function createAudioController(): AudioController {
     const clampedRadius = Math.max(nearMissRadius, 0.001)
     const closeness = clamp(1 - closestDistance / clampedRadius, 0, 1)
     if (projectileType === 'projectile') {
-      projectileNearMissGain.gain.value = clamp(0.08 + closeness * 0.9, 0.05, 0.98)
+      projectileNearMissGain.gain.value = clamp((0.08 + closeness * 0.9) * enemiesVolume, 0, 1.4)
       projectileNearMissPanner.positionX.value = relative.x
       projectileNearMissPanner.positionY.value = relative.y
       projectileNearMissPanner.positionZ.value = relative.z
@@ -1406,7 +1512,7 @@ export function createAudioController(): AudioController {
       return
     } // end if cannon projectile near miss
 
-    bulletNearMissGain.gain.value = clamp(0.06 + closeness * 0.8, 0.04, 0.9)
+    bulletNearMissGain.gain.value = clamp((0.06 + closeness * 0.8) * enemiesVolume, 0, 1.3)
     bulletNearMissPanner.positionX.value = relative.x
     bulletNearMissPanner.positionY.value = relative.y
     bulletNearMissPanner.positionZ.value = relative.z
@@ -1456,7 +1562,7 @@ export function createAudioController(): AudioController {
       const closingSpeed = (projectile.velocityX * toPlayerX + projectile.velocityY * toPlayerY) / distance
       const proximity = clamp(1 - distance / 22, 0, 1)
       const approach = clamp(closingSpeed / 8, 0, 1)
-      const targetGain = clamp(0.015 + proximity * (0.2 + approach * 0.78), 0.01, 0.95)
+      const targetGain = clamp((0.015 + proximity * (0.2 + approach * 0.78)) * enemiesVolume, 0, 1.3)
 
       voice.panner.positionX.value = relative.x
       voice.panner.positionY.value = relative.y
@@ -1503,6 +1609,7 @@ export function createAudioController(): AudioController {
 
     const pan = computePanForWorldPosition(worldX, worldY, playerX, playerY, playerAngle)
     tankHitConfirmPanner.pan.rampTo(pan, 0.01)
+    tankHitConfirmGain.gain.value = enemiesVolume
     retriggerLoadedPlayer(tankHitConfirmSound)
   } // end function playTankHitConfirm
 
@@ -1519,6 +1626,7 @@ export function createAudioController(): AudioController {
 
     const pan = computePanForWorldPosition(worldX, worldY, playerX, playerY, playerAngle)
     tankDeathConfirmPanner.pan.rampTo(pan, 0.01)
+    tankDeathConfirmGain.gain.value = enemiesVolume
     retriggerLoadedPlayer(tankDeathConfirmSound)
   } // end function playTankDeathConfirm
 
@@ -1548,6 +1656,7 @@ export function createAudioController(): AudioController {
     impactPanner.positionX.value = relative.x
     impactPanner.positionY.value = relative.y
     impactPanner.positionZ.value = relative.z
+    impactSynth.volume.value = gainToDbSafe(objectsVolume)
     impactSynth.triggerAttackRelease(220, '16n', now + timeOffsetSeconds)
   } // end function playImpact
 
@@ -1602,7 +1711,10 @@ export function createAudioController(): AudioController {
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
-    playCollisionThudUtility(0)
+    if (!categoryProximity) {
+      return
+    } // end if proximity category disabled
+    playCollisionThudUtility(0, proximityVolume)
   } // end function playBump
 
   const playCollisionThud = (direction: number): void => {
@@ -1610,7 +1722,10 @@ export function createAudioController(): AudioController {
       return
     } // end if audio not started
 
-    playCollisionThudUtility(direction)
+    if (!categoryProximity) {
+      return
+    } // end if proximity category disabled
+    playCollisionThudUtility(direction, proximityVolume)
   } // end function playCollisionThud
 
   const playCardinalOrientationCue = (newFacing: number): void => {
@@ -1618,7 +1733,10 @@ export function createAudioController(): AudioController {
       return
     } // end if audio not started
 
-    playCardinalOrientationCueUtility(newFacing)
+    if (!categoryNavigation) {
+      return
+    } // end if navigation category disabled
+    playCardinalOrientationCueUtility(newFacing, navigationVolume)
   } // end function playCardinalOrientationCue
 
   const updatePassiveRadar = (dt: number): void => {
@@ -1654,20 +1772,7 @@ export function createAudioController(): AudioController {
   } // end function updateBoundaryZoneCue
 
   const toggleCategory = (name: AudioCategory): boolean => {
-    if (name === 'proximity') {
-      categoryProximity = !categoryProximity
-      return categoryProximity
-    } // end if proximity
-    if (name === 'objects') {
-      categoryObjects = !categoryObjects
-      return categoryObjects
-    } // end if objects
-    if (name === 'enemies') {
-      categoryEnemies = !categoryEnemies
-      return categoryEnemies
-    } // end if enemies
-    categoryNavigation = !categoryNavigation
-    return categoryNavigation
+    return setCategoryEnabled(name, !getCategoryEnabled(name))
   } // end function toggleCategory
 
   const getCategoryEnabled = (name: AudioCategory): boolean => {
@@ -1742,7 +1847,10 @@ export function createAudioController(): AudioController {
     getAudioContextState,
     isServoPlaying: () => servoPlaying,
     toggleCategory,
+    setCategoryEnabled,
     getCategoryEnabled,
+    setVolumeChannel,
+    getVolumeChannel,
     playLockOnChirp,
     playLockLostChirp
   } // end object audio controller

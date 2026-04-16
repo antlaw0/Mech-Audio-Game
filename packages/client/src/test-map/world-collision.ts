@@ -40,6 +40,7 @@ interface RoundCollider {
 export interface WorldCollisionWorld {
   walls: WallCollider[]
   roundObstacles: RoundCollider[]
+  wallSet: Set<number>
 } // end interface WorldCollisionWorld
 
 function toRoundObstacle(sprite: SpriteObject): RoundCollider {
@@ -64,6 +65,7 @@ function toRoundObstacle(sprite: SpriteObject): RoundCollider {
 
 export function createWorldCollisionWorld(mapData: Uint8Array, sprites: SpriteObject[]): WorldCollisionWorld {
   const walls: WallCollider[] = []
+  const wallSet = new Set<number>()
   for (let row = 0; row < MAP_HEIGHT; row += 1) {
     for (let col = 0; col < MAP_WIDTH; col += 1) {
       if (getCell(mapData, col, row) === 0) {
@@ -78,11 +80,12 @@ export function createWorldCollisionWorld(mapData: Uint8Array, sprites: SpriteOb
         zMin: 0,
         zMax: WORLD_WALL_HEIGHT
       })
+      wallSet.add(row * MAP_WIDTH + col)
     } // end for each map column
   } // end for each map row
 
   const roundObstacles = sprites.map((sprite) => toRoundObstacle(sprite))
-  return { walls, roundObstacles }
+  return { walls, roundObstacles, wallSet }
 } // end function createWorldCollisionWorld
 
 function circleIntersectsAabb(x: number, y: number, radius: number, box: WallCollider): boolean {
