@@ -118,6 +118,26 @@ export function bindInput(
         input.snapWestPending = true
       } // end if KeyJ
 
+      if (event.code === 'KeyR') {
+        input.cycleWeaponPending = true
+      } // end if KeyR
+
+      if (event.code === 'Digit1') {
+        input.selectedWeaponSlot = 1
+      } // end if Digit1
+
+      if (event.code === 'Digit2') {
+        input.selectedWeaponSlot = 2
+      } // end if Digit2
+
+      if (event.code === 'Digit3') {
+        input.selectedWeaponSlot = 3
+      } // end if Digit3
+
+      if (event.code === 'Digit4') {
+        input.selectedWeaponSlot = 4
+      } // end if Digit4
+
       if (event.code === 'Numpad1') {
         input.spawnTankPending = true
       } // end if Numpad1
@@ -238,6 +258,14 @@ export function bindInput(
     if (event.code === 'KeyJ') {
       input.snapWestPending = false
     } // end if KeyJ
+
+    if (event.code === 'KeyR') {
+      input.cycleWeaponPending = false
+    } // end if KeyR
+
+    if (event.code === 'Digit1' || event.code === 'Digit2' || event.code === 'Digit3' || event.code === 'Digit4') {
+      input.selectedWeaponSlot = null
+    } // end if Digit key released
 
     if (event.code === 'Numpad1') {
       input.spawnTankPending = false

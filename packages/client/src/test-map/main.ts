@@ -8,10 +8,7 @@ import {
   PLAYER_FLIGHT_SPEED,
   PLAYER_RADIUS,
   PLAYER_SPEED,
-  WEAPON_DEFAULT_ACCURACY,
-  WEAPON_LOCK_ON_RANGE,
-  BULLET_SPEED,
-  BULLET_MAX_DIST
+  WEAPON_DEFAULT_ACCURACY
 } from './constants.js'
 import { createAudioController } from './audio.js'
 import {
@@ -21,6 +18,7 @@ import {
   spawnRandomTankFromConfig,
   spawnPlayerBullet,
   spawnPlayerBulletToward,
+  spawnPlayerMissile,
   syncDynamicFlightHeights,
   stepCombatEcsWorld
 } from './combat-ecs.js'
@@ -30,6 +28,7 @@ import type { EnemyDefinitionConfig, EnemyMovementPattern } from './enemies/enem
 import type { EnemyId } from './enemies/enemyTypes.js'
 import { getSharedFlightHeight, setSharedFlightHeight } from './runtime-config.js'
 import type { WeaponStats } from './types.js'
+import { PLAYER_WEAPON_DEFINITIONS, type PlayerWeaponDefinition } from './weapons.js'
 import { bindInput } from './input.js'
 import { computeObstructionAwareness } from './awareness.js'
 import { createDeveloperConsole } from './dev-console.js'
@@ -201,19 +200,16 @@ function startTestMap(): void {
   let isWeaponEditorOpen = false
   let playerFireCooldownSeconds = 0
 
-  const playerWeapon: WeaponStats = {
-    accuracy: WEAPON_DEFAULT_ACCURACY,
-    lockOnRange: WEAPON_LOCK_ON_RANGE,
-    damagePerShot: 10,
-    projectileCount: 1,
-    spreadDegrees: 0,
-    bulletSpeed: BULLET_SPEED,
-    maxRange: BULLET_MAX_DIST,
-    isFullAuto: false,
-    fireRateCooldownSeconds: 0.55,
-    lockOnWindowWidthPercent: 100,
-    lockOnWindowHeightPercent: 100
-  } // end object playerWeapon
+  const weaponLoadout: PlayerWeaponDefinition[] = PLAYER_WEAPON_DEFINITIONS.map((weapon) => ({
+    ...weapon,
+    explosionSounds: [...weapon.explosionSounds]
+  }))
+  let activeWeaponIndex = 0
+  let playerWeapon = weaponLoadout[activeWeaponIndex]!
+  let missileLockProgressMs = 0
+  let missileLockTargetId: number | null = null
+  let missileLockConfirmed = false
+  let missileLockToneTimerSeconds = 0
 
   const clearGameplayInputs = (): void => {
     input.moveForward = false
@@ -233,11 +229,34 @@ function startTestMap(): void {
     input.snapEastPending = false
     input.snapSouthPending = false
     input.snapWestPending = false
+    input.cycleWeaponPending = false
+    input.selectedWeaponSlot = null
     input.spawnTankPending = false
     input.spawnStrikerPending = false
     input.spawnBrutePending = false
     input.spawnHelicopterPending = false
   } // end function clearGameplayInputs
+
+  const equipWeaponAtIndex = (requestedIndex: number): void => {
+    if (weaponLoadout.length === 0) {
+      return
+    } // end if weapon loadout is empty
+
+    const normalizedIndex = Math.min(Math.max(requestedIndex, 0), weaponLoadout.length - 1)
+    activeWeaponIndex = normalizedIndex
+    playerWeapon = weaponLoadout[activeWeaponIndex] ?? weaponLoadout[0]!
+    playerFireCooldownSeconds = 0
+    targetLockState.lockedTankId = null
+    missileLockProgressMs = 0
+    missileLockTargetId = null
+    missileLockConfirmed = false
+    missileLockToneTimerSeconds = 0
+    audio.playLockLostChirp()
+
+    if (awarenessStatusElement) {
+      awarenessStatusElement.textContent = `WEAPON: ${playerWeapon.name.toUpperCase()} [${playerWeapon.selectionKey}]`
+    } // end if awareness status element exists
+  } // end function equipWeaponAtIndex
 
   const setPauseOverlayVisible = (visible: boolean): void => {
     if (!(pauseOverlayElement instanceof HTMLDivElement)) {
@@ -285,6 +304,7 @@ function startTestMap(): void {
       return isFinite(val) ? val : fallback
     } // end function parseNum
     return {
+      weaponType: playerWeapon.weaponType,
       accuracy: Math.max(0.01, Math.min(1, parseNum(weaponAccuracyInput, playerWeapon.accuracy))),
       damagePerShot: Math.max(1, Math.round(parseNum(weaponDamageInput, playerWeapon.damagePerShot))),
       projectileCount: Math.max(1, Math.round(parseNum(weaponProjectileCountInput, playerWeapon.projectileCount))),
@@ -293,9 +313,15 @@ function startTestMap(): void {
       maxRange: Math.max(1, parseNum(weaponMaxRangeInput, playerWeapon.maxRange)),
       isFullAuto: weaponFullAutoInput?.checked ?? playerWeapon.isFullAuto,
       fireRateCooldownSeconds: Math.max(0, parseNum(weaponFireRateInput, playerWeapon.fireRateCooldownSeconds)),
+      projectileSize: Math.max(0.03, playerWeapon.projectileSize),
       lockOnRange: Math.max(1, parseNum(weaponLockOnRangeInput, playerWeapon.lockOnRange)),
       lockOnWindowWidthPercent: Math.max(0, Math.min(100, Math.round(parseNum(weaponLockOnWindowWidthInput, playerWeapon.lockOnWindowWidthPercent)))),
-      lockOnWindowHeightPercent: Math.max(0, Math.min(100, Math.round(parseNum(weaponLockOnWindowHeightInput, playerWeapon.lockOnWindowHeightPercent))))
+      lockOnWindowHeightPercent: Math.max(0, Math.min(100, Math.round(parseNum(weaponLockOnWindowHeightInput, playerWeapon.lockOnWindowHeightPercent)))),
+      lockOnTimeMs: playerWeapon.lockOnTimeMs,
+      trackingRating: playerWeapon.trackingRating,
+      explosionRadius: playerWeapon.explosionRadius,
+      explosionDamage: playerWeapon.explosionDamage,
+      explosionSounds: [...playerWeapon.explosionSounds]
     } // end object weapon stats
   } // end function readWeaponEditorForm
 
@@ -718,7 +744,7 @@ function startTestMap(): void {
     `console.open = ${isConsoleOpen}`,
     `player = x:${player.x.toFixed(2)} y:${player.y.toFixed(2)} z:${(player.z ?? 0).toFixed(2)} angle:${((player.angle * 180) / Math.PI).toFixed(1)} pitch:${((player.pitch * 180) / Math.PI).toFixed(1)}`,
     `player.flight = state:${player.flightState ?? 'grounded'} flying:${player.isFlying ? 'true' : 'false'} sharedHeight:${getSharedFlightHeight().toFixed(2)}`,
-    `weapon = accuracy:${playerWeapon.accuracy.toFixed(2)} pellets:${playerWeapon.projectileCount} spread:${playerWeapon.spreadDegrees.toFixed(1)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fullAuto:${playerWeapon.isFullAuto} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)}`,
+    `weapon = type:${playerWeapon.weaponType} accuracy:${playerWeapon.accuracy.toFixed(2)} pellets:${playerWeapon.projectileCount} spread:${playerWeapon.spreadDegrees.toFixed(1)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fullAuto:${playerWeapon.isFullAuto} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)}`,
     `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)}`,
     `audio categories = proximity:${audio.getCategoryEnabled('proximity')}@${audio.getVolumeChannel('proximity').toFixed(2)} objects:${audio.getCategoryEnabled('objects')}@${audio.getVolumeChannel('objects').toFixed(2)} enemies:${audio.getCategoryEnabled('enemies')}@${audio.getVolumeChannel('enemies').toFixed(2)} navigation:${audio.getCategoryEnabled('navigation')}@${audio.getVolumeChannel('navigation').toFixed(2)}`
   ]
@@ -864,6 +890,15 @@ function startTestMap(): void {
         return playerWeapon.maxRange
       }
     },
+    'weapon.projectileSize': {
+      description: 'Projectile collision radius in world units.',
+      helpPath: ['Weapon', 'Combat'],
+      get: () => playerWeapon.projectileSize,
+      set: (rawValue) => {
+        playerWeapon.projectileSize = Math.max(0.03, parseFiniteNumber(rawValue, 'weapon.projectileSize'))
+        return playerWeapon.projectileSize
+      }
+    },
     'weapon.isFullAuto': {
       description: 'Whether holding fire continuously shoots while cooldown allows.',
       helpPath: ['Weapon', 'Combat'],
@@ -925,6 +960,42 @@ function startTestMap(): void {
       set: (rawValue) => {
         playerWeapon.lockOnWindowHeightPercent = Math.max(0, Math.min(100, Math.round(parseFiniteNumber(rawValue, 'weapon.lockOnWindowHeightPercent'))))
         return playerWeapon.lockOnWindowHeightPercent
+      }
+    },
+    'weapon.lockOnTimeMs': {
+      description: 'Missile lock confirmation time in milliseconds.',
+      helpPath: ['Weapon', 'Lock-On'],
+      get: () => playerWeapon.lockOnTimeMs,
+      set: (rawValue) => {
+        playerWeapon.lockOnTimeMs = Math.max(0, Math.round(parseFiniteNumber(rawValue, 'weapon.lockOnTimeMs')))
+        return playerWeapon.lockOnTimeMs
+      }
+    },
+    'weapon.trackingRating': {
+      description: 'Missile tracking strength from 0 to 1.',
+      helpPath: ['Weapon', 'Lock-On'],
+      get: () => playerWeapon.trackingRating,
+      set: (rawValue) => {
+        playerWeapon.trackingRating = Math.max(0, Math.min(1, parseFiniteNumber(rawValue, 'weapon.trackingRating')))
+        return playerWeapon.trackingRating
+      }
+    },
+    'weapon.explosionRadius': {
+      description: 'Missile explosion radius in world units.',
+      helpPath: ['Weapon', 'Combat'],
+      get: () => playerWeapon.explosionRadius,
+      set: (rawValue) => {
+        playerWeapon.explosionRadius = Math.max(0.2, parseFiniteNumber(rawValue, 'weapon.explosionRadius'))
+        return playerWeapon.explosionRadius
+      }
+    },
+    'weapon.explosionDamage': {
+      description: 'Missile explosion base damage before falloff.',
+      helpPath: ['Weapon', 'Combat'],
+      get: () => playerWeapon.explosionDamage,
+      set: (rawValue) => {
+        playerWeapon.explosionDamage = Math.max(1, parseFiniteNumber(rawValue, 'weapon.explosionDamage'))
+        return playerWeapon.explosionDamage
       }
     },
     'aimAssist.enabled': {
@@ -1225,8 +1296,8 @@ function startTestMap(): void {
   const getHelpNodeBySelectionPath = (selectionPath: number[]): DeveloperConsoleHelpNode | null => {
     let currentNode: DeveloperConsoleHelpNode | null = buildHelpTree()
     for (const selectionIndex of selectionPath) {
-      const children = currentNode.children ?? []
-      const nextNode = children[selectionIndex]
+      const children: DeveloperConsoleHelpNode[] = currentNode?.children ?? []
+      const nextNode: DeveloperConsoleHelpNode | undefined = children[selectionIndex]
       if (!nextNode) {
         return null
       } // end if invalid selection index
@@ -1636,6 +1707,20 @@ function startTestMap(): void {
 
     playerFireCooldownSeconds = Math.max(0, playerFireCooldownSeconds - deltaSeconds)
 
+    if (input.selectedWeaponSlot !== null) {
+      const selectedIndex = input.selectedWeaponSlot - 1
+      input.selectedWeaponSlot = null
+      if (selectedIndex !== activeWeaponIndex && selectedIndex >= 0 && selectedIndex < weaponLoadout.length) {
+        equipWeaponAtIndex(selectedIndex)
+      } // end if selected weapon changed
+    } // end if selected weapon slot pending
+
+    if (input.cycleWeaponPending) {
+      input.cycleWeaponPending = false
+      const nextIndex = (activeWeaponIndex + 1) % weaponLoadout.length
+      equipWeaponAtIndex(nextIndex)
+    } // end if weapon cycled
+
     updateFrame(
       {
         player,
@@ -1714,48 +1799,119 @@ function startTestMap(): void {
       audio.playLockOnChirp()
     } // end if lock acquired
 
+    if (playerWeapon.weaponType === 'missile') {
+      const currentLockId = lockUpdate.lockedTank?.id ?? null
+      if (currentLockId === null) {
+        if (missileLockProgressMs > 0 || missileLockConfirmed) {
+          audio.playLockLostChirp()
+        } // end if missile lock progress existed before loss
+        missileLockProgressMs = 0
+        missileLockTargetId = null
+        missileLockConfirmed = false
+        missileLockToneTimerSeconds = 0
+      } else {
+        if (missileLockTargetId !== currentLockId) {
+          missileLockProgressMs = 0
+          missileLockConfirmed = false
+          missileLockToneTimerSeconds = 0
+          missileLockTargetId = currentLockId
+        } // end if lock target changed
+
+        if (!missileLockConfirmed) {
+          missileLockProgressMs += deltaSeconds * 1000
+          missileLockToneTimerSeconds += deltaSeconds
+          if (missileLockToneTimerSeconds >= 0.14) {
+            audio.playMissileLockTone()
+            missileLockToneTimerSeconds = 0
+          } // end if another lock-acquiring tone is due
+
+          if (missileLockProgressMs >= Math.max(0, playerWeapon.lockOnTimeMs)) {
+            missileLockConfirmed = true
+            audio.playMissileLockConfirmTone()
+          } // end if lock-on timer completed
+        } // end if missile lock not yet confirmed
+      } // end if missile lock candidate exists
+    } else {
+      missileLockProgressMs = 0
+      missileLockTargetId = null
+      missileLockConfirmed = false
+      missileLockToneTimerSeconds = 0
+    } // end if missile-weapon lock processing
+
     const shouldAttemptShot = playerWeapon.isFullAuto ? input.fireHeld : input.firePending
     if (input.firePending) {
       input.firePending = false
     } // end if consume edge-trigger press
 
     if (shouldAttemptShot && playerFireCooldownSeconds <= 0) {
-      audio.fireGunshot()
-      updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
-      if (playerWeapon.fireRateCooldownSeconds > 0) {
-        playerFireCooldownSeconds = playerWeapon.fireRateCooldownSeconds
-      } // end if fire rate applies
       const playerSpeed = Math.hypot(player.x - previousPlayerX, player.y - previousPlayerY) / Math.max(deltaSeconds, 0.0001)
       const maxMoveSpeed = player.isFlying ? PLAYER_FLIGHT_SPEED : PLAYER_SPEED
       const speedFraction = Math.min(1, playerSpeed / maxMoveSpeed)
-      if (lockUpdate.lockedTank !== null) {
-        spawnPlayerBulletToward(
-          combatWorld,
-          player,
-          lockUpdate.lockedTank.x,
-          lockUpdate.lockedTank.y,
-          lockUpdate.lockedTank.height + 0.5,
-          playerWeapon.accuracy,
-          speedFraction,
-          playerWeapon.damagePerShot,
-          playerWeapon.bulletSpeed,
-          playerWeapon.maxRange,
-          playerWeapon.projectileCount,
-          playerWeapon.spreadDegrees
-        )
+
+      if (playerWeapon.weaponType === 'missile') {
+        if (!missileLockConfirmed || lockUpdate.lockedTank === null) {
+          audio.playNegativeActionTone()
+        } else {
+          audio.fireGunshot(playerWeapon.fireSoundPath)
+          updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
+          if (playerWeapon.fireRateCooldownSeconds > 0) {
+            playerFireCooldownSeconds = playerWeapon.fireRateCooldownSeconds
+          } // end if fire rate applies
+
+          const missilesPerShot = Math.max(1, Math.round(playerWeapon.projectileCount))
+          for (let missileIndex = 0; missileIndex < missilesPerShot; missileIndex += 1) {
+            spawnPlayerMissile(
+              combatWorld,
+              player,
+              lockUpdate.lockedTank.id,
+              playerWeapon.damagePerShot,
+              playerWeapon.bulletSpeed,
+              playerWeapon.maxRange,
+              playerWeapon.projectileSize,
+              playerWeapon.trackingRating,
+              playerWeapon.explosionRadius,
+              playerWeapon.explosionDamage,
+              playerWeapon.explosionSounds
+            )
+          } // end for each missile in shot
+        } // end if missile shot blocked or fired
       } else {
-        spawnPlayerBullet(
-          combatWorld,
-          player,
-          playerWeapon.damagePerShot,
-          playerWeapon.bulletSpeed,
-          playerWeapon.maxRange,
-          playerWeapon.accuracy,
-          speedFraction,
-          playerWeapon.projectileCount,
-          playerWeapon.spreadDegrees
-        )
-      } // end if locked target for accuracy cone
+        audio.fireGunshot(playerWeapon.fireSoundPath)
+        updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
+        if (playerWeapon.fireRateCooldownSeconds > 0) {
+          playerFireCooldownSeconds = playerWeapon.fireRateCooldownSeconds
+        } // end if fire rate applies
+        if (lockUpdate.lockedTank !== null) {
+          spawnPlayerBulletToward(
+            combatWorld,
+            player,
+            lockUpdate.lockedTank.x,
+            lockUpdate.lockedTank.y,
+            lockUpdate.lockedTank.height + 0.5,
+            playerWeapon.accuracy,
+            speedFraction,
+            playerWeapon.damagePerShot,
+            playerWeapon.bulletSpeed,
+            playerWeapon.maxRange,
+            playerWeapon.projectileSize,
+            playerWeapon.projectileCount,
+            playerWeapon.spreadDegrees
+          )
+        } else {
+          spawnPlayerBullet(
+            combatWorld,
+            player,
+            playerWeapon.damagePerShot,
+            playerWeapon.bulletSpeed,
+            playerWeapon.maxRange,
+            playerWeapon.projectileSize,
+            playerWeapon.accuracy,
+            speedFraction,
+            playerWeapon.projectileCount,
+            playerWeapon.spreadDegrees
+          )
+        } // end if locked target for accuracy cone
+      } // end if missile or ballistic firing mode
     } // end if fire input and cooldown allow
 
     const awareness = computeObstructionAwareness(player, combatRender.tanks, collisionWorld, sprites)

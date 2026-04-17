@@ -31,12 +31,15 @@ import {
   getEnemyDefinitionFromNumericId
 } from './enemies/index.js'
 import type { EnemyDefinitionConfig, EnemyId } from './enemies/enemyTypes.js'
-import type { AudioController, Bullet, EnemyRender, IncomingProjectileAudioState, Player, TankRender } from './types.js'
+import type { AudioController, Bullet, EnemyRender, IncomingProjectileAudioState, Player, TankRender, TrailPoint } from './types.js'
 
 const KIND_BULLET = 1
 const KIND_ENEMY = 2
 const KIND_TANK = 3
 const KIND_TANK_PROJECTILE = 4
+const KIND_MISSILE = 5
+const PROJECTILE_OWNER_PLAYER = 1
+const PROJECTILE_OWNER_ENEMY = 2
 const BULLET_HIT_RADIUS = 0.25
 const PLAYER_HIT_HALF_HEIGHT = 0.55
 const TANK_HIT_HALF_HEIGHT = 0.6
@@ -89,7 +92,16 @@ const ProjectileStats = defineComponent({
   damage: Types.i16,
   maxDistance: Types.f32,
   originHeight: Types.f32,
-  nearMissPlayed: Types.ui8
+  nearMissPlayed: Types.ui8,
+  owner: Types.ui8
+})
+
+const MissileStats = defineComponent({
+  targetId: Types.ui16,
+  trackingRating: Types.f32,
+  guidanceTimer: Types.f32,
+  explosionRadius: Types.f32,
+  explosionDamage: Types.f32
 })
 
 const CombatQuery = defineQuery([Position, Facing, Meta])
@@ -97,6 +109,8 @@ const TankQuery = defineQuery([Position, Facing, Meta, Health, Behavior, EnemyPr
 
 type CombatEcsWorld = IWorld & {
   customConfigs: Map<number, EnemyDefinitionConfig>
+  missileExplosionSounds: Map<number, string[]>
+  missileTrails: Map<number, TrailPoint[]>
 }
 
 function addEnemy(world: CombatEcsWorld, x: number, y: number, radius = 0.33): void {
@@ -182,11 +196,14 @@ function spawnTankProjectile(
   ProjectileStats.maxDistance[bullet] = definition.projectileMaxDistance
   ProjectileStats.originHeight[bullet] = originHeight
   ProjectileStats.nearMissPlayed[bullet] = 0
+  ProjectileStats.owner[bullet] = PROJECTILE_OWNER_ENEMY
 } // end function spawnTankProjectile
 
 export function createCombatEcsWorld(): CombatEcsWorld {
   const world = createWorld() as CombatEcsWorld
   world.customConfigs = new Map()
+  world.missileExplosionSounds = new Map()
+  world.missileTrails = new Map()
   return world
 } // end function createCombatEcsWorld
 
@@ -334,6 +351,7 @@ export function spawnPlayerBullet(
   damage = 10,
   speed = BULLET_SPEED,
   maxDistance = BULLET_MAX_DIST,
+  projectileSize = BULLET_HIT_RADIUS,
   accuracy = 1,
   playerSpeedFraction = 0,
   projectileCount = 1,
@@ -350,7 +368,8 @@ export function spawnPlayerBullet(
     spreadDegrees,
     damage,
     speed,
-    maxDistance
+    maxDistance,
+    projectileSize
   )
 } // end function spawnPlayerBullet
 
@@ -361,7 +380,8 @@ function spawnPlayerProjectile(
   pitch: number,
   damage: number,
   speed: number,
-  maxDistance: number
+  maxDistance: number,
+  projectileSize: number
 ): void {
   const bullet = addEntity(world)
   addComponent(world, Position, bullet)
@@ -373,7 +393,7 @@ function spawnPlayerProjectile(
   Facing.angle[bullet] = angle
   Facing.pitch[bullet] = pitch
   Meta.kind[bullet] = KIND_BULLET
-  Meta.radius[bullet] = BULLET_HIT_RADIUS
+  Meta.radius[bullet] = Math.max(0.03, projectileSize)
   Meta.distance[bullet] = 0
   Meta.alive[bullet] = 1
   ProjectileStats.speed[bullet] = speed
@@ -381,6 +401,7 @@ function spawnPlayerProjectile(
   ProjectileStats.maxDistance[bullet] = maxDistance
   ProjectileStats.originHeight[bullet] = (player.z ?? 0) + PLAYER_HEIGHT
   ProjectileStats.nearMissPlayed[bullet] = 0
+  ProjectileStats.owner[bullet] = PROJECTILE_OWNER_PLAYER
 } // end function spawnPlayerProjectile
 
 function sampleConeOffset(halfAngleRadians: number): { yawOffset: number; pitchOffset: number } {
@@ -411,7 +432,8 @@ function spawnPlayerProjectileBurst(
   spreadDegrees: number,
   damage: number,
   speed: number,
-  maxDistance: number
+  maxDistance: number,
+  projectileSize: number
 ): void {
   const clampedAccuracy = Math.max(0, Math.min(1, accuracy))
   const baseHalfAngle = WEAPON_MAX_CONE_RADIANS * Math.max(0, 1 - clampedAccuracy)
@@ -431,7 +453,8 @@ function spawnPlayerProjectileBurst(
       clampProjectilePitch(adjustedBasePitch + pelletOffset.pitchOffset),
       damage,
       speed,
-      maxDistance
+      maxDistance,
+      projectileSize
     )
   } // end for each projectile in burst
 } // end function spawnPlayerProjectileBurst
@@ -452,6 +475,7 @@ export function spawnPlayerBulletToward(
   damage = 10,
   speed = BULLET_SPEED,
   maxDistance = BULLET_MAX_DIST,
+  projectileSize = BULLET_HIT_RADIUS,
   projectileCount = 1,
   spreadDegrees = 0
 ): void {
@@ -469,9 +493,58 @@ export function spawnPlayerBulletToward(
     spreadDegrees,
     damage,
     speed,
-    maxDistance
+    maxDistance,
+    projectileSize
   )
 } // end function spawnPlayerBulletToward
+
+export function spawnPlayerMissile(
+  world: CombatEcsWorld,
+  player: Player,
+  targetTankId: number,
+  damage: number,
+  speed: number,
+  maxDistance: number,
+  projectileSize: number,
+  trackingRating: number,
+  explosionRadius: number,
+  explosionDamage: number,
+  explosionSounds: string[]
+): void {
+  const targetX = getNumber(Position.x, targetTankId) ?? player.x
+  const targetY = getNumber(Position.y, targetTankId) ?? player.y
+  const angle = Math.atan2(targetY - player.y, targetX - player.x)
+  const missile = addEntity(world)
+  addComponent(world, Position, missile)
+  addComponent(world, Facing, missile)
+  addComponent(world, Meta, missile)
+  addComponent(world, ProjectileStats, missile)
+  addComponent(world, MissileStats, missile)
+
+  Position.x[missile] = player.x
+  Position.y[missile] = player.y
+  Facing.angle[missile] = angle
+  Facing.pitch[missile] = player.pitch
+  Meta.kind[missile] = KIND_MISSILE
+  Meta.radius[missile] = Math.max(0.08, projectileSize)
+  Meta.distance[missile] = 0
+  Meta.alive[missile] = 1
+  ProjectileStats.speed[missile] = Math.max(1, speed)
+  ProjectileStats.damage[missile] = Math.max(1, Math.round(damage))
+  ProjectileStats.maxDistance[missile] = Math.max(1, maxDistance)
+  ProjectileStats.originHeight[missile] = (player.z ?? 0) + PLAYER_HEIGHT
+  ProjectileStats.nearMissPlayed[missile] = 0
+  ProjectileStats.owner[missile] = PROJECTILE_OWNER_PLAYER
+  MissileStats.targetId[missile] = targetTankId
+  MissileStats.trackingRating[missile] = Math.max(0, Math.min(1, trackingRating))
+  MissileStats.guidanceTimer[missile] = 0
+  MissileStats.explosionRadius[missile] = Math.max(0.2, explosionRadius)
+  MissileStats.explosionDamage[missile] = Math.max(1, explosionDamage)
+  world.missileExplosionSounds.set(missile, explosionSounds)
+  world.missileTrails.set(missile, [
+    { x: player.x, y: (player.z ?? 0) + PLAYER_HEIGHT, z: player.y }
+  ])
+} // end function spawnPlayerMissile
 
 function computeFloorCeilHitDistance(originHeight: number, pitch: number): number {
   const absPitch = Math.abs(pitch)
@@ -609,14 +682,68 @@ export function stepCombatEcsWorld(
     } // end if cannon windup or cooldown path
   } // end for each tank
 
-  // --- Update all projectiles (player bullets + tank projectiles) ---
+  const triggerMissileExplosion = (entity: number, worldX: number, worldY: number, worldZ: number): void => {
+    const explosionRadius = getNumber(MissileStats.explosionRadius, entity) ?? 1.6
+    const explosionDamage = getNumber(MissileStats.explosionDamage, entity) ?? 20
+    const sounds = world.missileExplosionSounds.get(entity) ?? []
+
+    for (const tank of tankEntities) {
+      const tankAlive = Meta.alive[tank] ?? 0
+      if (tankAlive !== 1) {
+        continue
+      } // end if tank already dead
+
+      const tankX = getNumber(Position.x, tank)
+      const tankY = getNumber(Position.y, tank)
+      const tankRadius = getNumber(Meta.radius, tank)
+      if (tankX === null || tankY === null || tankRadius === null) {
+        continue
+      } // end if tank is missing data
+
+      const tankZ = Math.max(0, Flight.height[tank] ?? 0) + PLAYER_HEIGHT
+      const horizontalDistance = Math.hypot(tankX - worldX, tankY - worldY)
+      const edgeDistance = Math.max(0, horizontalDistance - tankRadius)
+      const verticalDistance = Math.abs(tankZ - worldZ)
+      const distance = Math.hypot(edgeDistance, verticalDistance)
+      if (distance > explosionRadius) {
+        continue
+      } // end if tank out of explosion radius
+
+      const falloff = Math.max(0, 1 - (distance / Math.max(0.001, explosionRadius)))
+      const appliedDamage = Math.max(1, Math.round(explosionDamage * falloff))
+      Health.hp[tank] = (Health.hp[tank] ?? 0) - appliedDamage
+      audio.playTankHitConfirm(tankX, tankY, player.x, player.y, player.angle)
+      if ((Health.hp[tank] ?? 0) <= 0) {
+        Meta.alive[tank] = 0
+        TankExplosion.maxDuration[tank] = 0.7
+        TankExplosion.timeRemaining[tank] = 0.7
+        audio.playTankDeathConfirm(tankX, tankY, player.x, player.y, player.angle)
+      } // end if tank killed by explosion
+    } // end for each tank in explosion radius
+
+    const playerZ = (player.z ?? 0) + PLAYER_HEIGHT
+    const playerHorizontalDistance = Math.hypot(player.x - worldX, player.y - worldY)
+    const playerEdgeDistance = Math.max(0, playerHorizontalDistance - PLAYER_RADIUS)
+    const playerVerticalDistance = Math.abs(playerZ - worldZ)
+    const playerDistance = Math.hypot(playerEdgeDistance, playerVerticalDistance)
+    if (playerDistance <= explosionRadius) {
+      audio.playPlayerMechHit()
+    } // end if player was inside explosion radius
+
+    audio.playImpact(worldX, worldY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
+    audio.playExplosion(worldX, worldY, player.x, player.y, player.angle, sounds)
+    impactFrameCount++
+    Meta.alive[entity] = 0
+  } // end function triggerMissileExplosion
+
+  // --- Update all projectiles (player bullets + tank projectiles + missiles) ---
   for (const entity of allEntities) {
     const kind = Meta.kind[entity] ?? 0
-    if ((kind !== KIND_BULLET && kind !== KIND_TANK_PROJECTILE) || (Meta.alive[entity] ?? 0) !== 1) {
+    if ((kind !== KIND_BULLET && kind !== KIND_TANK_PROJECTILE && kind !== KIND_MISSILE) || (Meta.alive[entity] ?? 0) !== 1) {
       continue
     } // end if not projectile or dead
 
-    const angle = getNumber(Facing.angle, entity)
+    let angle = getNumber(Facing.angle, entity)
     const pitch = getNumber(Facing.pitch, entity)
     const currentX = getNumber(Position.x, entity)
     const currentY = getNumber(Position.y, entity)
@@ -634,9 +761,37 @@ export function stepCombatEcsWorld(
       continue
     } // end if missing projectile data
 
-    const speed = getNumber(ProjectileStats.speed, entity) ?? (kind === KIND_BULLET ? BULLET_SPEED : getEnemyDefinition('tank').projectileSpeed)
-    const maxDist = getNumber(ProjectileStats.maxDistance, entity) ?? (kind === KIND_BULLET ? BULLET_MAX_DIST : BULLET_MAX_DIST * 1.2)
+    const speed = getNumber(ProjectileStats.speed, entity) ?? (kind === KIND_TANK_PROJECTILE ? getEnemyDefinition('tank').projectileSpeed : BULLET_SPEED)
+    const maxDist = getNumber(ProjectileStats.maxDistance, entity) ?? BULLET_MAX_DIST
     const originHeight = getNumber(ProjectileStats.originHeight, entity) ?? PLAYER_HEIGHT
+
+    if (kind === KIND_MISSILE) {
+      const trackingRating = Math.max(0, Math.min(1, getNumber(MissileStats.trackingRating, entity) ?? 0.4))
+      const targetId = MissileStats.targetId[entity] ?? 0
+      const guidanceInterval = 0.22 - (0.17 * trackingRating)
+      const currentTimer = Math.max(0, getNumber(MissileStats.guidanceTimer, entity) ?? 0)
+      const nextTimer = currentTimer - deltaSeconds
+      if (nextTimer <= 0) {
+        const targetAlive = (Meta.alive[targetId] ?? 0) === 1
+        const targetX = getNumber(Position.x, targetId)
+        const targetY = getNumber(Position.y, targetId)
+        if (targetAlive && targetX !== null && targetY !== null) {
+          const desiredAngle = Math.atan2(targetY - currentY, targetX - currentX)
+          let deltaAngle = desiredAngle - angle
+          while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2
+          while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2
+          const maxTurnRate = 0.6 + trackingRating * 4.2
+          const maxTurn = maxTurnRate * deltaSeconds
+          const appliedTurn = Math.max(-maxTurn, Math.min(maxTurn, deltaAngle))
+          angle += appliedTurn
+          Facing.angle[entity] = angle
+        } // end if valid target for guidance
+        MissileStats.guidanceTimer[entity] = guidanceInterval
+      } else {
+        MissileStats.guidanceTimer[entity] = nextTimer
+      } // end if guidance should update
+    } // end if missile guidance path
+
     const step = speed * deltaSeconds
     const cosA = Math.cos(angle)
     const sinA = Math.sin(angle)
@@ -646,25 +801,39 @@ export function stepCombatEcsWorld(
 
     const floorCeilDist = computeFloorCeilHitDistance(originHeight, pitch)
     if (nextDist >= floorCeilDist) {
-      const hitFraction = (floorCeilDist - currentDist) / step
+      const hitFraction = (floorCeilDist - currentDist) / Math.max(0.0001, step)
       const hitX = currentX + cosA * step * hitFraction
       const hitY = currentY + sinA * step * hitFraction
-      Meta.alive[entity] = 0
-      audio.playImpact(hitX, hitY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
-      impactFrameCount++
+      const hitHeight = getProjectileHeight(originHeight, floorCeilDist, pitch)
+      if (kind === KIND_MISSILE) {
+        triggerMissileExplosion(entity, hitX, hitY, Math.max(0, hitHeight))
+      } else {
+        Meta.alive[entity] = 0
+        audio.playImpact(hitX, hitY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
+        impactFrameCount++
+      } // end if missile or non-missile floor impact
       continue
     } // end if floor or ceiling impact
 
     if (nextDist >= maxDist) {
-      Meta.alive[entity] = 0
+      const endHeight = getProjectileHeight(originHeight, nextDist, pitch)
+      if (kind === KIND_MISSILE) {
+        triggerMissileExplosion(entity, nextX, nextY, Math.max(0, endHeight))
+      } else {
+        Meta.alive[entity] = 0
+      } // end if missile expired by lifetime
       continue
     } // end if max distance reached
 
     const nextHeight = getProjectileHeight(originHeight, nextDist, pitch)
     if (isWorldBlockedAtHeight(collisionWorld, nextX, nextY, nextHeight, Math.max(0.02, bulletRadius * 0.55))) {
-      Meta.alive[entity] = 0
-      audio.playImpact(nextX, nextY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
-      impactFrameCount++
+      if (kind === KIND_MISSILE) {
+        triggerMissileExplosion(entity, nextX, nextY, Math.max(0, nextHeight))
+      } else {
+        Meta.alive[entity] = 0
+        audio.playImpact(nextX, nextY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
+        impactFrameCount++
+      } // end if missile or non-missile world collision
       continue
     } // end if wall hit
 
@@ -687,7 +856,6 @@ export function stepCombatEcsWorld(
         const dy = nextY - targetY
         const tankCenterHeight = Math.max(0, Flight.height[tank] ?? 0) + PLAYER_HEIGHT
         if (Math.hypot(dx, dy) < targetRadius + bulletRadius && Math.abs(nextHeight - tankCenterHeight) <= TANK_HIT_HALF_HEIGHT) {
-          // Tank hit by player bullet
           Meta.alive[entity] = 0
           const projectileDamage = getNumber(ProjectileStats.damage, entity) ?? 10
           Health.hp[tank] = (Health.hp[tank] ?? 0) - Math.max(1, Math.round(projectileDamage))
@@ -695,9 +863,7 @@ export function stepCombatEcsWorld(
           impactFrameCount++
           audio.playTankHitConfirm(targetX, targetY, player.x, player.y, player.angle)
 
-          // Check if tank died
           if ((Health.hp[tank] ?? 0) <= 0) {
-            // Kill tank
             Meta.alive[tank] = 0
             TankExplosion.maxDuration[tank] = 0.7
             TankExplosion.timeRemaining[tank] = 0.7
@@ -709,6 +875,41 @@ export function stepCombatEcsWorld(
       } // end for each tank
     } // end if player bullet
 
+    if (kind === KIND_MISSILE) {
+      let exploded = false
+      for (const tank of tankEntities) {
+        const tankAlive = Meta.alive[tank] ?? 0
+        if (tankAlive !== 1) {
+          continue
+        } // end if tank dead
+        const targetX = getNumber(Position.x, tank)
+        const targetY = getNumber(Position.y, tank)
+        const targetRadius = getNumber(Meta.radius, tank)
+        if (targetX === null || targetY === null || targetRadius === null) {
+          continue
+        } // end if missing tank collision data
+        const tankCenterHeight = Math.max(0, Flight.height[tank] ?? 0) + PLAYER_HEIGHT
+        if (Math.hypot(nextX - targetX, nextY - targetY) < targetRadius + bulletRadius && Math.abs(nextHeight - tankCenterHeight) <= TANK_HIT_HALF_HEIGHT) {
+          triggerMissileExplosion(entity, nextX, nextY, Math.max(0, nextHeight))
+          exploded = true
+          break
+        } // end if missile impacted tank
+      } // end for each tank for missile impact
+
+      if (!exploded && (ProjectileStats.owner[entity] ?? 0) !== PROJECTILE_OWNER_PLAYER) {
+        const playerDistance = Math.hypot(nextX - player.x, nextY - player.y)
+        const playerCenterHeight = (player.z ?? 0) + PLAYER_HEIGHT
+        if (playerDistance < PLAYER_RADIUS + bulletRadius && Math.abs(nextHeight - playerCenterHeight) <= PLAYER_HIT_HALF_HEIGHT) {
+          triggerMissileExplosion(entity, nextX, nextY, Math.max(0, nextHeight))
+          exploded = true
+        } // end if missile impacted player
+      } // end if no missile impact yet
+
+      if (exploded) {
+        continue
+      } // end if missile consumed by explosion
+    } // end if missile collision checks
+
     // --- Tank projectiles hitting player ---
     if (kind === KIND_TANK_PROJECTILE) {
       const dx = nextX - player.x
@@ -717,7 +918,6 @@ export function stepCombatEcsWorld(
       const playerDistance = Math.hypot(dx, dy)
       const playerCenterHeight = (player.z ?? 0) + PLAYER_HEIGHT
       if (playerDistance < playerRadius + bulletRadius && Math.abs(nextHeight - playerCenterHeight) <= PLAYER_HIT_HALF_HEIGHT) {
-        // Player hit
         Meta.alive[entity] = 0
         ProjectileStats.nearMissPlayed[entity] = 1
         audio.playImpact(nextX, nextY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
@@ -743,6 +943,15 @@ export function stepCombatEcsWorld(
     Position.x[entity] = nextX
     Position.y[entity] = nextY
     Meta.distance[entity] = nextDist
+
+    if (kind === KIND_MISSILE) {
+      const trail = world.missileTrails.get(entity) ?? []
+      trail.push({ x: nextX, y: Math.max(0.04, nextHeight), z: nextY })
+      while (trail.length > 36) {
+        trail.shift()
+      } // end while trim trail length
+      world.missileTrails.set(entity, trail)
+    } // end if storing missile trail
   } // end for each projectile
 
   audio.updateIncomingProjectileAudio(incomingProjectileAudioStates, player.x, player.y, player.angle)
@@ -758,6 +967,8 @@ export function stepCombatEcsWorld(
         } // end if waiting for explosion animation to finish
       } // end if tank entity
       world.customConfigs.delete(entity)
+      world.missileExplosionSounds.delete(entity)
+      world.missileTrails.delete(entity)
       removeEntity(world, entity)
     } // end if dead
   } // end for cleanup
@@ -781,12 +992,13 @@ export function getCombatRenderState(world: CombatEcsWorld): {
 
     const kind = Meta.kind[entity] ?? 0
 
-    if (kind === KIND_BULLET) {
+    if (kind === KIND_BULLET || kind === KIND_MISSILE) {
       const x = getNumber(Position.x, entity)
       const y = getNumber(Position.y, entity)
       const angle = getNumber(Facing.angle, entity)
       const pitch = getNumber(Facing.pitch, entity)
       const distance = getNumber(Meta.distance, entity)
+      const radius = getNumber(Meta.radius, entity)
       if (x === null || y === null || angle === null || pitch === null || distance === null) {
         continue
       } // end if missing bullet render data
@@ -798,6 +1010,9 @@ export function getCombatRenderState(world: CombatEcsWorld): {
         pitch,
         zOrigin: getNumber(ProjectileStats.originHeight, entity) ?? PLAYER_HEIGHT,
         distance,
+        radius: Math.max(0.03, radius ?? BULLET_HIT_RADIUS),
+        kind: kind === KIND_MISSILE ? 'missile' : 'bullet',
+        trail: kind === KIND_MISSILE ? [...(world.missileTrails.get(entity) ?? [])] : [],
         alive: true
       })
       continue

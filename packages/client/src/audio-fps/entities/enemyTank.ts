@@ -19,7 +19,7 @@ export class EnemyTank extends EnemyBase {
       fireSound: 'assets/sounds/weapons/tankCannon.ogg',
       loadSound: 'assets/sounds/weapons/reloadCannon.ogg',
       hitSound: 'assets/sounds/tankHit.ogg',
-      deathSound: 'assets/sounds/explosion_2a.ogg',
+      deathSound: 'assets/sounds/explosions/explosion_2a.ogg',
       explosiveProjectile: true
     }, existingState)
   }
@@ -44,7 +44,7 @@ export class EnemyMech extends EnemyBase {
       fireSound: 'assets/sounds/weapons/pistol_fire.ogg',
       loadSound: 'assets/sounds/weapons/reload.ogg',
       hitSound: 'assets/sounds/mechHit.ogg',
-      deathSound: 'assets/sounds/explosion_1B.ogg'
+      deathSound: 'assets/sounds/explosions/explosion_1B.ogg'
     }, existingState)
   }
 }
@@ -68,7 +68,7 @@ export class EnemyHelicopter extends EnemyBase {
       fireSound: 'assets/sounds/weapons/pistol_fire.ogg',
       loadSound: 'assets/sounds/weapons/reload.ogg',
       hitSound: 'assets/sounds/tankHit.ogg',
-      deathSound: 'assets/sounds/explosion_2a.ogg'
+      deathSound: 'assets/sounds/explosions/explosion_2a.ogg'
     }, existingState)
   }
 }
@@ -92,7 +92,7 @@ export class EnemyDrone extends EnemyBase {
       fireSound: 'assets/sounds/weapons/pistol_fire.ogg',
       loadSound: 'assets/sounds/weapons/reload.ogg',
       hitSound: 'assets/sounds/mechHit.ogg',
-      deathSound: 'assets/sounds/explosion_1B.ogg'
+      deathSound: 'assets/sounds/explosions/explosion_1B.ogg'
     }, existingState)
   }
 }

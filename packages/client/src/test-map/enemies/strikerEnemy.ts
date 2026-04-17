@@ -22,9 +22,9 @@ export class StrikerEnemyDefinition extends EnemyDefinitionBase {
         lineOfSightRequiredToShoot: true
       },
       sounds: {
-        attackSound: 'assets/sounds/explosion_1A.ogg',
-        hurtSound: 'assets/sounds/explosion_1B.ogg',
-        deathSound: 'assets/sounds/explosion_2a.ogg',
+        attackSound: 'assets/sounds/explosions/explosion_1A.ogg',
+        hurtSound: 'assets/sounds/explosions/explosion_1B.ogg',
+        deathSound: 'assets/sounds/explosions/explosion_2a.ogg',
         positionalLoopSound: 'assets/sounds/tankMoving.ogg'
       }
     })

@@ -30,6 +30,8 @@ export interface InputState {
   snapEastPending: boolean
   snapSouthPending: boolean
   snapWestPending: boolean
+  cycleWeaponPending: boolean
+  selectedWeaponSlot: number | null
   spawnTankPending: boolean
   spawnStrikerPending: boolean
   spawnBrutePending: boolean
@@ -88,6 +90,8 @@ export interface TargetLockState {
 } // end interface TargetLockState
 
 export interface WeaponStats {
+  /** Weapon archetype affects firing behavior and lock requirements. */
+  weaponType: 'ballistic' | 'missile'
   /** 0.0 (chaotic) – 1.0 (perfect): offsets the entire projectile spread cone from the aim direction. */
   accuracy: number
   /** World-unit radius within which target lock engages. */
@@ -106,11 +110,29 @@ export interface WeaponStats {
   isFullAuto: boolean
   /** Minimum seconds between player shots (0 = unlimited). */
   fireRateCooldownSeconds: number
+  /** Projectile collision radius in world units. */
+  projectileSize: number
   /** Horizontal lock-on window as percent of full FOV (0–100, default 100). */
   lockOnWindowWidthPercent: number
   /** Vertical lock-on window as percent of full pitch range (0–100, default 100). */
   lockOnWindowHeightPercent: number
+  /** Time in milliseconds a target must stay locked before missile fire is allowed. */
+  lockOnTimeMs: number
+  /** Missile guidance strength (0–1). */
+  trackingRating: number
+  /** Missile explosion radius in world units. */
+  explosionRadius: number
+  /** Base missile explosion damage before distance falloff. */
+  explosionDamage: number
+  /** Explosion sound candidates. One is picked per explosion. */
+  explosionSounds: string[]
 } // end interface WeaponStats
+
+export interface TrailPoint {
+  x: number
+  y: number
+  z: number
+} // end interface TrailPoint
 
 export interface Bullet {
   x: number
@@ -119,6 +141,9 @@ export interface Bullet {
   pitch: number
   zOrigin: number
   distance: number
+  radius: number
+  kind: 'bullet' | 'missile'
+  trail: TrailPoint[]
   alive: boolean
 } // end interface Bullet
 
@@ -195,7 +220,7 @@ export interface AudioController {
   stopFootstep: () => void
   playBump: () => void
   playPitchCenterConfirm: () => void
-  fireGunshot: () => void
+  fireGunshot: (soundPath?: string) => void
   startFlightLoop: () => void
   stopFlightLoop: () => void
   playHardLanding: () => void
@@ -237,4 +262,15 @@ export interface AudioController {
   getVolumeChannel: (name: AudioVolumeChannel) => number
   playLockOnChirp: () => void
   playLockLostChirp: () => void
+  playMissileLockTone: () => void
+  playMissileLockConfirmTone: () => void
+  playNegativeActionTone: () => void
+  playExplosion: (
+    worldX: number,
+    worldY: number,
+    playerX: number,
+    playerY: number,
+    playerAngle: number,
+    soundCandidates: string[]
+  ) => void
 } // end interface AudioController

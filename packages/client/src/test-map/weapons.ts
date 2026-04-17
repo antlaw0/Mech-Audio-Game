@@ -1,0 +1,122 @@
+import {
+  BULLET_MAX_DIST,
+  BULLET_SPEED,
+  MISSILE_DEFAULT_EXPLOSION_DAMAGE,
+  MISSILE_DEFAULT_EXPLOSION_RADIUS,
+  MISSILE_DEFAULT_LOCK_ON_TIME_MS,
+  MISSILE_DEFAULT_SPEED,
+  MISSILE_DEFAULT_TRACKING_RATING,
+  WEAPON_DEFAULT_ACCURACY,
+  WEAPON_LOCK_ON_RANGE
+} from './constants.js'
+import type { WeaponStats } from './types.js'
+
+export interface PlayerWeaponDefinition extends WeaponStats {
+  id: 'pistol' | 'shotgun' | 'assault-rifle' | 'missile-launcher'
+  name: string
+  selectionKey: '1' | '2' | '3' | '4'
+  fireSoundPath: string
+} // end interface PlayerWeaponDefinition
+
+export const PLAYER_WEAPON_DEFINITIONS: readonly PlayerWeaponDefinition[] = [
+  {
+    id: 'pistol',
+    name: 'Pistol',
+    selectionKey: '1',
+    fireSoundPath: 'assets/sounds/weapons/pistol_fire.ogg',
+    weaponType: 'ballistic',
+    accuracy: Math.max(WEAPON_DEFAULT_ACCURACY, 0.94),
+    lockOnRange: WEAPON_LOCK_ON_RANGE,
+    damagePerShot: 18,
+    projectileCount: 1,
+    spreadDegrees: 1.4,
+    bulletSpeed: BULLET_SPEED,
+    maxRange: BULLET_MAX_DIST,
+    isFullAuto: false,
+    fireRateCooldownSeconds: 0.33,
+    projectileSize: 0.22,
+    lockOnWindowWidthPercent: 100,
+    lockOnWindowHeightPercent: 100,
+    lockOnTimeMs: 0,
+    trackingRating: 0,
+    explosionRadius: 0,
+    explosionDamage: 0,
+    explosionSounds: []
+  },
+  {
+    id: 'shotgun',
+    name: 'Shotgun',
+    selectionKey: '2',
+    fireSoundPath: 'assets/sounds/weapons/shotgun_fire.ogg',
+    weaponType: 'ballistic',
+    accuracy: 0.82,
+    lockOnRange: WEAPON_LOCK_ON_RANGE,
+    damagePerShot: 11,
+    projectileCount: 8,
+    spreadDegrees: 9.5,
+    bulletSpeed: BULLET_SPEED * 0.78,
+    maxRange: BULLET_MAX_DIST * 0.58,
+    isFullAuto: false,
+    fireRateCooldownSeconds: 0.9,
+    projectileSize: 0.2,
+    lockOnWindowWidthPercent: 100,
+    lockOnWindowHeightPercent: 100,
+    lockOnTimeMs: 0,
+    trackingRating: 0,
+    explosionRadius: 0,
+    explosionDamage: 0,
+    explosionSounds: []
+  },
+  {
+    id: 'assault-rifle',
+    name: 'Assault Rifle',
+    selectionKey: '3',
+    fireSoundPath: 'assets/sounds/weapons/assault_fire.ogg',
+    weaponType: 'ballistic',
+    accuracy: 0.88,
+    lockOnRange: WEAPON_LOCK_ON_RANGE,
+    damagePerShot: 9,
+    projectileCount: 1,
+    spreadDegrees: 2.2,
+    bulletSpeed: BULLET_SPEED * 1.08,
+    maxRange: BULLET_MAX_DIST * 1.08,
+    isFullAuto: true,
+    fireRateCooldownSeconds: 0.09,
+    projectileSize: 0.2,
+    lockOnWindowWidthPercent: 100,
+    lockOnWindowHeightPercent: 100,
+    lockOnTimeMs: 0,
+    trackingRating: 0,
+    explosionRadius: 0,
+    explosionDamage: 0,
+    explosionSounds: []
+  },
+  {
+    id: 'missile-launcher',
+    name: 'Missile Launcher',
+    selectionKey: '4',
+    fireSoundPath: 'assets/sounds/weapons/missileFire.ogg',
+    weaponType: 'missile',
+    accuracy: 1,
+    lockOnRange: WEAPON_LOCK_ON_RANGE,
+    damagePerShot: 20,
+    projectileCount: 1,
+    spreadDegrees: 0,
+    bulletSpeed: MISSILE_DEFAULT_SPEED,
+    maxRange: BULLET_MAX_DIST,
+    isFullAuto: false,
+    fireRateCooldownSeconds: 1.1,
+    projectileSize: 0.38,
+    lockOnWindowWidthPercent: 100,
+    lockOnWindowHeightPercent: 100,
+    lockOnTimeMs: MISSILE_DEFAULT_LOCK_ON_TIME_MS,
+    trackingRating: MISSILE_DEFAULT_TRACKING_RATING,
+    explosionRadius: MISSILE_DEFAULT_EXPLOSION_RADIUS,
+    explosionDamage: MISSILE_DEFAULT_EXPLOSION_DAMAGE,
+    explosionSounds: [
+      'assets/sounds/explosions/explosion_1A.ogg',
+      'assets/sounds/explosions/explosion_2a.ogg',
+      'assets/sounds/explosions/explosion3.ogg'
+    ]
+  }
+]

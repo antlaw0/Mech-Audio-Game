@@ -280,7 +280,7 @@ export class GameLoop {
   private handleProjectileExpiry(bullet: BulletState, collided: boolean): void {
     if (bullet.expiryMode === 'explode') {
       this.audio.uiAudio.playUI('impact-heavy')
-      this.audio.playWorldOneShot('assets/sounds/explosion_2a.ogg')
+      this.audio.playWorldOneShot('assets/sounds/explosions/explosion_2a.ogg')
       return
     }
 

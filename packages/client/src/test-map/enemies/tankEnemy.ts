@@ -24,7 +24,7 @@ export class TankEnemyDefinition extends EnemyDefinitionBase {
       sounds: {
         attackSound: 'assets/sounds/weapons/tankCannon.ogg',
         hurtSound: 'assets/sounds/tankHit.ogg',
-        deathSound: 'assets/sounds/explosion_2a.ogg',
+        deathSound: 'assets/sounds/explosions/explosion_2a.ogg',
         positionalLoopSound: 'assets/sounds/tankMoving.ogg'
       }
     })

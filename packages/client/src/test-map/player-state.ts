@@ -31,6 +31,8 @@ export function createInputState(): InputState {
     snapEastPending: false,
     snapSouthPending: false,
     snapWestPending: false,
+    cycleWeaponPending: false,
+    selectedWeaponSlot: null,
     spawnTankPending: false,
     spawnStrikerPending: false,
     spawnBrutePending: false,

@@ -346,9 +346,9 @@ function createTankProfile(enemyId: string): EnemyAudioProfile {
       movementLoop: new Tone.Player('assets/sounds/tankMoving.ogg'),
       passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
       threatCue: new Tone.Player('assets/sounds/weapons/reloadCannon.ogg'),
-      attackSound: new Tone.Player('assets/sounds/explosion_1A.ogg'),
-      hurtSound: new Tone.Player('assets/sounds/explosion_1B.ogg'),
-      deathSound: new Tone.Player('assets/sounds/explosion_2a.ogg')
+      attackSound: new Tone.Player('assets/sounds/explosions/explosion_1A.ogg'),
+      hurtSound: new Tone.Player('assets/sounds/explosions/explosion_1B.ogg'),
+      deathSound: new Tone.Player('assets/sounds/explosions/explosion_2a.ogg')
     },
     effects: {
       filter,
@@ -389,7 +389,7 @@ function createHelicopterProfile(enemyId: string): EnemyAudioProfile {
       threatCue: new Tone.Player('assets/sounds/weapons/reload.ogg'),
       attackSound: new Tone.Player('assets/sounds/weapons/pistol_fire.ogg'),
       hurtSound: new Tone.Player('assets/sounds/tankHit.ogg'),
-      deathSound: new Tone.Player('assets/sounds/explosion_2a.ogg')
+      deathSound: new Tone.Player('assets/sounds/explosions/explosion_2a.ogg')
     },
     effects: {
       filter,
@@ -636,7 +636,9 @@ export function createAudioController(): AudioController {
     octaves: 1.2
   }).connect(impactPanner)
 
-  const playerFireSound = new Tone.Player('assets/sounds/weapons/pistol_fire.ogg').toDestination()
+  const defaultPlayerFireSoundPath = 'assets/sounds/weapons/pistol_fire.ogg'
+  const playerFireSound = new Tone.Player(defaultPlayerFireSoundPath).toDestination()
+  const playerFireSoundCache = new Map<string, Tone.Player>([[defaultPlayerFireSoundPath, playerFireSound]])
   const flightLoopGain = new Tone.Gain(0.78).toDestination()
   const flightLoopSound = new Tone.Player('assets/sounds/jetLoop.ogg').connect(flightLoopGain)
   flightLoopSound.loop = true
@@ -759,6 +761,21 @@ export function createAudioController(): AudioController {
     envelope: { attack: 0.001, decay: 0.09, sustain: 0, release: 0.04 }
   }).toDestination()
 
+  const missileLockToneSynth = new Tone.Synth({
+    oscillator: { type: 'square' },
+    envelope: { attack: 0.001, decay: 0.045, sustain: 0, release: 0.02 }
+  }).toDestination()
+
+  const missileLockConfirmSynth = new Tone.Synth({
+    oscillator: { type: 'sine' },
+    envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.05 }
+  }).toDestination()
+
+  const negativeActionSynth = new Tone.Synth({
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.04 }
+  }).toDestination()
+
   const sonarSweepSynth = new Tone.FMSynth({
     harmonicity: 0.5,
     modulationIndex: 10,
@@ -833,11 +850,12 @@ export function createAudioController(): AudioController {
 
   const tankHitConfirmPanner = new Tone.Panner(0).toDestination()
   const tankHitConfirmGain = new Tone.Gain(0.95).connect(tankHitConfirmPanner)
-  const tankHitConfirmSound = new Tone.Player('assets/sounds/explosion_1B.ogg').connect(tankHitConfirmGain)
+  const tankHitConfirmSound = new Tone.Player('assets/sounds/explosions/explosion_1B.ogg').connect(tankHitConfirmGain)
 
   const tankDeathConfirmPanner = new Tone.Panner(0).toDestination()
   const tankDeathConfirmGain = new Tone.Gain(1).connect(tankDeathConfirmPanner)
-  const tankDeathConfirmSound = new Tone.Player('assets/sounds/explosion_2a.ogg').connect(tankDeathConfirmGain)
+  const tankDeathConfirmSound = new Tone.Player('assets/sounds/explosions/explosion_2a.ogg').connect(tankDeathConfirmGain)
+  const explosionPlayerCache = new Map<string, Tone.Player>()
 
   const isAudioContextRunning = (): boolean => Tone.getContext().state === 'running'
 
@@ -962,37 +980,137 @@ export function createAudioController(): AudioController {
     if (!audioStarted || !isAudioContextRunning()) {
       return
     } // end if audio not started
-    pauseOpenChirpSynth.triggerAttackRelease('A5', '64n')
+    const start = strictlyIncreasingStartTime(Tone.now(), pauseOpenChirpLastStartSeconds)
+    pauseOpenChirpLastStartSeconds = start
+    pauseOpenChirpSynth.triggerAttackRelease('A5', '64n', start)
   } // end function playPauseOpenChirp
 
   const playPauseCloseChirp = (): void => {
     if (!audioStarted || !isAudioContextRunning()) {
       return
     } // end if audio not started
-    pauseCloseChirpSynth.triggerAttackRelease('E6', '64n')
+    const start = strictlyIncreasingStartTime(Tone.now(), pauseCloseChirpLastStartSeconds)
+    pauseCloseChirpLastStartSeconds = start
+    pauseCloseChirpSynth.triggerAttackRelease('E6', '64n', start)
   } // end function playPauseCloseChirp
+
+  let pauseOpenChirpLastStartSeconds = -Infinity
+  let pauseCloseChirpLastStartSeconds = -Infinity
+  let lockOnChirpLastStartSeconds = -Infinity
+  let lockLostChirpLastStartSeconds = -Infinity
+  let missileLockToneLastStartSeconds = -Infinity
+  let missileLockConfirmLastStartSeconds = -Infinity
+  let negativeActionLastStartSeconds = -Infinity
+
+  const strictlyIncreasingStartTime = (requestedSeconds: number, previousSeconds: number): number => {
+    return Math.max(requestedSeconds, previousSeconds + 0.001)
+  } // end function strictlyIncreasingStartTime
 
   const playLockOnChirp = (): void => {
     if (!audioStarted || !isAudioContextRunning()) {
       return
     } // end if audio not ready
-    const now = Tone.now()
+    const firstStart = strictlyIncreasingStartTime(Tone.now(), lockOnChirpLastStartSeconds)
+    const secondStart = strictlyIncreasingStartTime(firstStart + 0.06, firstStart)
+    const thirdStart = strictlyIncreasingStartTime(firstStart + 0.12, secondStart)
+    lockOnChirpLastStartSeconds = thirdStart
     lockOnChirpSynth.volume.value = Tone.gainToDb(0.5)
-    lockOnChirpSynth.triggerAttackRelease('C5', '32n', now)
-    lockOnChirpSynth.triggerAttackRelease('G5', '32n', now + 0.06)
-    lockOnChirpSynth.triggerAttackRelease('C6', '16n', now + 0.12)
+    lockOnChirpSynth.triggerAttackRelease('C5', '32n', firstStart)
+    lockOnChirpSynth.triggerAttackRelease('G5', '32n', secondStart)
+    lockOnChirpSynth.triggerAttackRelease('C6', '16n', thirdStart)
   } // end function playLockOnChirp
 
   const playLockLostChirp = (): void => {
     if (!audioStarted || !isAudioContextRunning()) {
       return
     } // end if audio not ready
-    const now = Tone.now()
+    const firstStart = strictlyIncreasingStartTime(Tone.now(), lockLostChirpLastStartSeconds)
+    const secondStart = strictlyIncreasingStartTime(firstStart + 0.06, firstStart)
+    const thirdStart = strictlyIncreasingStartTime(firstStart + 0.13, secondStart)
+    lockLostChirpLastStartSeconds = thirdStart
     lockLostChirpSynth.volume.value = Tone.gainToDb(0.45)
-    lockLostChirpSynth.triggerAttackRelease('C6', '64n', now)
-    lockLostChirpSynth.triggerAttackRelease('G4', '64n', now + 0.06)
-    lockLostChirpSynth.triggerAttackRelease('C4', '64n', now + 0.13)
+    lockLostChirpSynth.triggerAttackRelease('C6', '64n', firstStart)
+    lockLostChirpSynth.triggerAttackRelease('G4', '64n', secondStart)
+    lockLostChirpSynth.triggerAttackRelease('C4', '64n', thirdStart)
   } // end function playLockLostChirp
+
+  const playMissileLockTone = (): void => {
+    if (!audioStarted || !isAudioContextRunning()) {
+      return
+    } // end if audio not ready
+    const start = strictlyIncreasingStartTime(Tone.now(), missileLockToneLastStartSeconds)
+    missileLockToneLastStartSeconds = start
+    missileLockToneSynth.volume.value = Tone.gainToDb(0.38)
+    missileLockToneSynth.triggerAttackRelease('A5', '64n', start)
+  } // end function playMissileLockTone
+
+  const playMissileLockConfirmTone = (): void => {
+    if (!audioStarted || !isAudioContextRunning()) {
+      return
+    } // end if audio not ready
+    const firstStart = strictlyIncreasingStartTime(Tone.now(), missileLockConfirmLastStartSeconds)
+    const secondStart = strictlyIncreasingStartTime(firstStart + 0.07, firstStart)
+    const thirdStart = strictlyIncreasingStartTime(firstStart + 0.14, secondStart)
+    missileLockConfirmLastStartSeconds = thirdStart
+    missileLockConfirmSynth.volume.value = Tone.gainToDb(0.58)
+    missileLockConfirmSynth.triggerAttackRelease('E5', '32n', firstStart)
+    missileLockConfirmSynth.triggerAttackRelease('A5', '32n', secondStart)
+    missileLockConfirmSynth.triggerAttackRelease('E6', '16n', thirdStart)
+  } // end function playMissileLockConfirmTone
+
+  const playNegativeActionTone = (): void => {
+    if (!audioStarted || !isAudioContextRunning()) {
+      return
+    } // end if audio not ready
+    const firstStart = strictlyIncreasingStartTime(Tone.now(), negativeActionLastStartSeconds)
+    const secondStart = strictlyIncreasingStartTime(firstStart + 0.08, firstStart)
+    negativeActionLastStartSeconds = secondStart
+    negativeActionSynth.volume.value = Tone.gainToDb(0.45)
+    negativeActionSynth.triggerAttackRelease('G4', '64n', firstStart)
+    negativeActionSynth.triggerAttackRelease('E4', '32n', secondStart)
+  } // end function playNegativeActionTone
+
+  const playExplosion = (
+    worldX: number,
+    worldY: number,
+    playerX: number,
+    playerY: number,
+    playerAngle: number,
+    soundCandidates: string[]
+  ): void => {
+    if (!audioStarted || !isAudioContextRunning()) {
+      return
+    } // end if audio not ready
+
+    const defaultSounds = [
+      'assets/sounds/explosions/explosion_1A.ogg',
+      'assets/sounds/explosions/explosion_2a.ogg',
+      'assets/sounds/explosions/explosion3.ogg'
+    ]
+    const choices = soundCandidates.length > 0 ? soundCandidates : defaultSounds
+    const path = choices[Math.floor(Math.random() * choices.length)] ?? defaultSounds[0]
+    if (!path) {
+      return
+    } // end if no sound path
+
+    const pan = computePanForWorldPosition(worldX, worldY, playerX, playerY, playerAngle)
+    tankDeathConfirmPanner.pan.rampTo(pan, 0.01)
+    tankDeathConfirmGain.gain.value = enemiesVolume
+
+    const existingPlayer = explosionPlayerCache.get(path)
+    if (existingPlayer) {
+      retriggerLoadedPlayer(existingPlayer)
+      return
+    } // end if cached explosion player exists
+
+    const player = new Tone.Player(path).connect(tankDeathConfirmGain)
+    explosionPlayerCache.set(path, player)
+    void player.load(path)
+      .then(() => {
+        retriggerLoadedPlayer(player)
+      })
+      .catch(() => undefined)
+  } // end function playExplosion
 
   const pauseAllAudio = async (): Promise<void> => {
     if (audioPaused) {
@@ -1475,11 +1593,29 @@ export function createAudioController(): AudioController {
     getOrCreateEnemyRuntime(enemyId, enemyType).playDeath()
   } // end function playEnemyDeath
 
-  const fireGunshot = (): void => {
+  const fireGunshot = (soundPath: string = defaultPlayerFireSoundPath): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
-    retriggerLoadedPlayer(playerFireSound)
+
+    const cachedPlayer = playerFireSoundCache.get(soundPath)
+    if (cachedPlayer) {
+      retriggerLoadedPlayer(cachedPlayer)
+      return
+    } // end if cached fire sound exists
+
+    const dynamicPlayer = new Tone.Player(soundPath).toDestination()
+    playerFireSoundCache.set(soundPath, dynamicPlayer)
+    void dynamicPlayer
+      .load(soundPath)
+      .then(() => {
+        retriggerLoadedPlayer(dynamicPlayer)
+      })
+      .catch((error) => {
+        console.warn('Failed to load player fire sound, falling back to default.', { soundPath, error })
+        playerFireSoundCache.delete(soundPath)
+        retriggerLoadedPlayer(playerFireSound)
+      })
   } // end function fireGunshot
 
   const playProjectileNearMiss = (
@@ -1852,6 +1988,10 @@ export function createAudioController(): AudioController {
     setVolumeChannel,
     getVolumeChannel,
     playLockOnChirp,
-    playLockLostChirp
+    playLockLostChirp,
+    playMissileLockTone,
+    playMissileLockConfirmTone,
+    playNegativeActionTone,
+    playExplosion
   } // end object audio controller
 } // end function createAudioController

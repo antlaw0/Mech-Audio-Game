@@ -112,6 +112,30 @@ function createBulletMesh(): THREE.Mesh {
   )
 } // end function createBulletMesh
 
+function createMissileTrailPuffs(): THREE.Group {
+  const group = new THREE.Group()
+  group.visible = false
+  group.frustumCulled = false
+
+  for (let puffIndex = 0; puffIndex < 32; puffIndex += 1) {
+    const puff = new THREE.Mesh(
+      new THREE.SphereGeometry(0.12, 10, 10),
+      new THREE.MeshBasicMaterial({
+        color: 0xc8d0d8,
+        transparent: true,
+        opacity: 0.42,
+        depthWrite: false,
+        depthTest: false
+      })
+    )
+    puff.visible = false
+    puff.renderOrder = 3
+    group.add(puff)
+  } // end for each trail puff
+
+  return group
+} // end function createMissileTrailPuffs
+
 function syncPool<T extends THREE.Object3D>(
   targetCount: number,
   pool: T[],
@@ -354,6 +378,10 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
   scene.add(bulletGroup)
   const bulletPool: THREE.Mesh[] = []
 
+  const missileTrailGroup = new THREE.Group()
+  scene.add(missileTrailGroup)
+  const missileTrailPool: THREE.Group[] = []
+
   const hudCanvas = document.createElement('canvas')
   hudCanvas.width = canvasWidth
   hudCanvas.height = canvasHeight
@@ -468,11 +496,26 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
 
       const aliveBullets = bullets.filter((bullet) => bullet.alive)
       syncPool(aliveBullets.length, bulletPool, bulletGroup, createBulletMesh)
+      syncPool(aliveBullets.length, missileTrailPool, missileTrailGroup, createMissileTrailPuffs)
       for (const [index, bullet] of aliveBullets.entries()) {
         const mesh = bulletPool[index]
+        const trailPuffs = missileTrailPool[index]
         if (!mesh) {
           continue
         } // end if pool mismatch
+
+        if (mesh.material instanceof THREE.MeshBasicMaterial) {
+          if (bullet.kind === 'missile') {
+            mesh.material.color.setHex(0xffc96a)
+          } else {
+            mesh.material.color.setHex(0xfff2b0)
+          } // end if missile or ballistic visual
+        } // end if basic material
+
+        const renderedRadius = bullet.kind === 'missile'
+          ? Math.max(0.08, bullet.radius)
+          : Math.max(0.03, bullet.radius * 0.55)
+        mesh.scale.setScalar(renderedRadius / 0.05)
 
         const horizontalDist = bullet.distance
         const bulletY = bullet.zOrigin - Math.sin(bullet.pitch) * horizontalDist
@@ -481,6 +524,38 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
           Math.max(0.04, bulletY),
           bullet.y
         )
+
+        if (trailPuffs) {
+          const trail = bullet.kind === 'missile' ? bullet.trail : []
+          if (trail.length >= 2) {
+            trailPuffs.visible = true
+            for (let pointIndex = 0; pointIndex < trailPuffs.children.length; pointIndex += 1) {
+              const puff = trailPuffs.children[pointIndex]
+              if (!(puff instanceof THREE.Mesh) || !(puff.material instanceof THREE.MeshBasicMaterial)) {
+                continue
+              } // end if puff child invalid
+
+              const sourceIndex = Math.max(0, trail.length - 1 - pointIndex)
+              const point = trail[sourceIndex]
+              if (!point) {
+                puff.visible = false
+                continue
+              } // end if no matching trail point
+
+              const age = pointIndex / Math.max(1, trailPuffs.children.length - 1)
+              const puffScale = (renderedRadius / 0.12) * (1.05 + age * 2.4)
+              puff.visible = true
+              puff.position.set(point.x, point.y + 0.01 + age * 0.04, point.z)
+              puff.scale.setScalar(puffScale)
+              puff.material.opacity = Math.max(0.12, 0.55 - age * 0.34)
+            } // end for each trail puff
+          } else {
+            trailPuffs.visible = false
+            for (const puff of trailPuffs.children) {
+              puff.visible = false
+            } // end for each puff
+          } // end if trail has enough points
+        } // end if trail puffs exist
       } // end for each bullet
 
       renderer.render(scene, camera)
