@@ -21,7 +21,7 @@ export class HelicopterEnemyDefinition extends EnemyDefinitionBase {
         lineOfSightRequiredToShoot: true
       },
       sounds: {
-        attackSound: 'assets/sounds/pistol_fire.ogg',
+        attackSound: 'assets/sounds/weapons/pistol_fire.ogg',
         hurtSound: 'assets/sounds/tankHit.ogg',
         deathSound: 'assets/sounds/explosion_2a.ogg',
         positionalLoopSound: 'assets/sounds/helicopterLoop.ogg'

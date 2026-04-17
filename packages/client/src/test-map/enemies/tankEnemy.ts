@@ -22,7 +22,7 @@ export class TankEnemyDefinition extends EnemyDefinitionBase {
         lineOfSightRequiredToShoot: true
       },
       sounds: {
-        attackSound: 'assets/sounds/tankCannon.ogg',
+        attackSound: 'assets/sounds/weapons/tankCannon.ogg',
         hurtSound: 'assets/sounds/tankHit.ogg',
         deathSound: 'assets/sounds/explosion_2a.ogg',
         positionalLoopSound: 'assets/sounds/tankMoving.ogg'

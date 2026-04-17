@@ -16,8 +16,8 @@ export class EnemyTank extends EnemyBase {
       altitude: 0,
       ignoresObstacles: false,
       loopSound: 'assets/sounds/tankMoving.ogg',
-      fireSound: 'assets/sounds/tankCannon.ogg',
-      loadSound: 'assets/sounds/reloadCannon.ogg',
+      fireSound: 'assets/sounds/weapons/tankCannon.ogg',
+      loadSound: 'assets/sounds/weapons/reloadCannon.ogg',
       hitSound: 'assets/sounds/tankHit.ogg',
       deathSound: 'assets/sounds/explosion_2a.ogg',
       explosiveProjectile: true
@@ -41,8 +41,8 @@ export class EnemyMech extends EnemyBase {
       altitude: 0,
       ignoresObstacles: false,
       loopSound: 'assets/sounds/servomotor.ogg',
-      fireSound: 'assets/sounds/pistol_fire.ogg',
-      loadSound: 'assets/sounds/reload.ogg',
+      fireSound: 'assets/sounds/weapons/pistol_fire.ogg',
+      loadSound: 'assets/sounds/weapons/reload.ogg',
       hitSound: 'assets/sounds/mechHit.ogg',
       deathSound: 'assets/sounds/explosion_1B.ogg'
     }, existingState)
@@ -65,8 +65,8 @@ export class EnemyHelicopter extends EnemyBase {
       altitude: airLayerHeight,
       ignoresObstacles: true,
       loopSound: 'assets/sounds/helicopterLoop.ogg',
-      fireSound: 'assets/sounds/pistol_fire.ogg',
-      loadSound: 'assets/sounds/reload.ogg',
+      fireSound: 'assets/sounds/weapons/pistol_fire.ogg',
+      loadSound: 'assets/sounds/weapons/reload.ogg',
       hitSound: 'assets/sounds/tankHit.ogg',
       deathSound: 'assets/sounds/explosion_2a.ogg'
     }, existingState)
@@ -89,8 +89,8 @@ export class EnemyDrone extends EnemyBase {
       altitude: airLayerHeight,
       ignoresObstacles: true,
       loopSound: 'assets/sounds/servomotor.ogg',
-      fireSound: 'assets/sounds/pistol_fire.ogg',
-      loadSound: 'assets/sounds/reload.ogg',
+      fireSound: 'assets/sounds/weapons/pistol_fire.ogg',
+      loadSound: 'assets/sounds/weapons/reload.ogg',
       hitSound: 'assets/sounds/mechHit.ogg',
       deathSound: 'assets/sounds/explosion_1B.ogg'
     }, existingState)

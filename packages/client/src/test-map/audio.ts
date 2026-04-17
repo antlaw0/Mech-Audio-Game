@@ -345,7 +345,7 @@ function createTankProfile(enemyId: string): EnemyAudioProfile {
       idleLoop: new Tone.Player('assets/sounds/tankMoving.ogg'),
       movementLoop: new Tone.Player('assets/sounds/tankMoving.ogg'),
       passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
-      threatCue: new Tone.Player('assets/sounds/reloadCannon.ogg'),
+      threatCue: new Tone.Player('assets/sounds/weapons/reloadCannon.ogg'),
       attackSound: new Tone.Player('assets/sounds/explosion_1A.ogg'),
       hurtSound: new Tone.Player('assets/sounds/explosion_1B.ogg'),
       deathSound: new Tone.Player('assets/sounds/explosion_2a.ogg')
@@ -386,8 +386,8 @@ function createHelicopterProfile(enemyId: string): EnemyAudioProfile {
       idleLoop: new Tone.Player('assets/sounds/helicopterLoop.ogg'),
       movementLoop: new Tone.Player('assets/sounds/helicopterLoop.ogg'),
       passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
-      threatCue: new Tone.Player('assets/sounds/reload.ogg'),
-      attackSound: new Tone.Player('assets/sounds/pistol_fire.ogg'),
+      threatCue: new Tone.Player('assets/sounds/weapons/reload.ogg'),
+      attackSound: new Tone.Player('assets/sounds/weapons/pistol_fire.ogg'),
       hurtSound: new Tone.Player('assets/sounds/tankHit.ogg'),
       deathSound: new Tone.Player('assets/sounds/explosion_2a.ogg')
     },
@@ -636,7 +636,7 @@ export function createAudioController(): AudioController {
     octaves: 1.2
   }).connect(impactPanner)
 
-  const playerFireSound = new Tone.Player('assets/sounds/pistol_fire.ogg').toDestination()
+  const playerFireSound = new Tone.Player('assets/sounds/weapons/pistol_fire.ogg').toDestination()
   const flightLoopGain = new Tone.Gain(0.78).toDestination()
   const flightLoopSound = new Tone.Player('assets/sounds/jetLoop.ogg').connect(flightLoopGain)
   flightLoopSound.loop = true

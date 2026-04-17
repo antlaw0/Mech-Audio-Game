@@ -13,6 +13,7 @@ import {
   BULLET_SPEED,
   MAP_HEIGHT,
   MAP_WIDTH,
+  MAX_LOOK_PITCH,
   PLAYER_RADIUS,
   PLAYER_HEIGHT,
   WEAPON_MAX_CONE_RADIANS,
@@ -186,7 +187,6 @@ function spawnTankProjectile(
 export function createCombatEcsWorld(): CombatEcsWorld {
   const world = createWorld() as CombatEcsWorld
   world.customConfigs = new Map()
-  addTank(world, 32.5, 30.5)
   return world
 } // end function createCombatEcsWorld
 
@@ -333,7 +333,35 @@ export function spawnPlayerBullet(
   player: Player,
   damage = 10,
   speed = BULLET_SPEED,
-  maxDistance = BULLET_MAX_DIST
+  maxDistance = BULLET_MAX_DIST,
+  accuracy = 1,
+  playerSpeedFraction = 0,
+  projectileCount = 1,
+  spreadDegrees = 0
+): void {
+  spawnPlayerProjectileBurst(
+    world,
+    player,
+    player.angle,
+    player.pitch,
+    accuracy,
+    playerSpeedFraction,
+    projectileCount,
+    spreadDegrees,
+    damage,
+    speed,
+    maxDistance
+  )
+} // end function spawnPlayerBullet
+
+function spawnPlayerProjectile(
+  world: CombatEcsWorld,
+  player: Player,
+  angle: number,
+  pitch: number,
+  damage: number,
+  speed: number,
+  maxDistance: number
 ): void {
   const bullet = addEntity(world)
   addComponent(world, Position, bullet)
@@ -342,8 +370,8 @@ export function spawnPlayerBullet(
   addComponent(world, ProjectileStats, bullet)
   Position.x[bullet] = player.x
   Position.y[bullet] = player.y
-  Facing.angle[bullet] = player.angle
-  Facing.pitch[bullet] = player.pitch
+  Facing.angle[bullet] = angle
+  Facing.pitch[bullet] = pitch
   Meta.kind[bullet] = KIND_BULLET
   Meta.radius[bullet] = BULLET_HIT_RADIUS
   Meta.distance[bullet] = 0
@@ -353,7 +381,60 @@ export function spawnPlayerBullet(
   ProjectileStats.maxDistance[bullet] = maxDistance
   ProjectileStats.originHeight[bullet] = (player.z ?? 0) + PLAYER_HEIGHT
   ProjectileStats.nearMissPlayed[bullet] = 0
-} // end function spawnPlayerBullet
+} // end function spawnPlayerProjectile
+
+function sampleConeOffset(halfAngleRadians: number): { yawOffset: number; pitchOffset: number } {
+  if (halfAngleRadians <= 0) {
+    return { yawOffset: 0, pitchOffset: 0 }
+  } // end if cone has no width
+
+  const radius = Math.sqrt(Math.random()) * halfAngleRadians
+  const azimuth = Math.random() * Math.PI * 2
+  return {
+    yawOffset: Math.cos(azimuth) * radius,
+    pitchOffset: Math.sin(azimuth) * radius
+  } // end sampled cone offset
+} // end function sampleConeOffset
+
+function clampProjectilePitch(pitch: number): number {
+  return Math.max(-MAX_LOOK_PITCH, Math.min(MAX_LOOK_PITCH, pitch))
+} // end function clampProjectilePitch
+
+function spawnPlayerProjectileBurst(
+  world: CombatEcsWorld,
+  player: Player,
+  baseAngle: number,
+  basePitch: number,
+  accuracy: number,
+  playerSpeedFraction: number,
+  projectileCount: number,
+  spreadDegrees: number,
+  damage: number,
+  speed: number,
+  maxDistance: number
+): void {
+  const clampedAccuracy = Math.max(0, Math.min(1, accuracy))
+  const baseHalfAngle = WEAPON_MAX_CONE_RADIANS * Math.max(0, 1 - clampedAccuracy)
+  const accuracyHalfAngle = baseHalfAngle * (1 + Math.min(1, playerSpeedFraction) * WEAPON_MOVEMENT_ACCURACY_PENALTY)
+  const accuracyOffset = sampleConeOffset(accuracyHalfAngle)
+  const spreadHalfAngle = Math.max(0, spreadDegrees) * (Math.PI / 180)
+  const projectileTotal = Math.max(1, Math.round(projectileCount))
+  const adjustedBaseAngle = baseAngle + accuracyOffset.yawOffset
+  const adjustedBasePitch = clampProjectilePitch(basePitch + accuracyOffset.pitchOffset)
+
+  for (let projectileIndex = 0; projectileIndex < projectileTotal; projectileIndex += 1) {
+    const pelletOffset = sampleConeOffset(spreadHalfAngle)
+    spawnPlayerProjectile(
+      world,
+      player,
+      adjustedBaseAngle + pelletOffset.yawOffset,
+      clampProjectilePitch(adjustedBasePitch + pelletOffset.pitchOffset),
+      damage,
+      speed,
+      maxDistance
+    )
+  } // end for each projectile in burst
+} // end function spawnPlayerProjectileBurst
 
 /**
  * Fires a player bullet aimed at (targetX, targetY) with an accuracy cone.
@@ -370,35 +451,26 @@ export function spawnPlayerBulletToward(
   playerSpeedFraction: number,
   damage = 10,
   speed = BULLET_SPEED,
-  maxDistance = BULLET_MAX_DIST
+  maxDistance = BULLET_MAX_DIST,
+  projectileCount = 1,
+  spreadDegrees = 0
 ): void {
   const baseAngle = Math.atan2(targetY - player.y, targetX - player.x)
-  const originHeight = (player.z ?? 0) + PLAYER_HEIGHT
   // Player-fired projectiles should follow the current look pitch, even with lock-on enabled.
   const basePitch = player.pitch
-  const baseHalfAngle = WEAPON_MAX_CONE_RADIANS * Math.max(0, 1 - accuracy)
-  const halfAngle = baseHalfAngle * (1 + Math.min(1, playerSpeedFraction) * WEAPON_MOVEMENT_ACCURACY_PENALTY)
-  const angleOffset = (Math.random() * 2 - 1) * halfAngle
-  const finalAngle = baseAngle + angleOffset
-
-  const bullet = addEntity(world)
-  addComponent(world, Position, bullet)
-  addComponent(world, Facing, bullet)
-  addComponent(world, Meta, bullet)
-  addComponent(world, ProjectileStats, bullet)
-  Position.x[bullet] = player.x
-  Position.y[bullet] = player.y
-  Facing.angle[bullet] = finalAngle
-  Facing.pitch[bullet] = basePitch
-  Meta.kind[bullet] = KIND_BULLET
-  Meta.radius[bullet] = BULLET_HIT_RADIUS
-  Meta.distance[bullet] = 0
-  Meta.alive[bullet] = 1
-  ProjectileStats.speed[bullet] = speed
-  ProjectileStats.damage[bullet] = damage
-  ProjectileStats.maxDistance[bullet] = maxDistance
-  ProjectileStats.originHeight[bullet] = originHeight
-  ProjectileStats.nearMissPlayed[bullet] = 0
+  spawnPlayerProjectileBurst(
+    world,
+    player,
+    baseAngle,
+    basePitch,
+    accuracy,
+    playerSpeedFraction,
+    projectileCount,
+    spreadDegrees,
+    damage,
+    speed,
+    maxDistance
+  )
 } // end function spawnPlayerBulletToward
 
 function computeFloorCeilHitDistance(originHeight: number, pitch: number): number {

@@ -22,6 +22,7 @@ export interface InputState {
   lookUp: boolean
   lookDown: boolean
   pitchResetPending: boolean
+  fireHeld: boolean
   firePending: boolean
   flightTogglePending: boolean
   sonarPingPending: boolean
@@ -87,16 +88,22 @@ export interface TargetLockState {
 } // end interface TargetLockState
 
 export interface WeaponStats {
-  /** 0.0 (chaotic) – 1.0 (perfect): controls the accuracy cone half-angle. */
+  /** 0.0 (chaotic) – 1.0 (perfect): offsets the entire projectile spread cone from the aim direction. */
   accuracy: number
   /** World-unit radius within which target lock engages. */
   lockOnRange: number
   /** Hit damage applied per shot. */
   damagePerShot: number
+  /** Number of projectiles fired simultaneously for each shot. */
+  projectileCount: number
+  /** Half-angle of the per-projectile spread cone in degrees. */
+  spreadDegrees: number
   /** Bullet travel speed in world units per second. */
   bulletSpeed: number
   /** Maximum bullet travel distance in world units. */
   maxRange: number
+  /** Whether holding fire should continuously shoot while cooldown allows. */
+  isFullAuto: boolean
   /** Minimum seconds between player shots (0 = unlimited). */
   fireRateCooldownSeconds: number
   /** Horizontal lock-on window as percent of full FOV (0–100, default 100). */

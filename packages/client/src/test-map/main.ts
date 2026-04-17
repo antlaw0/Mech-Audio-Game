@@ -65,6 +65,7 @@ interface TestMapDevConsole {
 
 interface DeveloperConsoleBinding {
   description: string
+  helpPath: string[]
   get: () => unknown
   set?: (rawValue: string) => unknown
 } // end interface DeveloperConsoleBinding
@@ -72,7 +73,17 @@ interface DeveloperConsoleBinding {
 interface DeveloperConsoleCommandHelp {
   syntax: string
   description: string
+  helpPath: string[]
+  aliases?: string[]
+  examples?: string[]
 } // end interface DeveloperConsoleCommandHelp
+
+interface DeveloperConsoleHelpNode {
+  title: string
+  description?: string
+  lines?: string[]
+  children?: DeveloperConsoleHelpNode[]
+} // end interface DeveloperConsoleHelpNode
 
 declare global {
   interface Window {
@@ -136,9 +147,12 @@ function startTestMap(): void {
   const weaponEditorCancelButtonElement = document.getElementById('weaponEditorCancelButton')
   const weaponAccuracyInput = getInput('weaponAccuracy')
   const weaponDamageInput = getInput('weaponDamage')
+  const weaponProjectileCountInput = getInput('weaponProjectileCount')
+  const weaponSpreadInput = getInput('weaponSpread')
   const weaponBulletSpeedInput = getInput('weaponBulletSpeed')
   const weaponMaxRangeInput = getInput('weaponMaxRange')
   const weaponFireRateInput = getInput('weaponFireRate')
+  const weaponFullAutoInput = getInput('weaponFullAuto')
   const weaponLockOnRangeInput = getInput('weaponLockOnRange')
   const weaponLockOnWindowWidthInput = getInput('weaponLockOnWindowWidth')
   const weaponLockOnWindowHeightInput = getInput('weaponLockOnWindowHeight')
@@ -191,9 +205,12 @@ function startTestMap(): void {
     accuracy: WEAPON_DEFAULT_ACCURACY,
     lockOnRange: WEAPON_LOCK_ON_RANGE,
     damagePerShot: 10,
+    projectileCount: 1,
+    spreadDegrees: 0,
     bulletSpeed: BULLET_SPEED,
     maxRange: BULLET_MAX_DIST,
-    fireRateCooldownSeconds: 0,
+    isFullAuto: false,
+    fireRateCooldownSeconds: 0.55,
     lockOnWindowWidthPercent: 100,
     lockOnWindowHeightPercent: 100
   } // end object playerWeapon
@@ -208,6 +225,7 @@ function startTestMap(): void {
     input.lookUp = false
     input.lookDown = false
     input.pitchResetPending = false
+    input.fireHeld = false
     input.firePending = false
     input.flightTogglePending = false
     input.sonarPingPending = false
@@ -249,9 +267,12 @@ function startTestMap(): void {
   const populateWeaponEditorForm = (stats: WeaponStats): void => {
     if (weaponAccuracyInput) weaponAccuracyInput.value = String(stats.accuracy)
     if (weaponDamageInput) weaponDamageInput.value = String(stats.damagePerShot)
+    if (weaponProjectileCountInput) weaponProjectileCountInput.value = String(stats.projectileCount)
+    if (weaponSpreadInput) weaponSpreadInput.value = String(stats.spreadDegrees)
     if (weaponBulletSpeedInput) weaponBulletSpeedInput.value = String(stats.bulletSpeed)
     if (weaponMaxRangeInput) weaponMaxRangeInput.value = String(stats.maxRange)
     if (weaponFireRateInput) weaponFireRateInput.value = String(stats.fireRateCooldownSeconds)
+    if (weaponFullAutoInput) weaponFullAutoInput.checked = stats.isFullAuto
     if (weaponLockOnRangeInput) weaponLockOnRangeInput.value = String(stats.lockOnRange)
     if (weaponLockOnWindowWidthInput) weaponLockOnWindowWidthInput.value = String(stats.lockOnWindowWidthPercent)
     if (weaponLockOnWindowHeightInput) weaponLockOnWindowHeightInput.value = String(stats.lockOnWindowHeightPercent)
@@ -266,8 +287,11 @@ function startTestMap(): void {
     return {
       accuracy: Math.max(0.01, Math.min(1, parseNum(weaponAccuracyInput, playerWeapon.accuracy))),
       damagePerShot: Math.max(1, Math.round(parseNum(weaponDamageInput, playerWeapon.damagePerShot))),
+      projectileCount: Math.max(1, Math.round(parseNum(weaponProjectileCountInput, playerWeapon.projectileCount))),
+      spreadDegrees: Math.max(0, parseNum(weaponSpreadInput, playerWeapon.spreadDegrees)),
       bulletSpeed: Math.max(1, parseNum(weaponBulletSpeedInput, playerWeapon.bulletSpeed)),
       maxRange: Math.max(1, parseNum(weaponMaxRangeInput, playerWeapon.maxRange)),
+      isFullAuto: weaponFullAutoInput?.checked ?? playerWeapon.isFullAuto,
       fireRateCooldownSeconds: Math.max(0, parseNum(weaponFireRateInput, playerWeapon.fireRateCooldownSeconds)),
       lockOnRange: Math.max(1, parseNum(weaponLockOnRangeInput, playerWeapon.lockOnRange)),
       lockOnWindowWidthPercent: Math.max(0, Math.min(100, Math.round(parseNum(weaponLockOnWindowWidthInput, playerWeapon.lockOnWindowWidthPercent)))),
@@ -694,7 +718,7 @@ function startTestMap(): void {
     `console.open = ${isConsoleOpen}`,
     `player = x:${player.x.toFixed(2)} y:${player.y.toFixed(2)} z:${(player.z ?? 0).toFixed(2)} angle:${((player.angle * 180) / Math.PI).toFixed(1)} pitch:${((player.pitch * 180) / Math.PI).toFixed(1)}`,
     `player.flight = state:${player.flightState ?? 'grounded'} flying:${player.isFlying ? 'true' : 'false'} sharedHeight:${getSharedFlightHeight().toFixed(2)}`,
-    `weapon = accuracy:${playerWeapon.accuracy.toFixed(2)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)}`,
+    `weapon = accuracy:${playerWeapon.accuracy.toFixed(2)} pellets:${playerWeapon.projectileCount} spread:${playerWeapon.spreadDegrees.toFixed(1)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fullAuto:${playerWeapon.isFullAuto} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)}`,
     `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)}`,
     `audio categories = proximity:${audio.getCategoryEnabled('proximity')}@${audio.getVolumeChannel('proximity').toFixed(2)} objects:${audio.getCategoryEnabled('objects')}@${audio.getVolumeChannel('objects').toFixed(2)} enemies:${audio.getCategoryEnabled('enemies')}@${audio.getVolumeChannel('enemies').toFixed(2)} navigation:${audio.getCategoryEnabled('navigation')}@${audio.getVolumeChannel('navigation').toFixed(2)}`
   ]
@@ -702,6 +726,7 @@ function startTestMap(): void {
   const getConsoleBindings = (): Record<string, DeveloperConsoleBinding> => ({
     'player.x': {
       description: 'Player world X position.',
+      helpPath: ['Player', 'Position'],
       get: () => player.x,
       set: (rawValue) => {
         placePlayer(parseFiniteNumber(rawValue, 'player.x'), player.y, player.z ?? 0)
@@ -710,6 +735,7 @@ function startTestMap(): void {
     },
     'player.y': {
       description: 'Player world Y position.',
+      helpPath: ['Player', 'Position'],
       get: () => player.y,
       set: (rawValue) => {
         placePlayer(player.x, parseFiniteNumber(rawValue, 'player.y'), player.z ?? 0)
@@ -718,6 +744,7 @@ function startTestMap(): void {
     },
     'player.z': {
       description: 'Player altitude above ground.',
+      helpPath: ['Player', 'Position'],
       get: () => player.z ?? 0,
       set: (rawValue) => {
         placePlayer(player.x, player.y, parseFiniteNumber(rawValue, 'player.z'))
@@ -726,16 +753,19 @@ function startTestMap(): void {
     },
     'player.angle': {
       description: 'Player facing angle in degrees.',
+      helpPath: ['Player', 'View'],
       get: () => (player.angle * 180) / Math.PI,
       set: (rawValue) => setPlayerAngleDegrees(parseFiniteNumber(rawValue, 'player.angle'))
     },
     'player.pitch': {
       description: 'Player look pitch in degrees.',
+      helpPath: ['Player', 'View'],
       get: () => (player.pitch * 180) / Math.PI,
       set: (rawValue) => setPlayerPitchDegrees(parseFiniteNumber(rawValue, 'player.pitch'))
     },
     'player.isFlying': {
       description: 'Whether the player is airborne.',
+      helpPath: ['Player', 'Flight'],
       get: () => !!player.isFlying,
       set: (rawValue) => {
         const enabled = parseBooleanValue(rawValue)
@@ -752,16 +782,19 @@ function startTestMap(): void {
     },
     'player.flightState': {
       description: 'Player flight state: grounded, ascending, airborne, or descending.',
+      helpPath: ['Player', 'Flight'],
       get: () => player.flightState ?? 'grounded',
       set: (rawValue) => setPlayerFlightState(rawValue)
     },
     'flight.sharedHeight': {
       description: 'Shared airborne hover height used by the player and dynamic flight sync.',
+      helpPath: ['Environment', 'Flight'],
       get: () => getSharedFlightHeight(),
       set: (rawValue) => applySharedFlightHeight(parseFiniteNumber(rawValue, 'flight.sharedHeight'))
     },
     'weapon.accuracy': {
       description: 'Player weapon accuracy from 0 to 1.',
+      helpPath: ['Weapon', 'Combat'],
       get: () => playerWeapon.accuracy,
       set: (rawValue) => {
         playerWeapon.accuracy = Math.max(0.01, Math.min(1, parseFiniteNumber(rawValue, 'weapon.accuracy')))
@@ -770,14 +803,52 @@ function startTestMap(): void {
     },
     'weapon.damagePerShot': {
       description: 'Player weapon damage per shot.',
+      helpPath: ['Weapon', 'Combat'],
       get: () => playerWeapon.damagePerShot,
       set: (rawValue) => {
         playerWeapon.damagePerShot = Math.max(1, Math.round(parseFiniteNumber(rawValue, 'weapon.damagePerShot')))
         return playerWeapon.damagePerShot
       }
     },
+    'weapon.projectileCount': {
+      description: 'Number of projectiles fired simultaneously each time the weapon shoots.',
+      helpPath: ['Weapon', 'Combat'],
+      get: () => playerWeapon.projectileCount,
+      set: (rawValue) => {
+        playerWeapon.projectileCount = Math.max(1, Math.round(parseFiniteNumber(rawValue, 'weapon.projectileCount')))
+        return playerWeapon.projectileCount
+      }
+    },
+    'weapon.projectilesPerShot': {
+      description: 'Alias for weapon.projectileCount.',
+      helpPath: ['Weapon', 'Combat'],
+      get: () => playerWeapon.projectileCount,
+      set: (rawValue) => {
+        playerWeapon.projectileCount = Math.max(1, Math.round(parseFiniteNumber(rawValue, 'weapon.projectilesPerShot')))
+        return playerWeapon.projectileCount
+      }
+    },
+    'weapon.spread': {
+      description: 'Per-projectile spread cone half-angle in degrees.',
+      helpPath: ['Weapon', 'Combat'],
+      get: () => playerWeapon.spreadDegrees,
+      set: (rawValue) => {
+        playerWeapon.spreadDegrees = Math.max(0, parseFiniteNumber(rawValue, 'weapon.spread'))
+        return playerWeapon.spreadDegrees
+      }
+    },
+    'weapon.spreadDegrees': {
+      description: 'Alias for weapon.spread in degrees.',
+      helpPath: ['Weapon', 'Combat'],
+      get: () => playerWeapon.spreadDegrees,
+      set: (rawValue) => {
+        playerWeapon.spreadDegrees = Math.max(0, parseFiniteNumber(rawValue, 'weapon.spreadDegrees'))
+        return playerWeapon.spreadDegrees
+      }
+    },
     'weapon.bulletSpeed': {
       description: 'Player weapon projectile speed.',
+      helpPath: ['Weapon', 'Combat'],
       get: () => playerWeapon.bulletSpeed,
       set: (rawValue) => {
         playerWeapon.bulletSpeed = Math.max(1, parseFiniteNumber(rawValue, 'weapon.bulletSpeed'))
@@ -786,22 +857,52 @@ function startTestMap(): void {
     },
     'weapon.maxRange': {
       description: 'Player weapon maximum range.',
+      helpPath: ['Weapon', 'Combat'],
       get: () => playerWeapon.maxRange,
       set: (rawValue) => {
         playerWeapon.maxRange = Math.max(1, parseFiniteNumber(rawValue, 'weapon.maxRange'))
         return playerWeapon.maxRange
       }
     },
+    'weapon.isFullAuto': {
+      description: 'Whether holding fire continuously shoots while cooldown allows.',
+      helpPath: ['Weapon', 'Combat'],
+      get: () => playerWeapon.isFullAuto,
+      set: (rawValue) => {
+        playerWeapon.isFullAuto = parseBooleanValue(rawValue)
+        return playerWeapon.isFullAuto
+      }
+    },
+    'weapon.fullAuto': {
+      description: 'Alias for weapon.isFullAuto.',
+      helpPath: ['Weapon', 'Combat'],
+      get: () => playerWeapon.isFullAuto,
+      set: (rawValue) => {
+        playerWeapon.isFullAuto = parseBooleanValue(rawValue)
+        return playerWeapon.isFullAuto
+      }
+    },
     'weapon.fireRateCooldownSeconds': {
       description: 'Seconds between player shots.',
+      helpPath: ['Weapon', 'Combat'],
       get: () => playerWeapon.fireRateCooldownSeconds,
       set: (rawValue) => {
         playerWeapon.fireRateCooldownSeconds = Math.max(0, parseFiniteNumber(rawValue, 'weapon.fireRateCooldownSeconds'))
         return playerWeapon.fireRateCooldownSeconds
       }
     },
+    'weapon.fireRate': {
+      description: 'Alias for weapon.fireRateCooldownSeconds.',
+      helpPath: ['Weapon', 'Combat'],
+      get: () => playerWeapon.fireRateCooldownSeconds,
+      set: (rawValue) => {
+        playerWeapon.fireRateCooldownSeconds = Math.max(0, parseFiniteNumber(rawValue, 'weapon.fireRate'))
+        return playerWeapon.fireRateCooldownSeconds
+      }
+    },
     'weapon.lockOnRange': {
       description: 'Target-lock acquisition range.',
+      helpPath: ['Weapon', 'Lock-On'],
       get: () => playerWeapon.lockOnRange,
       set: (rawValue) => {
         playerWeapon.lockOnRange = Math.max(1, parseFiniteNumber(rawValue, 'weapon.lockOnRange'))
@@ -810,6 +911,7 @@ function startTestMap(): void {
     },
     'weapon.lockOnWindowWidthPercent': {
       description: 'Horizontal lock window percentage.',
+      helpPath: ['Weapon', 'Lock-On'],
       get: () => playerWeapon.lockOnWindowWidthPercent,
       set: (rawValue) => {
         playerWeapon.lockOnWindowWidthPercent = Math.max(0, Math.min(100, Math.round(parseFiniteNumber(rawValue, 'weapon.lockOnWindowWidthPercent'))))
@@ -818,6 +920,7 @@ function startTestMap(): void {
     },
     'weapon.lockOnWindowHeightPercent': {
       description: 'Vertical lock window percentage.',
+      helpPath: ['Weapon', 'Lock-On'],
       get: () => playerWeapon.lockOnWindowHeightPercent,
       set: (rawValue) => {
         playerWeapon.lockOnWindowHeightPercent = Math.max(0, Math.min(100, Math.round(parseFiniteNumber(rawValue, 'weapon.lockOnWindowHeightPercent'))))
@@ -826,6 +929,7 @@ function startTestMap(): void {
     },
     'aimAssist.enabled': {
       description: 'Aim assist enabled flag.',
+      helpPath: ['Gameplay', 'Aim Assist'],
       get: () => audio.isAimAssistEnabled(),
       set: (rawValue) => {
         const enabled = parseBooleanValue(rawValue)
@@ -835,121 +939,425 @@ function startTestMap(): void {
     },
     'audio.master.volume': {
       description: 'Master volume scalar from 0 to 2.',
+      helpPath: ['Audio', 'Mix'],
       get: () => audio.getVolumeChannel('master'),
       set: (rawValue) => audio.setVolumeChannel('master', parseFiniteNumber(rawValue, 'audio.master.volume'))
     },
     'audio.ambience.volume': {
       description: 'Ambience volume scalar from 0 to 2.',
+      helpPath: ['Audio', 'Mix'],
       get: () => audio.getVolumeChannel('ambience'),
       set: (rawValue) => audio.setVolumeChannel('ambience', parseFiniteNumber(rawValue, 'audio.ambience.volume'))
     },
     'audio.footsteps.volume': {
       description: 'Footstep volume scalar from 0 to 2.',
+      helpPath: ['Audio', 'Mix'],
       get: () => audio.getVolumeChannel('footsteps'),
       set: (rawValue) => audio.setVolumeChannel('footsteps', parseFiniteNumber(rawValue, 'audio.footsteps.volume'))
     },
     'audio.servo.volume': {
       description: 'Servo motor volume scalar from 0 to 2.',
+      helpPath: ['Audio', 'Mix'],
       get: () => audio.getVolumeChannel('servo'),
       set: (rawValue) => audio.setVolumeChannel('servo', parseFiniteNumber(rawValue, 'audio.servo.volume'))
     },
     'audio.flightLoop.volume': {
       description: 'Player flight loop volume scalar from 0 to 2.',
+      helpPath: ['Audio', 'Mix'],
       get: () => audio.getVolumeChannel('flightLoop'),
       set: (rawValue) => audio.setVolumeChannel('flightLoop', parseFiniteNumber(rawValue, 'audio.flightLoop.volume'))
     },
     'audio.proximity.enabled': {
       description: 'Enable or disable the proximity audio category.',
+      helpPath: ['Audio', 'Categories'],
       get: () => audio.getCategoryEnabled('proximity'),
       set: (rawValue) => audio.setCategoryEnabled('proximity', parseBooleanValue(rawValue))
     },
     'audio.objects.enabled': {
       description: 'Enable or disable the objects audio category.',
+      helpPath: ['Audio', 'Categories'],
       get: () => audio.getCategoryEnabled('objects'),
       set: (rawValue) => audio.setCategoryEnabled('objects', parseBooleanValue(rawValue))
     },
     'audio.enemies.enabled': {
       description: 'Enable or disable the enemies audio category.',
+      helpPath: ['Audio', 'Categories'],
       get: () => audio.getCategoryEnabled('enemies'),
       set: (rawValue) => audio.setCategoryEnabled('enemies', parseBooleanValue(rawValue))
     },
     'audio.navigation.enabled': {
       description: 'Enable or disable the navigation audio category.',
+      helpPath: ['Audio', 'Categories'],
       get: () => audio.getCategoryEnabled('navigation'),
       set: (rawValue) => audio.setCategoryEnabled('navigation', parseBooleanValue(rawValue))
     },
     'audio.proximity.volume': {
       description: 'Proximity audio volume scalar from 0 to 2.',
+      helpPath: ['Audio', 'Categories'],
       get: () => audio.getVolumeChannel('proximity'),
       set: (rawValue) => audio.setVolumeChannel('proximity', parseFiniteNumber(rawValue, 'audio.proximity.volume'))
     },
     'audio.objects.volume': {
       description: 'Objects audio volume scalar from 0 to 2.',
+      helpPath: ['Audio', 'Categories'],
       get: () => audio.getVolumeChannel('objects'),
       set: (rawValue) => audio.setVolumeChannel('objects', parseFiniteNumber(rawValue, 'audio.objects.volume'))
     },
     'audio.enemies.volume': {
       description: 'Enemies audio volume scalar from 0 to 2.',
+      helpPath: ['Audio', 'Categories'],
       get: () => audio.getVolumeChannel('enemies'),
       set: (rawValue) => audio.setVolumeChannel('enemies', parseFiniteNumber(rawValue, 'audio.enemies.volume'))
     },
     'audio.navigation.volume': {
       description: 'Navigation audio volume scalar from 0 to 2.',
+      helpPath: ['Audio', 'Categories'],
       get: () => audio.getVolumeChannel('navigation'),
       set: (rawValue) => audio.setVolumeChannel('navigation', parseFiniteNumber(rawValue, 'audio.navigation.volume'))
     }
   })
 
   const commandHelp: DeveloperConsoleCommandHelp[] = [
-    { syntax: 'help [topic]', description: 'Show command help or describe a specific path.' },
-    { syntax: 'state', description: 'Print a high-level snapshot of gameplay, weapon, and audio state.' },
-    { syntax: 'list [prefix]', description: 'List every editable path, optionally filtered by prefix.' },
-    { syntax: 'get <path>', description: 'Read the current value of a bound property.' },
-    { syntax: 'set <path> <value>', description: 'Set a bound property to a numeric, boolean, or string value.' },
-    { syntax: 'toggle <path>', description: 'Invert a boolean path such as audio.enemies.enabled.' },
-    { syntax: 'spawn <enemyId>', description: 'Spawn an enemy: tank, striker, brute, or helicopter.' },
-    { syntax: 'tp <x> <y> [z]', description: 'Teleport the player to a validated world position.' },
-    { syntax: 'pause', description: 'Pause the game and keep the console open.' },
-    { syntax: 'resume', description: 'Resume gameplay and close the console.' },
-    { syntax: 'close', description: 'Close the console and return to the previous pause state.' },
-    { syntax: 'clear', description: 'Clear the console output buffer.' }
+    {
+      syntax: 'help [topic]',
+      description: 'Open categorized help, or jump directly to a command, binding, or category.',
+      helpPath: ['Console', 'Reference'],
+      examples: ['help', 'help weapon.fireRate', 'help audio']
+    },
+    {
+      syntax: 'state',
+      description: 'Print a high-level snapshot of gameplay, weapon, and audio state.',
+      helpPath: ['Gameplay', 'Session'],
+      aliases: ['status']
+    },
+    {
+      syntax: 'list [prefix]',
+      description: 'List every editable path, optionally filtered by prefix.',
+      helpPath: ['Console', 'Reference'],
+      aliases: ['paths'],
+      examples: ['list', 'list weapon.', 'paths audio.']
+    },
+    {
+      syntax: 'get <path>',
+      description: 'Read the current value of a bound property.',
+      helpPath: ['Console', 'Reference'],
+      examples: ['get player.x', 'get weapon.fireRate']
+    },
+    {
+      syntax: 'set <path> <value>',
+      description: 'Set a bound property to a numeric, boolean, or string value.',
+      helpPath: ['Console', 'Editing'],
+      examples: ['set weapon.fireRate 0.5', 'set player.angle 270', 'set audio.enemies.enabled false']
+    },
+    {
+      syntax: 'toggle <path>',
+      description: 'Invert a boolean path such as audio.enemies.enabled.',
+      helpPath: ['Console', 'Editing'],
+      examples: ['toggle audio.navigation.enabled', 'toggle weapon.fullAuto']
+    },
+    {
+      syntax: 'spawn <enemyId>',
+      description: 'Spawn an enemy: tank, striker, brute, or helicopter.',
+      helpPath: ['Enemies', 'Spawning'],
+      examples: ['spawn tank', 'spawn helicopter']
+    },
+    {
+      syntax: 'tp <x> <y> [z]',
+      description: 'Teleport the player to a validated world position.',
+      helpPath: ['Player', 'Position'],
+      aliases: ['teleport'],
+      examples: ['tp 18 20 0', 'teleport 24 24']
+    },
+    {
+      syntax: 'pause',
+      description: 'Pause the game and keep the console open.',
+      helpPath: ['Gameplay', 'Session']
+    },
+    {
+      syntax: 'resume',
+      description: 'Resume gameplay and close the console.',
+      helpPath: ['Gameplay', 'Session']
+    },
+    {
+      syntax: 'close',
+      description: 'Close the console and return to the previous pause state.',
+      helpPath: ['Gameplay', 'Session']
+    },
+    {
+      syntax: 'clear',
+      description: 'Clear the console output buffer.',
+      helpPath: ['Console', 'Utility']
+    }
   ]
 
   const getSortedBindingPaths = (prefix = ''): string[] => Object.keys(getConsoleBindings())
     .filter((path) => path.startsWith(prefix))
     .sort((left, right) => left.localeCompare(right))
 
-  const getHelpLines = (topic?: string): string[] => {
-    if (!topic) {
-      return [
-        'Available commands:',
-        ...commandHelp.map((entry) => `  ${entry.syntax} - ${entry.description}`),
-        'Examples:',
-        '  set flight.sharedHeight 5',
-        '  set player.angle 270',
-        '  set audio.enemies.volume 0.35',
-        '  toggle audio.navigation.enabled',
-        '  tp 18 20 0'
-      ]
-    } // end if listing all commands
+  const topLevelHelpCategories: Array<{ title: string; description: string }> = [
+    { title: 'Audio', description: 'Audio mix, categories, and assist settings.' },
+    { title: 'Gameplay', description: 'Session control and gameplay-wide settings.' },
+    { title: 'Player', description: 'Player position, view, and flight controls.' },
+    { title: 'Weapon', description: 'Weapon combat and lock-on tuning.' },
+    { title: 'Enemies', description: 'Enemy-related commands.' },
+    { title: 'Environment', description: 'Shared world and environment settings.' },
+    { title: 'Console', description: 'Developer console reference and editing commands.' }
+  ]
 
-    const binding = getConsoleBindings()[topic]
+  let helpMenuSelectionPath: number[] | null = null
+
+  const createHelpLeafForBinding = (path: string, binding: DeveloperConsoleBinding): DeveloperConsoleHelpNode => {
+    const currentValue = binding.get()
+    const lines = [
+      `Binding: ${path}`,
+      `Description: ${binding.description}`,
+      'Syntax:',
+      `  get ${path}`
+    ]
+
+    if (binding.set) {
+      lines.push(`  set ${path} <value>`)
+    } // end if binding is writable
+
+    if (binding.set && typeof currentValue === 'boolean') {
+      lines.push(`  toggle ${path}`)
+    } // end if binding can be toggled
+
+    lines.push(`Current value: ${formatConsoleValue(currentValue)}`)
+    lines.push(`Writable: ${binding.set ? 'true' : 'false'}`)
+
+    return {
+      title: path,
+      lines
+    }
+  } // end function createHelpLeafForBinding
+
+  const createHelpLeafForCommand = (entry: DeveloperConsoleCommandHelp): DeveloperConsoleHelpNode => {
+    const lines = [
+      `Syntax: ${entry.syntax}`,
+      `Description: ${entry.description}`
+    ]
+
+    if (entry.aliases && entry.aliases.length > 0) {
+      lines.push(`Aliases: ${entry.aliases.join(', ')}`)
+    } // end if command has aliases
+
+    if (entry.examples && entry.examples.length > 0) {
+      lines.push('Examples:')
+      for (const example of entry.examples) {
+        lines.push(`  ${example}`)
+      } // end for each example
+    } // end if command has examples
+
+    return {
+      title: entry.syntax,
+      lines
+    }
+  } // end function createHelpLeafForCommand
+
+  const sortHelpNode = (node: DeveloperConsoleHelpNode): void => {
+    if (!node.children || node.children.length === 0) {
+      return
+    } // end if node has no children to sort
+
+    node.children.sort((left, right) => left.title.localeCompare(right.title))
+    for (const child of node.children) {
+      sortHelpNode(child)
+    } // end for each child node
+  } // end function sortHelpNode
+
+  const getOrCreateHelpCategoryNode = (
+    node: DeveloperConsoleHelpNode,
+    title: string,
+    description?: string
+  ): DeveloperConsoleHelpNode => {
+    if (!node.children) {
+      node.children = []
+    } // end if node needs child list
+
+    let child = node.children.find((entry) => entry.title === title && entry.lines === undefined)
+    if (!child) {
+      child = { title, description, children: [] }
+      node.children.push(child)
+    } else if (description && !child.description) {
+      child.description = description
+    } // end if child existed without description
+
+    return child
+  } // end function getOrCreateHelpCategoryNode
+
+  const buildHelpTree = (): DeveloperConsoleHelpNode => {
+    const root: DeveloperConsoleHelpNode = {
+      title: 'Help',
+      children: topLevelHelpCategories.map((category) => ({
+        title: category.title,
+        description: category.description,
+        children: []
+      }))
+    }
+
+    const bindings = getConsoleBindings()
+    for (const [path, binding] of Object.entries(bindings)) {
+      let currentNode = getOrCreateHelpCategoryNode(root, binding.helpPath[0] ?? 'Console')
+      for (let index = 1; index < binding.helpPath.length; index += 1) {
+        currentNode = getOrCreateHelpCategoryNode(currentNode, binding.helpPath[index] ?? 'General')
+      } // end for each binding help segment
+      currentNode.children ??= []
+      currentNode.children.push(createHelpLeafForBinding(path, binding))
+    } // end for each binding
+
+    for (const entry of commandHelp) {
+      let currentNode = getOrCreateHelpCategoryNode(root, entry.helpPath[0] ?? 'Console')
+      for (let index = 1; index < entry.helpPath.length; index += 1) {
+        currentNode = getOrCreateHelpCategoryNode(currentNode, entry.helpPath[index] ?? 'General')
+      } // end for each command help segment
+      currentNode.children ??= []
+      currentNode.children.push(createHelpLeafForCommand(entry))
+    } // end for each command help entry
+
+    for (const child of root.children ?? []) {
+      sortHelpNode(child)
+    } // end for each top-level category
+
+    return root
+  } // end function buildHelpTree
+
+  const getHelpNodeBySelectionPath = (selectionPath: number[]): DeveloperConsoleHelpNode | null => {
+    let currentNode: DeveloperConsoleHelpNode | null = buildHelpTree()
+    for (const selectionIndex of selectionPath) {
+      const children = currentNode.children ?? []
+      const nextNode = children[selectionIndex]
+      if (!nextNode) {
+        return null
+      } // end if invalid selection index
+      currentNode = nextNode
+    } // end for each selection path index
+    return currentNode
+  } // end function getHelpNodeBySelectionPath
+
+  const formatHelpMenuLines = (selectionPath: number[] = []): string[] => {
+    const node = getHelpNodeBySelectionPath(selectionPath)
+    if (!node) {
+      helpMenuSelectionPath = []
+      return ['Help navigation reset.', 'Select one of these help categories:', ...((buildHelpTree().children ?? []).map((child, index) => `${index + 1}. ${child.title}`))]
+    } // end if current help node could not be resolved
+
+    const children = node.children ?? []
+    const isRoot = selectionPath.length === 0
+    const lines: string[] = []
+
+    if (isRoot) {
+      lines.push('Select one of these help categories:')
+      lines.push(...children.map((child, index) => `${index + 1}. ${child.title}`))
+      lines.push('Enter a number to open that help category.')
+      return lines
+    } // end if root menu requested
+
+    lines.push(`Showing help for ${node.title}.`)
+    if (node.description) {
+      lines.push(node.description)
+    } // end if node has description
+
+    if (children.length > 0) {
+      lines.push(`Select a subcategory for ${node.title}:`)
+      lines.push(...children.map((child, index) => `${index + 1}. ${child.title}`))
+    } else if (node.lines && node.lines.length > 0) {
+      lines.push(...node.lines)
+    } else {
+      lines.push('No detailed help is available for this item yet.')
+    } // end if node is a category or leaf
+
+    lines.push('0. Back')
+    lines.push('Type help to return to the top help categories.')
+    return lines
+  } // end function formatHelpMenuLines
+
+  const findCommandHelpEntry = (topic: string): DeveloperConsoleCommandHelp | undefined => {
+    const normalizedTopic = topic.trim().toLowerCase()
+    return commandHelp.find((entry) => {
+      const commandName = (entry.syntax.split(' ')[0] ?? '').toLowerCase()
+      if (commandName === normalizedTopic) {
+        return true
+      } // end if topic matches primary command name
+      return (entry.aliases ?? []).some((alias) => alias.toLowerCase() === normalizedTopic)
+    })
+  } // end function findCommandHelpEntry
+
+  const findHelpNodeByTitle = (
+    node: DeveloperConsoleHelpNode,
+    query: string,
+    path: number[] = []
+  ): { path: number[]; node: DeveloperConsoleHelpNode } | null => {
+    if (node.title.toLowerCase() === query.toLowerCase()) {
+      return { path, node }
+    } // end if node title matches query
+
+    for (let index = 0; index < (node.children ?? []).length; index += 1) {
+      const child = node.children?.[index]
+      if (!child) {
+        continue
+      } // end if child missing
+      const match = findHelpNodeByTitle(child, query, [...path, index])
+      if (match) {
+        return match
+      } // end if child subtree matched
+    } // end for each child
+
+    return null
+  } // end function findHelpNodeByTitle
+
+  const getDirectHelpLines = (topic: string): string[] => {
+    const normalizedTopic = topic.trim()
+    const bindings = getConsoleBindings()
+    const binding = bindings[normalizedTopic]
     if (binding) {
-      return [
-        `${topic}`,
-        `  ${binding.description}`,
-        `  current = ${formatConsoleValue(binding.get())}`,
-        `  writable = ${binding.set ? 'true' : 'false'}`
-      ]
-    } // end if topic is a binding path
+      return createHelpLeafForBinding(normalizedTopic, binding).lines ?? [`No help found for "${normalizedTopic}".`]
+    } // end if topic matched binding path
 
-    const command = commandHelp.find((entry) => entry.syntax.split(' ')[0] === topic)
+    const command = findCommandHelpEntry(normalizedTopic)
     if (command) {
-      return [`${command.syntax}`, `  ${command.description}`]
-    } // end if topic is a command
+      return createHelpLeafForCommand(command).lines ?? [`No help found for "${normalizedTopic}".`]
+    } // end if topic matched command
 
-    return [`No help found for "${topic}".`]
-  } // end function getHelpLines
+    const tree = buildHelpTree()
+    const categoryMatch = findHelpNodeByTitle(tree, normalizedTopic)
+    if (categoryMatch) {
+      helpMenuSelectionPath = categoryMatch.path
+      return formatHelpMenuLines(categoryMatch.path)
+    } // end if topic matched help category or leaf title
+
+    return [`No help found for "${normalizedTopic}".`]
+  } // end function getDirectHelpLines
+
+  const navigateHelpMenuSelection = (rawSelection: string): string[] | null => {
+    if (helpMenuSelectionPath === null) {
+      return null
+    } // end if help menu is not active
+
+    if (!/^\d+$/.test(rawSelection.trim())) {
+      return null
+    } // end if input is not a numeric selection
+
+    const selection = Number(rawSelection.trim())
+    if (!Number.isInteger(selection)) {
+      return null
+    } // end if selection is not an integer
+
+    if (selection === 0) {
+      helpMenuSelectionPath = helpMenuSelectionPath.length > 0 ? helpMenuSelectionPath.slice(0, -1) : []
+      return formatHelpMenuLines(helpMenuSelectionPath)
+    } // end if navigating back
+
+    const currentNode = getHelpNodeBySelectionPath(helpMenuSelectionPath)
+    const children = currentNode?.children ?? []
+    const nextNode = children[selection - 1]
+    if (!nextNode) {
+      return [`Invalid help selection: ${selection}.`, ...formatHelpMenuLines(helpMenuSelectionPath)]
+    } // end if user selected out-of-range option
+
+    helpMenuSelectionPath = [...helpMenuSelectionPath, selection - 1]
+    return formatHelpMenuLines(helpMenuSelectionPath)
+  } // end function navigateHelpMenuSelection
 
   let devConsole: ReturnType<typeof createDeveloperConsole> | null = null
 
@@ -987,6 +1395,7 @@ function startTestMap(): void {
     } // end if console opened from active gameplay or pause menu
 
     isConsoleOpen = true
+  helpMenuSelectionPath = null
     devConsole?.open()
     devConsole?.setStatus(consoleResumeOnClose
       ? 'PAUSED FOR CONSOLE | ENTER: RUN | TAB: COMPLETE | ESC OR `: RESUME'
@@ -994,6 +1403,11 @@ function startTestMap(): void {
   } // end function openDeveloperConsole
 
   const executeDeveloperCommand = async (commandLine: string): Promise<string[]> => {
+    const helpSelectionLines = navigateHelpMenuSelection(commandLine)
+    if (helpSelectionLines !== null) {
+      return helpSelectionLines
+    } // end if command line selected an active help menu item
+
     const tokens = tokenizeCommandLine(commandLine)
     if (tokens.length === 0) {
       return []
@@ -1004,8 +1418,16 @@ function startTestMap(): void {
     const bindings = getConsoleBindings()
 
     if (command === 'help') {
-      return getHelpLines(args[0])
+      if (args.length === 0) {
+        helpMenuSelectionPath = []
+        return formatHelpMenuLines([])
+      } // end if opening top-level help menu
+
+      const directTopic = args.join(' ')
+      return getDirectHelpLines(directTopic)
     } // end if help command
+
+    helpMenuSelectionPath = null
 
     if (command === 'state' || command === 'status') {
       return getStateLines()
@@ -1107,6 +1529,16 @@ function startTestMap(): void {
     const hasTrailingWhitespace = /\s$/.test(commandLine)
     const commandNames = commandHelp.map((entry) => entry.syntax.split(' ')[0] ?? '').filter((name) => name.length > 0)
 
+    if (helpMenuSelectionPath !== null && /^\d*$/.test(trimmedLine)) {
+      const currentNode = getHelpNodeBySelectionPath(helpMenuSelectionPath)
+      const children = currentNode?.children ?? []
+      const suggestions = children.map((_, index) => String(index + 1))
+      if (helpMenuSelectionPath.length > 0) {
+        suggestions.unshift('0')
+      } // end if back navigation is available
+      return suggestions
+    } // end if completing an active help-menu selection
+
     if (tokens.length === 0) {
       return commandNames
     } // end if no tokens entered yet
@@ -1155,7 +1587,7 @@ function startTestMap(): void {
     })
     devConsole.print([
       'MECH AUDIO DEV CONSOLE READY',
-      'Type help for commands. Type list to browse editable paths.'
+      'Type help for categorized command menus. Type list to browse editable paths.'
     ])
   } // end if developer console DOM is available
 
@@ -1282,35 +1714,49 @@ function startTestMap(): void {
       audio.playLockOnChirp()
     } // end if lock acquired
 
+    const shouldAttemptShot = playerWeapon.isFullAuto ? input.fireHeld : input.firePending
     if (input.firePending) {
       input.firePending = false
-      if (playerFireCooldownSeconds <= 0) {
-        audio.fireGunshot()
-        updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
-        if (playerWeapon.fireRateCooldownSeconds > 0) {
-          playerFireCooldownSeconds = playerWeapon.fireRateCooldownSeconds
-        } // end if fire rate applies
-        if (lockUpdate.lockedTank !== null) {
-          const playerSpeed = Math.hypot(player.x - previousPlayerX, player.y - previousPlayerY) / Math.max(deltaSeconds, 0.0001)
-          const maxMoveSpeed = player.isFlying ? PLAYER_FLIGHT_SPEED : PLAYER_SPEED
-          const speedFraction = Math.min(1, playerSpeed / maxMoveSpeed)
-          spawnPlayerBulletToward(
-            combatWorld,
-            player,
-            lockUpdate.lockedTank.x,
-            lockUpdate.lockedTank.y,
-            lockUpdate.lockedTank.height + 0.5,
-            playerWeapon.accuracy,
-            speedFraction,
-            playerWeapon.damagePerShot,
-            playerWeapon.bulletSpeed,
-            playerWeapon.maxRange
-          )
-        } else {
-          spawnPlayerBullet(combatWorld, player, playerWeapon.damagePerShot, playerWeapon.bulletSpeed, playerWeapon.maxRange)
-        } // end if locked target for accuracy cone
-      } // end if fire rate cooldown elapsed
-    } // end if fire pending
+    } // end if consume edge-trigger press
+
+    if (shouldAttemptShot && playerFireCooldownSeconds <= 0) {
+      audio.fireGunshot()
+      updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
+      if (playerWeapon.fireRateCooldownSeconds > 0) {
+        playerFireCooldownSeconds = playerWeapon.fireRateCooldownSeconds
+      } // end if fire rate applies
+      const playerSpeed = Math.hypot(player.x - previousPlayerX, player.y - previousPlayerY) / Math.max(deltaSeconds, 0.0001)
+      const maxMoveSpeed = player.isFlying ? PLAYER_FLIGHT_SPEED : PLAYER_SPEED
+      const speedFraction = Math.min(1, playerSpeed / maxMoveSpeed)
+      if (lockUpdate.lockedTank !== null) {
+        spawnPlayerBulletToward(
+          combatWorld,
+          player,
+          lockUpdate.lockedTank.x,
+          lockUpdate.lockedTank.y,
+          lockUpdate.lockedTank.height + 0.5,
+          playerWeapon.accuracy,
+          speedFraction,
+          playerWeapon.damagePerShot,
+          playerWeapon.bulletSpeed,
+          playerWeapon.maxRange,
+          playerWeapon.projectileCount,
+          playerWeapon.spreadDegrees
+        )
+      } else {
+        spawnPlayerBullet(
+          combatWorld,
+          player,
+          playerWeapon.damagePerShot,
+          playerWeapon.bulletSpeed,
+          playerWeapon.maxRange,
+          playerWeapon.accuracy,
+          speedFraction,
+          playerWeapon.projectileCount,
+          playerWeapon.spreadDegrees
+        )
+      } // end if locked target for accuracy cone
+    } // end if fire input and cooldown allow
 
     const awareness = computeObstructionAwareness(player, combatRender.tanks, collisionWorld, sprites)
 

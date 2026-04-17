@@ -4,6 +4,18 @@ function shouldPreventDefault(code: string): boolean {
   return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(code)
 } // end function shouldPreventDefault
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  } // end if target is not a DOM element
+
+  if (target.isContentEditable) {
+    return true
+  } // end if contenteditable target
+
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
+} // end function isEditableTarget
+
 export function bindInput(
   input: InputState,
   audio: AudioController,
@@ -19,6 +31,10 @@ export function bindInput(
   document.addEventListener('touchstart', resumeAudioOnInteraction, { passive: true })
 
   document.addEventListener('keydown', async (event) => {
+    if (isEditableTarget(event.target)) {
+      return
+    } // end if typing in editable field
+
     if (isInputBlocked()) {
       if (shouldPreventDefault(event.code)) {
         event.preventDefault()
@@ -74,6 +90,7 @@ export function bindInput(
       } // end if ArrowDown
 
       if (event.code === 'Space') {
+        input.fireHeld = true
         input.firePending = true
       } // end if Space
 
@@ -156,6 +173,10 @@ export function bindInput(
   }) // end keydown listener
 
   document.addEventListener('keyup', (event) => {
+    if (isEditableTarget(event.target)) {
+      return
+    } // end if typing in editable field
+
     keys[event.code] = false
 
     if (event.code === 'KeyW') {
@@ -189,6 +210,10 @@ export function bindInput(
     if (event.code === 'ArrowDown') {
       input.lookDown = false
     } // end if ArrowDown
+
+    if (event.code === 'Space') {
+      input.fireHeld = false
+    } // end if Space
 
     if (event.code === 'KeyF') {
       input.flightTogglePending = false

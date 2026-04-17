@@ -23,6 +23,7 @@ export function createInputState(): InputState {
     lookUp: false,
     lookDown: false,
     pitchResetPending: false,
+    fireHeld: false,
     firePending: false,
     flightTogglePending: false,
     sonarPingPending: false,

@@ -443,6 +443,14 @@
           <input type="number" id="weaponDamage" name="damage" min="1" max="9999" step="1" />
         </div>
         <div class="editor-field">
+          <label for="weaponProjectileCount">Projectiles per Shot</label>
+          <input type="number" id="weaponProjectileCount" name="projectileCount" min="1" max="64" step="1" />
+        </div>
+        <div class="editor-field">
+          <label for="weaponSpread">Spread (degrees)</label>
+          <input type="number" id="weaponSpread" name="spreadDegrees" min="0" max="90" step="0.1" />
+        </div>
+        <div class="editor-field">
           <label for="weaponBulletSpeed">Bullet Speed (u/s)</label>
           <input type="number" id="weaponBulletSpeed" name="bulletSpeed" min="1" max="200" step="1" />
         </div>
@@ -453,6 +461,10 @@
         <div class="editor-field">
           <label for="weaponFireRate">Min Fire Rate (seconds, 0=unlimited)</label>
           <input type="number" id="weaponFireRate" name="fireRate" min="0" max="10" step="0.05" />
+        </div>
+        <div class="editor-field">
+          <label for="weaponFullAuto">Full Auto</label>
+          <input type="checkbox" id="weaponFullAuto" name="fullAuto" />
         </div>
       </fieldset>
       <fieldset class="editor-fieldset">
