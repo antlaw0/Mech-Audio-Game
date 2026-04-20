@@ -13,5 +13,9 @@
   "references": [
     { "path": "../shared" }
   ],
-  "include": ["src/**/*.ts", "src/**/*.json"]
+  "include": [
+    "src/test-map/**/*.ts",
+    "src/test-map/**/*.json",
+    "src/net/**/*.ts"
+  ]
 }
