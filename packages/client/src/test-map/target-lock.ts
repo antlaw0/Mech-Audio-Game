@@ -1,5 +1,4 @@
-import { HALF_FOV } from './constants.js'
-import { PLAYER_HEIGHT } from './constants.js'
+import { HALF_FOV, MAX_LOOK_PITCH, PLAYER_HEIGHT } from './constants.js'
 import { hasWorldLineOfSight3D, type WorldCollisionWorld } from './world-collision.js'
 import type { Player, TargetLockState, TankRender } from './types.js'
 
@@ -53,6 +52,8 @@ export function updateTargetLock(
     const dx = tank.x - player.x
     const dy = tank.y - player.y
     const dist = Math.hypot(dx, dy)
+    const playerEyeZ = (player.z ?? 0) + PLAYER_HEIGHT
+    const targetCenterZ = tank.height + PLAYER_HEIGHT
 
     if (dist > lockOnRange) {
       continue
@@ -72,18 +73,19 @@ export function updateTargetLock(
       continue
     } // end if target not within horizontal lock-on window
 
-    // Vertical lock-on window check based on pitch.
-    const MAX_LOOK_PITCH = 0.7 // from constants.ts
+    // Vertical lock-on window check based on the target elevation relative to the current aim.
+    const desiredPitch = Math.atan2(playerEyeZ - targetCenterZ, Math.max(dist, 0.0001))
     const maxVerticalPitch = MAX_LOOK_PITCH * (lockOnWindowHeightPercent / 100)
-    if (Math.abs(player.pitch) > maxVerticalPitch) {
+    const pitchDelta = desiredPitch - player.pitch
+    if (Math.abs(pitchDelta) > maxVerticalPitch) {
       continue
     } // end if player pitch outside lock-on window
 
     // Wall line-of-sight check.
     if (!hasWorldLineOfSight3D(
       collisionWorld,
-      { x: player.x, y: player.y, z: (player.z ?? 0) + PLAYER_HEIGHT },
-      { x: tank.x, y: tank.y, z: tank.height + PLAYER_HEIGHT }
+      { x: player.x, y: player.y, z: playerEyeZ },
+      { x: tank.x, y: tank.y, z: targetCenterZ }
     )) {
       continue
     } // end if wall blocking view

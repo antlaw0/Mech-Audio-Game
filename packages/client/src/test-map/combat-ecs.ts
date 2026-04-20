@@ -97,7 +97,7 @@ const ProjectileStats = defineComponent({
 })
 
 const MissileStats = defineComponent({
-  targetId: Types.ui16,
+  targetId: Types.ui32,
   trackingRating: Types.f32,
   guidanceTimer: Types.f32,
   explosionRadius: Types.f32,
@@ -513,7 +513,9 @@ export function spawnPlayerMissile(
 ): void {
   const targetX = getNumber(Position.x, targetTankId) ?? player.x
   const targetY = getNumber(Position.y, targetTankId) ?? player.y
+  const targetZ = Math.max(0, getNumber(Flight.height, targetTankId) ?? (player.z ?? 0)) + PLAYER_HEIGHT
   const angle = Math.atan2(targetY - player.y, targetX - player.x)
+  const originHeight = (player.z ?? 0) + PLAYER_HEIGHT
   const missile = addEntity(world)
   addComponent(world, Position, missile)
   addComponent(world, Facing, missile)
@@ -524,7 +526,7 @@ export function spawnPlayerMissile(
   Position.x[missile] = player.x
   Position.y[missile] = player.y
   Facing.angle[missile] = angle
-  Facing.pitch[missile] = player.pitch
+  Facing.pitch[missile] = getPitchToTarget(player.x, player.y, originHeight, targetX, targetY, targetZ)
   Meta.kind[missile] = KIND_MISSILE
   Meta.radius[missile] = Math.max(0.08, projectileSize)
   Meta.distance[missile] = 0
@@ -532,7 +534,7 @@ export function spawnPlayerMissile(
   ProjectileStats.speed[missile] = Math.max(1, speed)
   ProjectileStats.damage[missile] = Math.max(1, Math.round(damage))
   ProjectileStats.maxDistance[missile] = Math.max(1, maxDistance)
-  ProjectileStats.originHeight[missile] = (player.z ?? 0) + PLAYER_HEIGHT
+  ProjectileStats.originHeight[missile] = originHeight
   ProjectileStats.nearMissPlayed[missile] = 0
   ProjectileStats.owner[missile] = PROJECTILE_OWNER_PLAYER
   MissileStats.targetId[missile] = targetTankId
@@ -563,6 +565,56 @@ function computeFloorCeilHitDistance(originHeight: number, pitch: number): numbe
 function getProjectileHeight(originHeight: number, distance: number, pitch: number): number {
   return originHeight - Math.tan(pitch) * distance
 } // end function getProjectileHeight
+
+function getPitchToTarget(
+  originX: number,
+  originY: number,
+  originZ: number,
+  targetX: number,
+  targetY: number,
+  targetZ: number
+): number {
+  const horizontalDistance = Math.hypot(targetX - originX, targetY - originY)
+  return clampProjectilePitch(Math.atan2(originZ - targetZ, Math.max(horizontalDistance, 0.0001)))
+} // end function getPitchToTarget
+
+function getFirstContactFraction(
+  startX: number,
+  startY: number,
+  startZ: number,
+  endX: number,
+  endY: number,
+  endZ: number,
+  targetX: number,
+  targetY: number,
+  targetZ: number,
+  horizontalHitRadius: number,
+  verticalHitHalfHeight: number
+): number {
+  const segmentX = endX - startX
+  const segmentY = endY - startY
+  const segmentZ = endZ - startZ
+  const segmentLengthSquared = (segmentX * segmentX) + (segmentY * segmentY) + (segmentZ * segmentZ)
+  if (segmentLengthSquared <= 0.000001) {
+    const horizontalDistance = Math.hypot(startX - targetX, startY - targetY)
+    return horizontalDistance < horizontalHitRadius && Math.abs(startZ - targetZ) <= verticalHitHalfHeight ? 0 : -1
+  } // end if projectile did not move this frame
+
+  const segmentLength = Math.sqrt(segmentLengthSquared)
+  const stepCount = Math.max(2, Math.ceil(segmentLength / Math.max(0.05, horizontalHitRadius * 0.35)))
+  for (let stepIndex = 1; stepIndex <= stepCount; stepIndex += 1) {
+    const fraction = stepIndex / stepCount
+    const sampleX = startX + (segmentX * fraction)
+    const sampleY = startY + (segmentY * fraction)
+    const sampleZ = startZ + (segmentZ * fraction)
+    const horizontalDistance = Math.hypot(sampleX - targetX, sampleY - targetY)
+    if (horizontalDistance < horizontalHitRadius && Math.abs(sampleZ - targetZ) <= verticalHitHalfHeight) {
+      return fraction
+    } // end if projectile first overlaps target volume
+  } // end for each segment sample
+
+  return -1
+} // end function getFirstContactFraction
 
 function getNumber(store: ArrayLike<number>, entity: number): number | null {
   const value = store[entity]
@@ -744,7 +796,7 @@ export function stepCombatEcsWorld(
     } // end if not projectile or dead
 
     let angle = getNumber(Facing.angle, entity)
-    const pitch = getNumber(Facing.pitch, entity)
+    let pitch = getNumber(Facing.pitch, entity)
     const currentX = getNumber(Position.x, entity)
     const currentY = getNumber(Position.y, entity)
     const currentDist = getNumber(Meta.distance, entity)
@@ -768,64 +820,83 @@ export function stepCombatEcsWorld(
     if (kind === KIND_MISSILE) {
       const trackingRating = Math.max(0, Math.min(1, getNumber(MissileStats.trackingRating, entity) ?? 0.4))
       const targetId = MissileStats.targetId[entity] ?? 0
-      const guidanceInterval = 0.22 - (0.17 * trackingRating)
-      const currentTimer = Math.max(0, getNumber(MissileStats.guidanceTimer, entity) ?? 0)
-      const nextTimer = currentTimer - deltaSeconds
-      if (nextTimer <= 0) {
-        const targetAlive = (Meta.alive[targetId] ?? 0) === 1
-        const targetX = getNumber(Position.x, targetId)
-        const targetY = getNumber(Position.y, targetId)
-        if (targetAlive && targetX !== null && targetY !== null) {
-          const desiredAngle = Math.atan2(targetY - currentY, targetX - currentX)
-          let deltaAngle = desiredAngle - angle
-          while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2
-          while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2
-          const maxTurnRate = 0.6 + trackingRating * 4.2
-          const maxTurn = maxTurnRate * deltaSeconds
-          const appliedTurn = Math.max(-maxTurn, Math.min(maxTurn, deltaAngle))
-          angle += appliedTurn
-          Facing.angle[entity] = angle
-        } // end if valid target for guidance
-        MissileStats.guidanceTimer[entity] = guidanceInterval
-      } else {
-        MissileStats.guidanceTimer[entity] = nextTimer
-      } // end if guidance should update
+      const targetAlive = (Meta.alive[targetId] ?? 0) === 1
+      const targetX = getNumber(Position.x, targetId)
+      const targetY = getNumber(Position.y, targetId)
+      const targetHeight = getNumber(Flight.height, targetId)
+      if (targetAlive && targetX !== null && targetY !== null && targetHeight !== null) {
+        const desiredAngle = Math.atan2(targetY - currentY, targetX - currentX)
+        const currentHeight = originHeight
+        const desiredPitch = getPitchToTarget(
+          currentX,
+          currentY,
+          currentHeight,
+          targetX,
+          targetY,
+          targetHeight + PLAYER_HEIGHT
+        )
+        let deltaAngle = desiredAngle - angle
+        while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2
+        while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2
+        let deltaPitch = desiredPitch - pitch
+        while (deltaPitch > Math.PI) deltaPitch -= Math.PI * 2
+        while (deltaPitch < -Math.PI) deltaPitch += Math.PI * 2
+        const maxTurnRate = 2.4 + trackingRating * 6.4
+        const maxTurn = maxTurnRate * deltaSeconds
+        const appliedTurn = Math.max(-maxTurn, Math.min(maxTurn, deltaAngle))
+        const appliedPitchTurn = Math.max(-maxTurn, Math.min(maxTurn, deltaPitch))
+        angle += appliedTurn
+        pitch = clampProjectilePitch(pitch + appliedPitchTurn)
+        Facing.angle[entity] = angle
+        Facing.pitch[entity] = pitch
+      } // end if valid target for guidance
     } // end if missile guidance path
 
     const step = speed * deltaSeconds
+  const pitchCos = Math.cos(pitch)
+  const horizontalStep = kind === KIND_MISSILE ? step * Math.max(0, pitchCos) : step
     const cosA = Math.cos(angle)
     const sinA = Math.sin(angle)
-    const nextX = currentX + cosA * step
-    const nextY = currentY + sinA * step
-    const nextDist = currentDist + step
+  const nextX = currentX + cosA * horizontalStep
+  const nextY = currentY + sinA * horizontalStep
+  const nextDist = currentDist + horizontalStep
 
-    const floorCeilDist = computeFloorCeilHitDistance(originHeight, pitch)
-    if (nextDist >= floorCeilDist) {
-      const hitFraction = (floorCeilDist - currentDist) / Math.max(0.0001, step)
-      const hitX = currentX + cosA * step * hitFraction
-      const hitY = currentY + sinA * step * hitFraction
-      const hitHeight = getProjectileHeight(originHeight, floorCeilDist, pitch)
-      if (kind === KIND_MISSILE) {
-        triggerMissileExplosion(entity, hitX, hitY, Math.max(0, hitHeight))
-      } else {
+    // For missiles, originHeight tracks actual Z per frame; for ballistics use straight-line formula.
+    const currentHeight = kind === KIND_MISSILE
+      ? originHeight
+      : getProjectileHeight(originHeight, currentDist, pitch)
+    const nextHeight = kind === KIND_MISSILE
+      ? originHeight - Math.sin(pitch) * step
+      : getProjectileHeight(originHeight, nextDist, pitch)
+
+    if (kind === KIND_MISSILE) {
+      // guidanceTimer doubles as total-range accumulator for max-distance expiry.
+      const totalRange = (MissileStats.guidanceTimer[entity] ?? 0) + step
+      MissileStats.guidanceTimer[entity] = totalRange
+      if (totalRange >= maxDist) {
+        triggerMissileExplosion(entity, nextX, nextY, Math.max(0, nextHeight))
+        continue
+      } // end if missile exceeded max range
+      if (nextHeight <= 0) {
+        triggerMissileExplosion(entity, nextX, nextY, 0)
+        continue
+      } // end if missile hit ground
+    } else {
+      const floorCeilDist = computeFloorCeilHitDistance(originHeight, pitch)
+      if (nextDist >= floorCeilDist) {
+        const hitFraction = (floorCeilDist - currentDist) / Math.max(0.0001, step)
+        const hitX = currentX + cosA * step * hitFraction
+        const hitY = currentY + sinA * step * hitFraction
         Meta.alive[entity] = 0
         audio.playImpact(hitX, hitY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
         impactFrameCount++
-      } // end if missile or non-missile floor impact
-      continue
-    } // end if floor or ceiling impact
-
-    if (nextDist >= maxDist) {
-      const endHeight = getProjectileHeight(originHeight, nextDist, pitch)
-      if (kind === KIND_MISSILE) {
-        triggerMissileExplosion(entity, nextX, nextY, Math.max(0, endHeight))
-      } else {
+        continue
+      } // end if floor or ceiling impact
+      if (nextDist >= maxDist) {
         Meta.alive[entity] = 0
-      } // end if missile expired by lifetime
-      continue
-    } // end if max distance reached
-
-    const nextHeight = getProjectileHeight(originHeight, nextDist, pitch)
+        continue
+      } // end if max distance reached
+    }
     if (isWorldBlockedAtHeight(collisionWorld, nextX, nextY, nextHeight, Math.max(0.02, bulletRadius * 0.55))) {
       if (kind === KIND_MISSILE) {
         triggerMissileExplosion(entity, nextX, nextY, Math.max(0, nextHeight))
@@ -889,18 +960,50 @@ export function stepCombatEcsWorld(
           continue
         } // end if missing tank collision data
         const tankCenterHeight = Math.max(0, Flight.height[tank] ?? 0) + PLAYER_HEIGHT
-        if (Math.hypot(nextX - targetX, nextY - targetY) < targetRadius + bulletRadius && Math.abs(nextHeight - tankCenterHeight) <= TANK_HIT_HALF_HEIGHT) {
-          triggerMissileExplosion(entity, nextX, nextY, Math.max(0, nextHeight))
-          exploded = true
-          break
-        } // end if missile impacted tank
+        const impactFraction = getFirstContactFraction(
+          currentX,
+          currentY,
+          currentHeight,
+          nextX,
+          nextY,
+          nextHeight,
+          targetX,
+          targetY,
+          tankCenterHeight,
+          targetRadius + bulletRadius,
+          TANK_HIT_HALF_HEIGHT
+        )
+        if (impactFraction < 0) {
+          continue
+        } // end if missile did not contact tank this frame
+        const impactX = currentX + ((nextX - currentX) * impactFraction)
+        const impactY = currentY + ((nextY - currentY) * impactFraction)
+        const impactHeight = currentHeight + ((nextHeight - currentHeight) * impactFraction)
+        triggerMissileExplosion(entity, impactX, impactY, Math.max(0, impactHeight))
+        exploded = true
+        break
       } // end for each tank for missile impact
 
       if (!exploded && (ProjectileStats.owner[entity] ?? 0) !== PROJECTILE_OWNER_PLAYER) {
-        const playerDistance = Math.hypot(nextX - player.x, nextY - player.y)
         const playerCenterHeight = (player.z ?? 0) + PLAYER_HEIGHT
-        if (playerDistance < PLAYER_RADIUS + bulletRadius && Math.abs(nextHeight - playerCenterHeight) <= PLAYER_HIT_HALF_HEIGHT) {
-          triggerMissileExplosion(entity, nextX, nextY, Math.max(0, nextHeight))
+        const impactFraction = getFirstContactFraction(
+          currentX,
+          currentY,
+          currentHeight,
+          nextX,
+          nextY,
+          nextHeight,
+          player.x,
+          player.y,
+          playerCenterHeight,
+          PLAYER_RADIUS + bulletRadius,
+          PLAYER_HIT_HALF_HEIGHT
+        )
+        if (impactFraction >= 0) {
+          const impactX = currentX + ((nextX - currentX) * impactFraction)
+          const impactY = currentY + ((nextY - currentY) * impactFraction)
+          const impactHeight = currentHeight + ((nextHeight - currentHeight) * impactFraction)
+          triggerMissileExplosion(entity, impactX, impactY, Math.max(0, impactHeight))
           exploded = true
         } // end if missile impacted player
       } // end if no missile impact yet
@@ -945,6 +1048,9 @@ export function stepCombatEcsWorld(
     Meta.distance[entity] = nextDist
 
     if (kind === KIND_MISSILE) {
+      // Store actual height for next frame; reset distance so renderer uses zOrigin as true height.
+      ProjectileStats.originHeight[entity] = Math.max(0.02, nextHeight)
+      Meta.distance[entity] = 0
       const trail = world.missileTrails.get(entity) ?? []
       trail.push({ x: nextX, y: Math.max(0.04, nextHeight), z: nextY })
       while (trail.length > 36) {

@@ -119,7 +119,7 @@ function createMissileTrailPuffs(): THREE.Group {
 
   for (let puffIndex = 0; puffIndex < 32; puffIndex += 1) {
     const puff = new THREE.Mesh(
-      new THREE.SphereGeometry(0.12, 10, 10),
+      new THREE.SphereGeometry(0.06, 10, 10),
       new THREE.MeshBasicMaterial({
         color: 0xc8d0d8,
         transparent: true,

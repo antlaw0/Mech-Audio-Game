@@ -36,15 +36,29 @@ The server listens on ws://localhost:8080.
 
 ## Run Test Map
 
-1. Build client output:
+The test map is compiled TypeScript in the browser:
+
+- Source files live in `packages/client/src/test-map/*`
+- The browser loads compiled output from `packages/client/dist/test-map/main.js`
+
+If `dist` is stale, recent fixes in `src` will not appear in-game.
+
+Recommended local workflows:
 
 ```bash
-npm run build:client
+# Builds client once, then serves static files
+npm run dev:static
 ```
 
-2. Open test-map.html in a browser.
+```bash
+# Watches TypeScript and serves static files (best while iterating)
+npm run dev
+```
 
-The test-map HTML loads modular compiled code from packages/client/dist/test-map/main.js.
+```bash
+# Full playtest stack (server + TS watch + static server)
+npm run dev:playtest
+```
 
 ## Notes
 
