@@ -128,6 +128,7 @@ function startTestMap(): void {
 
   const awarenessStatusElement = document.getElementById('awarenessStatus')
   const sonarStatusElement = document.getElementById('sonarStatus')
+  const playerStatusElement = document.getElementById('playerStatus')
   const pauseOverlayElement = document.getElementById('pauseOverlay')
   const resumeButtonElement = document.getElementById('pauseResumeButton')
   const exitButtonElement = document.getElementById('pauseExitButton')
@@ -235,6 +236,10 @@ function startTestMap(): void {
     input.spawnStrikerPending = false
     input.spawnBrutePending = false
     input.spawnHelicopterPending = false
+    input.refillEpPending = false
+    input.refillHpPending = false
+    input.speakHpPending = false
+    input.speakEpPending = false
   } // end function clearGameplayInputs
 
   const equipWeaponAtIndex = (requestedIndex: number): void => {
@@ -617,6 +622,20 @@ function startTestMap(): void {
     } // end if falsy token
     throw new Error(`Expected boolean value, received "${rawValue}".`)
   } // end function parseBooleanValue
+
+  const speakPercent = (label: string, value: number, maxValue: number): void => {
+    if (!('speechSynthesis' in window)) {
+      return
+    } // end if speech synthesis unavailable
+
+    const safeMax = Math.max(1, maxValue)
+    const percent = Math.max(0, Math.min(100, Math.round((value / safeMax) * 100)))
+    const utterance = new SpeechSynthesisUtterance(`${label} ${percent} percent`)
+    utterance.rate = 1
+    utterance.pitch = 1
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utterance)
+  } // end function speakPercent
 
   const normalizeDegrees = (value: number): number => {
     let normalized = value % 360
@@ -1733,6 +1752,39 @@ function startTestMap(): void {
       deltaSeconds
     )
 
+    const hpBeforeCombat = Math.max(0, player.hp)
+
+    const energyRegenPerSecond = 1
+    const energyDrainPerSecond = player.isFlying ? 2 : 0
+    const epDelta = (energyRegenPerSecond - energyDrainPerSecond) * deltaSeconds
+    player.ep = Math.max(0, Math.min(player.maxEp, player.ep + epDelta))
+
+    if (input.speakHpPending) {
+      input.speakHpPending = false
+      speakPercent('Health', player.hp, player.maxHp)
+    } // end if HP speech requested
+
+    if (input.speakEpPending) {
+      input.speakEpPending = false
+      speakPercent('Energy', player.ep, player.maxEp)
+    } // end if EP speech requested
+
+    if (input.refillEpPending) {
+      input.refillEpPending = false
+      player.ep = player.maxEp
+      if (awarenessStatusElement) {
+        awarenessStatusElement.textContent = 'AWARENESS: EP RESTORED TO MAX'
+      } // end if awareness status element exists
+    } // end if EP refill requested
+
+    if (input.refillHpPending) {
+      input.refillHpPending = false
+      player.hp = player.maxHp
+      if (awarenessStatusElement) {
+        awarenessStatusElement.textContent = 'AWARENESS: HP RESTORED TO MAX'
+      } // end if awareness status element exists
+    } // end if HP refill requested
+
     const pendingManualPing = input.sonarPingPending
     input.sonarPingPending = false
     const shouldTriggerManualPing = pendingManualPing && !player.isFlying
@@ -1778,6 +1830,14 @@ function startTestMap(): void {
     } // end if spawn helicopter pending
 
     stepCombatEcsWorld(combatWorld, collisionWorld, audio, player, deltaSeconds)
+    if (player.hp < hpBeforeCombat) {
+      audio.playPlayerHealthStatusTone(player.hp / Math.max(1, player.maxHp))
+    } // end if player took damage this frame
+
+    audio.updatePlayerHealthStatusAudio(deltaSeconds, player.hp / Math.max(1, player.maxHp))
+
+    audio.updatePlayerEnergyStatusAudio(deltaSeconds, player.ep / Math.max(1, player.maxEp))
+
     const combatRender = getCombatRenderState(combatWorld)
 
     // --- Target lock evaluation ---
@@ -1976,6 +2036,12 @@ function startTestMap(): void {
             : 'SONAR: PASSIVE SWEEP ACTIVE | E: MANUAL PING'
       } // end if context running and timer active
     } // end if sonar status element exists
+
+    if (playerStatusElement) {
+      const hpPercent = Math.max(0, Math.min(100, Math.round((player.hp / Math.max(1, player.maxHp)) * 100)))
+      const epPercent = Math.max(0, Math.min(100, Math.round((player.ep / Math.max(1, player.maxEp)) * 100)))
+      playerStatusElement.textContent = `STATUS: HP ${hpPercent}% | EP ${epPercent}% | H: SPEAK HP | G: SPEAK EP`
+    } // end if player status element exists
 
     previousPlayerX = player.x
     previousPlayerY = player.y

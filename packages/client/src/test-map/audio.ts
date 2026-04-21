@@ -479,6 +479,7 @@ export function createAudioController(): AudioController {
   let projectileNearMissVoiceCursor = 0
   let playerMechHitBaseVoiceCursor = 0
   let playerMechHitDetailVoiceCursor = 0
+  let energyPulseTimerSeconds = 0
   let lastImpactTimeSeconds = -1
   let lastTankHitConfirmTimeSeconds = -1
 
@@ -490,7 +491,7 @@ export function createAudioController(): AudioController {
   let ambienceVolume = 1
   let servoVolume = 1
   let footstepsVolume = 1
-  let flightLoopVolume = 1
+  let flightLoopVolume = 0.5
   let proximityVolume = 1
   let objectsVolume = 1
   let enemiesVolume = 1
@@ -715,7 +716,8 @@ export function createAudioController(): AudioController {
   } // end for each base mech-hit voice
 
   const playerMechHitDetailFilter = new Tone.Filter(1800, 'highpass').connect(playerMechHitGain)
-  const playerMechHitDetailPitch = new Tone.PitchShift(0).connect(playerMechHitDetailFilter)
+  const playerMechHitDetailDrive = new Tone.Distortion(0.1).connect(playerMechHitDetailFilter)
+  const playerMechHitDetailPitch = new Tone.PitchShift(0).connect(playerMechHitDetailDrive)
   const playerMechHitDetailVoices = [
     new Tone.Player('assets/sounds/damageSmall1.ogg').connect(playerMechHitDetailPitch),
     new Tone.Player('assets/sounds/damageSmall1.ogg').connect(playerMechHitDetailPitch),
@@ -724,10 +726,10 @@ export function createAudioController(): AudioController {
     new Tone.Player('assets/sounds/damageSmall2.ogg').connect(playerMechHitDetailPitch),
     new Tone.Player('assets/sounds/damageSmall2.ogg').connect(playerMechHitDetailPitch)
   ]
-  const playerMechHitDetailRates = [0.9, 1, 1.1, 0.9, 1, 1.1]
+  const playerMechHitDetailRateOffsets = [0.9, 0.97, 1.04, 0.92, 1, 1.07]
   for (let voiceIndex = 0; voiceIndex < playerMechHitDetailVoices.length; voiceIndex += 1) {
     const voice = playerMechHitDetailVoices[voiceIndex]
-    const rate = playerMechHitDetailRates[voiceIndex]
+    const rate = playerMechHitDetailRateOffsets[voiceIndex]
     if (!voice || rate === undefined) {
       continue
     } // end if missing voice/rate
@@ -774,6 +776,21 @@ export function createAudioController(): AudioController {
   const negativeActionSynth = new Tone.Synth({
     oscillator: { type: 'triangle' },
     envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.04 }
+  }).toDestination()
+
+  const healthStatusSynth = new Tone.Synth({
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.001, decay: 0.14, sustain: 0, release: 0.08 }
+  }).toDestination()
+  const lowHealthAlarmSynth = new Tone.Synth({
+    oscillator: { type: 'square' },
+    envelope: { attack: 0.001, decay: 0.09, sustain: 0, release: 0.05 }
+  }).toDestination()
+
+  const energyPulseSynth = new Tone.FMSynth({
+    harmonicity: 0.75,
+    modulationIndex: 3.2,
+    envelope: { attack: 0.004, decay: 0.2, sustain: 0, release: 0.12 }
   }).toDestination()
 
   const sonarSweepSynth = new Tone.FMSynth({
@@ -881,6 +898,14 @@ export function createAudioController(): AudioController {
     } // end if player already started
     player.start()
   } // end function retriggerLoadedPlayer
+
+  const setPlaybackRateSafely = (player: Tone.Player, playbackRate: number): void => {
+    try {
+      player.playbackRate = playbackRate
+    } catch {
+      // Ignore timeline ordering collisions from rapid rate updates.
+    } // end try/catch playbackRate set
+  } // end function setPlaybackRateSafely
 
   const playFromVoicePool = (voices: Tone.Player[], cursor: number): number => {
     if (voices.length === 0) {
@@ -1001,6 +1026,7 @@ export function createAudioController(): AudioController {
   let missileLockToneLastStartSeconds = -Infinity
   let missileLockConfirmLastStartSeconds = -Infinity
   let negativeActionLastStartSeconds = -Infinity
+  let lowHealthAlarmTimerSeconds = 0
 
   const strictlyIncreasingStartTime = (requestedSeconds: number, previousSeconds: number): number => {
     return Math.max(requestedSeconds, previousSeconds + 0.001)
@@ -1716,8 +1742,114 @@ export function createAudioController(): AudioController {
     } // end if audio not started
 
     playerMechHitBaseVoiceCursor = playFromVoicePool(playerMechHitBaseVoices, playerMechHitBaseVoiceCursor)
-    playerMechHitDetailVoiceCursor = playFromVoicePool(playerMechHitDetailVoices, playerMechHitDetailVoiceCursor)
   } // end function playPlayerMechHit
+
+  const playPlayerHealthStatusTone = (hpPercent: number): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
+      return
+    } // end if audio not started
+
+    const normalized = clamp(hpPercent, 0, 1)
+    const pitchSemitones = -14 + normalized * 30
+    const baseRate = 0.68 + normalized * 0.74
+    const detailFilterCutoff = normalized >= 0.6
+      ? 1400
+      : normalized >= 0.3
+        ? 2200
+        : 3200
+    const detailDriveAmount = normalized >= 0.6
+      ? 0.05
+      : normalized >= 0.3
+        ? 0.18
+        : 0.34
+    const cueNote = normalized >= 0.6
+      ? 'E5'
+      : normalized >= 0.3
+        ? 'C5'
+        : 'A4'
+    const cueGain = normalized >= 0.6
+      ? 0.12
+      : normalized >= 0.3
+        ? 0.2
+        : 0.32
+
+    playerMechHitDetailPitch.pitch = pitchSemitones
+    playerMechHitDetailFilter.frequency.value = detailFilterCutoff
+    playerMechHitDetailDrive.distortion = detailDriveAmount
+    playerMechHitBasePitch.pitch = -2 + normalized * 6
+    playerMechHitGain.gain.value = 0.82 + (1 - normalized) * 0.38
+
+    for (let voiceIndex = 0; voiceIndex < playerMechHitDetailVoices.length; voiceIndex += 1) {
+      const voice = playerMechHitDetailVoices[voiceIndex]
+      const offset = playerMechHitDetailRateOffsets[voiceIndex]
+      if (!voice || offset === undefined) {
+        continue
+      } // end if missing detail voice/rate offset
+      setPlaybackRateSafely(voice, clamp(baseRate * offset, 0.5, 1.65))
+    } // end for each detail voice
+
+    playerMechHitDetailVoiceCursor = playFromVoicePool(playerMechHitDetailVoices, playerMechHitDetailVoiceCursor)
+    healthStatusSynth.volume.value = gainToDbSafe(cueGain * masterVolume)
+    healthStatusSynth.triggerAttackRelease(cueNote, '64n')
+  } // end function playPlayerHealthStatusTone
+
+  const updatePlayerHealthStatusAudio = (dt: number, hpPercent: number): void => {
+    const normalized = clamp(hpPercent, 0, 1)
+    const isLowHealth = normalized < 0.15
+
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
+      lowHealthAlarmTimerSeconds = 0
+      return
+    } // end if audio not started
+
+    if (!isLowHealth) {
+      lowHealthAlarmTimerSeconds = 0
+      return
+    } // end if health not in critical zone
+
+    const danger = clamp((0.15 - normalized) / 0.15, 0, 1)
+    lowHealthAlarmTimerSeconds += dt
+    const intervalSeconds = 0.52 - danger * 0.38
+    if (lowHealthAlarmTimerSeconds < intervalSeconds) {
+      return
+    } // end if low-health alarm interval not reached
+    lowHealthAlarmTimerSeconds -= intervalSeconds
+
+    const gain = (0.22 + danger * 0.95) * masterVolume
+    const frequency = 520 + danger * 420
+    const now = Tone.now()
+    lowHealthAlarmSynth.volume.value = gainToDbSafe(gain)
+    lowHealthAlarmSynth.triggerAttackRelease(frequency, '16n', now)
+
+    if (danger >= 0.75) {
+      lowHealthAlarmSynth.triggerAttackRelease(frequency * 1.06, '32n', now + 0.08)
+    } // end if critical double-pulse should play
+  } // end function updatePlayerHealthStatusAudio
+
+  const updatePlayerEnergyStatusAudio = (dt: number, epPercent: number): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
+      energyPulseTimerSeconds = 0
+      return
+    } // end if audio not started
+
+    const normalized = clamp(epPercent, 0, 1)
+    if (normalized >= 0.999) {
+      energyPulseTimerSeconds = 0
+      return
+    } // end if energy full
+
+    energyPulseTimerSeconds += dt
+    const intervalSeconds = 0.24 + normalized * 1.66
+    if (energyPulseTimerSeconds < intervalSeconds) {
+      return
+    } // end if pulse interval not reached
+    energyPulseTimerSeconds -= intervalSeconds
+
+    const frequency = 85 + normalized * 110
+    const gain = (0.34 + (1 - normalized) * 0.96) * masterVolume
+    energyPulseSynth.volume.value = gainToDbSafe(gain)
+    energyPulseSynth.triggerAttackRelease(frequency, '8n')
+  } // end function updatePlayerEnergyStatusAudio
 
   const playPitchCenterConfirm = (): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
@@ -1977,6 +2109,9 @@ export function createAudioController(): AudioController {
     playTankDeathConfirm,
     playImpact,
     playPlayerMechHit,
+    playPlayerHealthStatusTone,
+    updatePlayerHealthStatusAudio,
+    updatePlayerEnergyStatusAudio,
     updateIncomingProjectileAudio,
     playProjectileNearMiss,
     isAudioStarted: () => audioStarted,

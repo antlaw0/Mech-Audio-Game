@@ -631,6 +631,9 @@ export function stepCombatEcsWorld(
   player: Player,
   deltaSeconds: number
 ): void {
+  player.maxHp = Math.max(1, player.maxHp ?? 100)
+  player.hp = Math.max(0, Math.min(player.maxHp, player.hp ?? player.maxHp))
+
   const allEntities = CombatQuery(world)
   let impactFrameCount = 0
   const IMPACT_STAGGER_SECONDS = 0.001
@@ -779,6 +782,9 @@ export function stepCombatEcsWorld(
     const playerVerticalDistance = Math.abs(playerZ - worldZ)
     const playerDistance = Math.hypot(playerEdgeDistance, playerVerticalDistance)
     if (playerDistance <= explosionRadius) {
+      const playerFalloff = Math.max(0, 1 - (playerDistance / Math.max(0.001, explosionRadius)))
+      const playerDamage = Math.max(1, Math.round(explosionDamage * playerFalloff))
+      player.hp = Math.max(0, player.hp - playerDamage)
       audio.playPlayerMechHit()
     } // end if player was inside explosion radius
 
@@ -1021,6 +1027,10 @@ export function stepCombatEcsWorld(
       const playerDistance = Math.hypot(dx, dy)
       const playerCenterHeight = (player.z ?? 0) + PLAYER_HEIGHT
       if (playerDistance < playerRadius + bulletRadius && Math.abs(nextHeight - playerCenterHeight) <= PLAYER_HIT_HALF_HEIGHT) {
+        const projectileDamage = Math.max(0, Math.round(getNumber(ProjectileStats.damage, entity) ?? 0))
+        if (projectileDamage > 0) {
+          player.hp = Math.max(0, player.hp - projectileDamage)
+        } // end if projectile has damage
         Meta.alive[entity] = 0
         ProjectileStats.nearMissPlayed[entity] = 1
         audio.playImpact(nextX, nextY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)

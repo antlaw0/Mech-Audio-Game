@@ -6,6 +6,10 @@ export function createPlayer(): Player {
     y: 24.5,
     angle: 0,
     pitch: 0,
+    hp: 1000,
+    maxHp: 1000,
+    ep: 1000,
+    maxEp: 1000,
     z: 0,
     flightState: 'grounded',
     isFlying: false
@@ -36,6 +40,10 @@ export function createInputState(): InputState {
     spawnTankPending: false,
     spawnStrikerPending: false,
     spawnBrutePending: false,
-    spawnHelicopterPending: false
+    spawnHelicopterPending: false,
+    refillEpPending: false,
+    refillHpPending: false,
+    speakHpPending: false,
+    speakEpPending: false
   } // end object input state
 } // end function createInputState

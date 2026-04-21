@@ -34,6 +34,12 @@
       font-size: 12px;
       letter-spacing: 1px;
     }
+    #playerStatus {
+      margin-top: 6px;
+      color: #ffd58e;
+      font-size: 12px;
+      letter-spacing: 1px;
+    }
     #pauseOverlay {
       position: absolute;
       inset: 0;
@@ -284,9 +290,10 @@
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="hud">
-  WASD: MOVE / STRAFE &nbsp;|&nbsp; ←→: TURN &nbsp;|&nbsp; ↑↓: LOOK (TAP BOTH TO CENTER) &nbsp;|&nbsp; SPACE: FIRE &nbsp;|&nbsp; E: MANUAL SONAR PING &nbsp;|&nbsp; I/J/K/L: SNAP N/W/S/E &nbsp;|&nbsp; NUMPAD 1-4: SPAWN ENEMY (PAUSE+NUMPAD: EDIT STATS) &nbsp;|&nbsp; NUMPAD 0: WEAPON EDITOR &nbsp;|&nbsp; Q: AIM ASSIST TOGGLE &nbsp;|&nbsp; `: DEV CONSOLE
+  WASD: MOVE / STRAFE &nbsp;|&nbsp; ←→: TURN &nbsp;|&nbsp; ↑↓: LOOK (TAP BOTH TO CENTER) &nbsp;|&nbsp; SPACE: FIRE &nbsp;|&nbsp; E: MANUAL SONAR PING &nbsp;|&nbsp; H/G: SPEAK HP/EP &nbsp;|&nbsp; I/J/K/L: SNAP N/W/S/E &nbsp;|&nbsp; NUMPAD 1-4: SPAWN ENEMY (PAUSE+NUMPAD: EDIT STATS) &nbsp;|&nbsp; NUMPAD 0: WEAPON EDITOR &nbsp;|&nbsp; Q: AIM ASSIST TOGGLE &nbsp;|&nbsp; `: DEV CONSOLE
   <div id="awarenessStatus">AWARENESS: SCANNING...</div>
   <div id="sonarStatus">SONAR: PASSIVE SWEEP READY</div>
+  <div id="playerStatus">STATUS: HP 100% | EP 100% | H: SPEAK HP | G: SPEAK EP</div>
 </div>
 <div id="pauseOverlay" aria-hidden="true">
   <div class="pause-panel" role="dialog" aria-modal="true" aria-label="Pause Menu">

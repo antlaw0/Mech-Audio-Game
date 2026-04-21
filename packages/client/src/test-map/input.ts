@@ -154,6 +154,22 @@ export function bindInput(
         input.spawnHelicopterPending = true
       } // end if Numpad4
 
+      if (event.code === 'NumpadDivide') {
+        input.refillEpPending = true
+      } // end if NumpadDivide
+
+      if (event.code === 'NumpadMultiply') {
+        input.refillHpPending = true
+      } // end if NumpadMultiply
+
+      if (event.code === 'KeyG') {
+        input.speakEpPending = true
+      } // end if KeyG
+
+      if (event.code === 'KeyH') {
+        input.speakHpPending = true
+      } // end if KeyH
+
       if (event.code === 'KeyQ') {
         audio.setAimAssistEnabled(!audio.isAimAssistEnabled())
       } // end if KeyQ toggle aim assist
@@ -282,6 +298,22 @@ export function bindInput(
     if (event.code === 'Numpad4') {
       input.spawnHelicopterPending = false
     } // end if Numpad4
+
+    if (event.code === 'NumpadDivide') {
+      input.refillEpPending = false
+    } // end if NumpadDivide
+
+    if (event.code === 'NumpadMultiply') {
+      input.refillHpPending = false
+    } // end if NumpadMultiply
+
+    if (event.code === 'KeyG') {
+      input.speakEpPending = false
+    } // end if KeyG
+
+    if (event.code === 'KeyH') {
+      input.speakHpPending = false
+    } // end if KeyH
 
     if (
       (event.code === 'ArrowLeft' || event.code === 'ArrowRight' || event.code === 'ArrowUp' || event.code === 'ArrowDown') &&

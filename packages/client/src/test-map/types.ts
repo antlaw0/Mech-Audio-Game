@@ -7,6 +7,10 @@ export interface Player {
   y: number
   angle: number
   pitch: number
+  hp: number
+  maxHp: number
+  ep: number
+  maxEp: number
   z?: number
   flightState?: PlayerFlightState
   isFlying?: boolean
@@ -36,6 +40,10 @@ export interface InputState {
   spawnStrikerPending: boolean
   spawnBrutePending: boolean
   spawnHelicopterPending: boolean
+  refillEpPending: boolean
+  refillHpPending: boolean
+  speakHpPending: boolean
+  speakEpPending: boolean
 } // end interface InputState
 
 export interface WorldPosition {
@@ -273,4 +281,7 @@ export interface AudioController {
     playerAngle: number,
     soundCandidates: string[]
   ) => void
+  playPlayerHealthStatusTone: (hpPercent: number) => void
+  updatePlayerHealthStatusAudio: (dt: number, hpPercent: number) => void
+  updatePlayerEnergyStatusAudio: (dt: number, epPercent: number) => void
 } // end interface AudioController
