@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 
-const lockFilePath = join(process.cwd(), '.vscode', '.dev-playtest.lock.json')
+const lockDirPath = join(process.cwd(), '.mech-audio')
+const lockFilePath = join(lockDirPath, '.dev-playtest.lock.json')
 const command = process.argv.slice(2)
 
 if (command.length === 0) {
@@ -59,6 +60,8 @@ if (existsSync(lockFilePath)) {
     // If cleanup fails, write below may still succeed.
   }
 }
+
+mkdirSync(lockDirPath, { recursive: true })
 
 writeFileSync(
   lockFilePath,

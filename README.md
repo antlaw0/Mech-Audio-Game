@@ -13,6 +13,11 @@ Audio-first mech shooter project scaffolded as a TypeScript monorepo.
 - Node.js 20+
 - npm 10+
 
+## VS Code Stability
+
+- Open the project using `Mech-Audio-Game.dev.code-workspace` instead of opening the folder directly.
+- The workspace file includes file-watcher exclusions for large audio/content folders and helps prevent editor stalls.
+
 ## Install
 
 ```bash

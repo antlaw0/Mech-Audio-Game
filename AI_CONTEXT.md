@@ -323,4 +323,130 @@ This architecture supports:
 
 ---
 
+## 13. Open World Zone Streaming Spec (Phase 1)
+
+This section defines the first production target for scaling from small maps to open world play using zone streaming.
+
+### 13.1 Unit Scale
+
+* 1 tile = 1 world unit.
+* Keep movement and combat ranges in world units exactly as they are today.
+* World coordinates remain float-based, but streaming and indexing must use integer chunk coordinates.
+
+### 13.2 Chunk Shape and Indexing
+
+* Chunk size: 64 x 64 world units.
+* Chunk key format: chunkX,chunkY where:
+
+  * chunkX = floor(worldX / 64)
+  * chunkY = floor(worldY / 64)
+* Each chunk owns:
+
+  * terrain tiles for that 64 x 64 area
+  * static obstacles/sprites in that area
+  * optional spawn metadata and ambient audio metadata
+
+### 13.3 Loaded Zone Rings
+
+Use concentric chunk rings around the player anchor chunk.
+
+* Collision ring (authoritative): radius 1 chunk (3 x 3 = 9 chunks)
+* Gameplay ring (AI + combat + interactables): radius 2 chunks (5 x 5 = 25 chunks)
+* Visual/audio ambience ring: radius 3 chunks (7 x 7 = 49 chunks)
+
+Simulation policy:
+
+* Full simulation only inside gameplay ring.
+* Background simplification outside gameplay ring.
+* No per-entity updates outside ambience ring.
+
+### 13.4 Streaming Triggers
+
+* Trigger preload when player is within 16 units of a chunk edge.
+* Trigger activation when entering a new anchor chunk.
+* Keep previous ring data alive for a 1.5 to 2.0 second grace period to avoid hitching.
+
+### 13.5 Snapshot and Network Policy
+
+Do not send full world map arrays per tick once streaming is enabled.
+
+Server messages should be split into:
+
+* worldInit:
+
+  * chunkSize
+  * seed/version
+  * initial chunk set near spawn
+* chunkData:
+
+  * chunk key
+  * tile payload for one chunk
+  * static obstacle payload for one chunk
+* entityDelta:
+
+  * active entities in gameplay ring only
+  * changed fields only
+
+Target bandwidth envelopes per client:
+
+* steady state entity updates: approximately 10 to 30 KB/s
+* chunk transfer bursts during traversal: up to approximately 150 KB/s
+
+### 13.6 Initial World Size Targets
+
+World size ceilings assume chunk streaming is in place and only nearby chunks are loaded.
+
+* Milestone A: 8192 x 8192 units
+* Milestone B: 32768 x 32768 units
+* Milestone C: 65536 x 65536 units
+
+Any size beyond Milestone C should add floating origin rebasing to preserve precision.
+
+### 13.7 Floating Origin Threshold
+
+* Rebase threshold: when player distance from current local origin exceeds 4096 units.
+* Rebase operation:
+
+  * shift all active entities/chunks by an equal offset
+  * keep chunk indices in global coordinates
+  * keep local simulation coordinates near zero
+
+### 13.8 Chunk Lifecycle
+
+Chunk states:
+
+* unloaded
+* loading
+* resident
+* active
+* cooling
+
+Rules:
+
+* active = inside gameplay ring
+* resident = inside ambience ring
+* cooling = recently left ambience ring; eligible for eviction after grace timeout
+
+### 13.9 Performance Budgets
+
+At 60 Hz on a mid-range desktop target:
+
+* streaming + decode: <= 1.0 ms/frame average
+* collision broadphase updates: <= 1.0 ms/frame average
+* AI update budget in gameplay ring: <= 2.0 ms/frame average
+* audio spatial update budget: <= 1.0 ms/frame average
+
+If these budgets are exceeded, reduce active ring radius before increasing chunk size.
+
+### 13.10 Implementation Order
+
+1. Introduce chunk key math and chunk data structures in shared package.
+2. Replace full map snapshot with worldInit + chunkData + entityDelta messages.
+3. Move collision world build to per-chunk assembly instead of full-map scanning.
+4. Gate AI/combat updates by gameplay ring membership.
+5. Add preload triggers and chunk grace-period eviction.
+6. Add floating-origin rebasing behind a feature flag.
+
+---
+
 # End of AI_CONTEXT.md

@@ -3,7 +3,7 @@ title Mech Audio Game - Stop Playtest
 
 cd /d "%~dp0"
 
-set "LOCK_FILE=.vscode\.dev-playtest.lock.json"
+set "LOCK_FILE=.mech-audio\.dev-playtest.lock.json"
 set "LOCK_PID="
 
 if not exist "%LOCK_FILE%" (
