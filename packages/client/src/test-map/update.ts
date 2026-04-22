@@ -123,18 +123,22 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     const normalizedAngle = normalizePositiveAngle(currentAngle)
 
     if (direction === 'left') {
-      const nextFacing = cardinalFacings.find((facing) => facing > normalizedAngle + 1e-6)
-      return nextFacing ?? cardinalFacings[0]!
+      for (let index = cardinalFacings.length - 1; index >= 0; index -= 1) {
+        const facing = cardinalFacings[index]!
+        if (facing < normalizedAngle - 1e-6) {
+          return facing
+        } // end if facing is previous leftward cardinal
+      } // end for each cardinal facing in reverse
+
+      return cardinalFacings[cardinalFacings.length - 1]!
     } // end if snapping left
 
-    for (let index = cardinalFacings.length - 1; index >= 0; index -= 1) {
-      const facing = cardinalFacings[index]!
-      if (facing < normalizedAngle - 1e-6) {
-        return facing
-      } // end if facing is previous rightward cardinal
-    } // end for each cardinal facing in reverse
+    const nextFacing = cardinalFacings.find((facing) => facing > normalizedAngle + 1e-6)
+    if (nextFacing !== undefined) {
+      return nextFacing
+    } // end if facing is next rightward cardinal
 
-    return cardinalFacings[cardinalFacings.length - 1]!
+    return cardinalFacings[0]!
   } // end function getNextCardinalFacing
 
   let snappedFacing: number | null = null

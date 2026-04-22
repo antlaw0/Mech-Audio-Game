@@ -2,8 +2,8 @@ import type { InputState, Player } from './types.js'
 
 export function createPlayer(): Player {
   return {
-    x: 24.5,
-    y: 24.5,
+    x: 500,
+    y: 500,
     angle: 0,
     pitch: 0,
     hp: 1000,
@@ -46,6 +46,7 @@ export function createInputState(): InputState {
     refillEpPending: false,
     refillHpPending: false,
     speakHpPending: false,
-    speakEpPending: false
+    speakEpPending: false,
+    speakCoordsPending: false
   } // end object input state
 } // end function createInputState

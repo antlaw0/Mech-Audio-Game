@@ -46,6 +46,7 @@ export interface InputState {
   refillHpPending: boolean
   speakHpPending: boolean
   speakEpPending: boolean
+  speakCoordsPending: boolean
 } // end interface InputState
 
 export interface WorldPosition {

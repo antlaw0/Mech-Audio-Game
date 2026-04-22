@@ -242,6 +242,7 @@ function startTestMap(): void {
     input.refillHpPending = false
     input.speakHpPending = false
     input.speakEpPending = false
+    input.speakCoordsPending = false
   } // end function clearGameplayInputs
 
   const equipWeaponAtIndex = (requestedIndex: number): void => {
@@ -587,6 +588,22 @@ function startTestMap(): void {
   let previousPlayerX = player.x
   let previousPlayerY = player.y
   let previousPlayerZ = player.z ?? 0
+  const worldOriginX = MAP_WIDTH / 2
+  const worldOriginY = MAP_HEIGHT / 2
+
+  const mapToCenteredCoordinates = (mapX: number, mapY: number): { x: number; y: number } => {
+    return {
+      x: mapX - worldOriginX,
+      y: worldOriginY - mapY
+    } // end object centered coordinates
+  } // end function mapToCenteredCoordinates
+
+  const centeredToMapCoordinates = (centeredX: number, centeredY: number): { x: number; y: number } => {
+    return {
+      x: centeredX + worldOriginX,
+      y: worldOriginY - centeredY
+    } // end object map coordinates
+  } // end function centeredToMapCoordinates
 
   const applySharedFlightHeight = (value: number): number => {
     const nextHeight = setSharedFlightHeight(value)
@@ -638,6 +655,21 @@ function startTestMap(): void {
     window.speechSynthesis.cancel()
     window.speechSynthesis.speak(utterance)
   } // end function speakPercent
+
+  const speakCoordinates = (mapX: number, mapY: number): void => {
+    if (!('speechSynthesis' in window)) {
+      return
+    } // end if speech synthesis unavailable
+
+    const centered = mapToCenteredCoordinates(mapX, mapY)
+    const xRounded = Math.round(centered.x * 10) / 10
+    const yRounded = Math.round(centered.y * 10) / 10
+    const utterance = new SpeechSynthesisUtterance(`Coordinates X ${xRounded}, Y ${yRounded}`)
+    utterance.rate = 1
+    utterance.pitch = 1
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utterance)
+  } // end function speakCoordinates
 
   const normalizeDegrees = (value: number): number => {
     let normalized = value % 360
@@ -757,18 +789,51 @@ function startTestMap(): void {
     return nextPitchDegrees
   } // end function setPlayerPitchDegrees
 
+  const parseTeleportArguments = (rawCommandLine: string, args: string[]): { x: number; y: number; z: number } => {
+    const callMatch = rawCommandLine.match(/^(tp|teleport)\s*\((.*)\)\s*$/i)
+    if (callMatch) {
+      const argumentSource = callMatch[2] ?? ''
+      const values = argumentSource
+        .split(',')
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+
+      if (values.length < 2 || values.length > 3) {
+        throw new Error('Usage: tp(x, y, z) or tp <x> <y> [z]')
+      } // end if function-style teleport argument count is invalid
+
+      const x = parseFiniteNumber(values[0] ?? '', 'tp x')
+      const y = parseFiniteNumber(values[1] ?? '', 'tp y')
+      const z = values[2] !== undefined ? parseFiniteNumber(values[2], 'tp z') : (player.z ?? 0)
+      return { x, y, z }
+    } // end if function-style teleport syntax matched
+
+    if (args.length < 2) {
+      throw new Error('Usage: tp(x, y, z) or tp <x> <y> [z]')
+    } // end if positional teleport arguments are incomplete
+
+    const x = parseFiniteNumber(args[0] ?? '', 'tp x')
+    const y = parseFiniteNumber(args[1] ?? '', 'tp y')
+    const z = args[2] !== undefined ? parseFiniteNumber(args[2], 'tp z') : (player.z ?? 0)
+    return { x, y, z }
+  } // end function parseTeleportArguments
+
   const audioCategories: AudioCategory[] = ['proximity', 'objects', 'enemies', 'navigation']
   const enemyIds: EnemyId[] = ['tank', 'striker', 'brute', 'helicopter']
 
-  const getStateLines = (): string[] => [
-    `paused = ${isPaused}`,
-    `console.open = ${isConsoleOpen}`,
-    `player = x:${player.x.toFixed(2)} y:${player.y.toFixed(2)} z:${(player.z ?? 0).toFixed(2)} angle:${((player.angle * 180) / Math.PI).toFixed(1)} pitch:${((player.pitch * 180) / Math.PI).toFixed(1)}`,
-    `player.flight = state:${player.flightState ?? 'grounded'} flying:${player.isFlying ? 'true' : 'false'} sharedHeight:${getSharedFlightHeight().toFixed(2)}`,
-    `weapon = type:${playerWeapon.weaponType} accuracy:${playerWeapon.accuracy.toFixed(2)} pellets:${playerWeapon.projectileCount} spread:${playerWeapon.spreadDegrees.toFixed(1)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fullAuto:${playerWeapon.isFullAuto} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)}`,
-    `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)}`,
-    `audio categories = proximity:${audio.getCategoryEnabled('proximity')}@${audio.getVolumeChannel('proximity').toFixed(2)} objects:${audio.getCategoryEnabled('objects')}@${audio.getVolumeChannel('objects').toFixed(2)} enemies:${audio.getCategoryEnabled('enemies')}@${audio.getVolumeChannel('enemies').toFixed(2)} navigation:${audio.getCategoryEnabled('navigation')}@${audio.getVolumeChannel('navigation').toFixed(2)}`
-  ]
+  const getStateLines = (): string[] => {
+    const centered = mapToCenteredCoordinates(player.x, player.y)
+
+    return [
+      `paused = ${isPaused}`,
+      `console.open = ${isConsoleOpen}`,
+      `player = mapX:${player.x.toFixed(2)} mapY:${player.y.toFixed(2)} centeredX:${centered.x.toFixed(2)} centeredY:${centered.y.toFixed(2)} z:${(player.z ?? 0).toFixed(2)} angle:${((player.angle * 180) / Math.PI).toFixed(1)} pitch:${((player.pitch * 180) / Math.PI).toFixed(1)}`,
+      `player.flight = state:${player.flightState ?? 'grounded'} flying:${player.isFlying ? 'true' : 'false'} sharedHeight:${getSharedFlightHeight().toFixed(2)}`,
+      `weapon = type:${playerWeapon.weaponType} accuracy:${playerWeapon.accuracy.toFixed(2)} pellets:${playerWeapon.projectileCount} spread:${playerWeapon.spreadDegrees.toFixed(1)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fullAuto:${playerWeapon.isFullAuto} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)}`,
+      `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)}`,
+      `audio categories = proximity:${audio.getCategoryEnabled('proximity')}@${audio.getVolumeChannel('proximity').toFixed(2)} objects:${audio.getCategoryEnabled('objects')}@${audio.getVolumeChannel('objects').toFixed(2)} enemies:${audio.getCategoryEnabled('enemies')}@${audio.getVolumeChannel('enemies').toFixed(2)} navigation:${audio.getCategoryEnabled('navigation')}@${audio.getVolumeChannel('navigation').toFixed(2)}`
+    ]
+  } // end function getStateLines
 
   const getConsoleBindings = (): Record<string, DeveloperConsoleBinding> => ({
     'player.x': {
@@ -1154,11 +1219,11 @@ function startTestMap(): void {
       examples: ['spawn tank', 'spawn helicopter']
     },
     {
-      syntax: 'tp <x> <y> [z]',
-      description: 'Teleport the player to a validated world position.',
+      syntax: 'tp(x, y, z)',
+      description: 'Teleport to centered coordinates where +X is east and +Y is north.',
       helpPath: ['Player', 'Position'],
       aliases: ['teleport'],
-      examples: ['tp 18 20 0', 'teleport 24 24']
+      examples: ['tp(100, 220, 0)', 'tp -40 15', 'teleport(0, 0, 0)']
     },
     {
       syntax: 'pause',
@@ -1505,7 +1570,12 @@ function startTestMap(): void {
       return []
     } // end if no tokens produced
 
-    const command = (tokens[0] ?? '').toLowerCase()
+    const commandToken = (tokens[0] ?? '').toLowerCase()
+    const command = commandToken.startsWith('tp(')
+      ? 'tp'
+      : commandToken.startsWith('teleport(')
+        ? 'teleport'
+        : commandToken
     const args = tokens.slice(1)
     const bindings = getConsoleBindings()
 
@@ -1587,13 +1657,14 @@ function startTestMap(): void {
     } // end if spawn command
 
     if (command === 'tp' || command === 'teleport') {
-      if (args.length < 2) {
-        throw new Error('Usage: tp <x> <y> [z]')
-      } // end if teleport command is incomplete
-      const x = parseFiniteNumber(args[0] ?? '', 'tp x')
-      const y = parseFiniteNumber(args[1] ?? '', 'tp y')
-      const z = args[2] !== undefined ? parseFiniteNumber(args[2], 'tp z') : (player.z ?? 0)
-      return [placePlayer(x, y, z)]
+      const destination = parseTeleportArguments(commandLine, args)
+      const mapDestination = centeredToMapCoordinates(destination.x, destination.y)
+      placePlayer(mapDestination.x, mapDestination.y, destination.z)
+      const centeredPosition = mapToCenteredCoordinates(player.x, player.y)
+      return [
+        `Teleported to centered (${centeredPosition.x.toFixed(2)}, ${centeredPosition.y.toFixed(2)}, ${(player.z ?? 0).toFixed(2)})`,
+        `Map position (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${(player.z ?? 0).toFixed(2)})`
+      ]
     } // end if teleport command
 
     if (command === 'pause') {
@@ -1694,6 +1765,11 @@ function startTestMap(): void {
       'window.mechDev.resume()'
     ],
     getState: () => ({
+      centeredPlayer: {
+        x: mapToCenteredCoordinates(player.x, player.y).x,
+        y: mapToCenteredCoordinates(player.x, player.y).y,
+        z: player.z ?? 0
+      },
       sharedFlightHeight: getSharedFlightHeight(),
       player: {
         x: player.x,
@@ -1785,6 +1861,11 @@ function startTestMap(): void {
       input.speakEpPending = false
       speakPercent('Energy', player.ep, player.maxEp)
     } // end if EP speech requested
+
+    if (input.speakCoordsPending) {
+      input.speakCoordsPending = false
+      speakCoordinates(player.x, player.y)
+    } // end if coordinate speech requested
 
     if (input.refillEpPending) {
       input.refillEpPending = false
@@ -2057,7 +2138,8 @@ function startTestMap(): void {
     if (playerStatusElement) {
       const hpPercent = Math.max(0, Math.min(100, Math.round((player.hp / Math.max(1, player.maxHp)) * 100)))
       const epPercent = Math.max(0, Math.min(100, Math.round((player.ep / Math.max(1, player.maxEp)) * 100)))
-      playerStatusElement.textContent = `STATUS: HP ${hpPercent}% | EP ${epPercent}% | H: SPEAK HP | G: SPEAK EP`
+      const centered = mapToCenteredCoordinates(player.x, player.y)
+      playerStatusElement.textContent = `STATUS: HP ${hpPercent}% | EP ${epPercent}% | X ${centered.x.toFixed(1)} Y ${centered.y.toFixed(1)} | T: SPEAK XY | H: SPEAK HP | G: SPEAK EP`
     } // end if player status element exists
 
     previousPlayerX = player.x
