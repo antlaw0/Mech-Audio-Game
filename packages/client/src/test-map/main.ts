@@ -230,6 +230,8 @@ function startTestMap(): void {
     input.snapEastPending = false
     input.snapSouthPending = false
     input.snapWestPending = false
+    input.snapLeftPending = false
+    input.snapRightPending = false
     input.cycleWeaponPending = false
     input.selectedWeaponSlot = null
     input.spawnTankPending = false
@@ -1739,6 +1741,21 @@ function startTestMap(): void {
       const nextIndex = (activeWeaponIndex + 1) % weaponLoadout.length
       equipWeaponAtIndex(nextIndex)
     } // end if weapon cycled
+
+    const snapWasRequested = input.snapNorthPending
+      || input.snapEastPending
+      || input.snapSouthPending
+      || input.snapWestPending
+      || input.snapLeftPending
+      || input.snapRightPending
+    if (snapWasRequested) {
+      targetLockState.lockedTankId = null
+      missileLockProgressMs = 0
+      missileLockTargetId = null
+      missileLockConfirmed = false
+      missileLockToneTimerSeconds = 0
+      audio.playLockLostChirp()
+    } // end if directional snap requested
 
     updateFrame(
       {

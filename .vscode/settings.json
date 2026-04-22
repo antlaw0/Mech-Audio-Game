@@ -14,9 +14,32 @@
     "github.copilot.inlineSuggest.enable": true,
     "github.copilot.autoCompletions.enable": true,
     "github.copilot.chat.inlineChat.enabled": true,
-    "security.workspace.trust.untrustedFiles": "open",
-    "terminal.integrated.allowWorkspaceCommands": true,
+    "security.workspace.trust.untrustedFiles": "prompt",
+    "terminal.integrated.allowWorkspaceCommands": false,
     "files.autoSave": "afterDelay",
     "files.autoSaveDelay": 300,
-    "task.allowAutomaticTasks": "on"
+    "task.allowAutomaticTasks": "off",
+    "files.watcherExclude": {
+        "**/.git/**": true,
+        "**/node_modules/**": true,
+        "**/packages/*/dist/**": true,
+        "**/assets/audio/**": true,
+        "**/assets/sounds/**": true,
+        "**/Index/**": true,
+        "**/Test/**": true
+    },
+    "search.exclude": {
+        "**/node_modules": true,
+        "**/packages/*/dist": true,
+        "assets/audio": true,
+        "assets/sounds": true,
+        "Index": true,
+        "Test": true
+    },
+    "typescript.tsserver.watchOptions": {
+        "watchFile": "useFsEventsOnParentDirectory",
+        "watchDirectory": "useFsEvents",
+        "fallbackPolling": "dynamicPriority"
+    },
+    "typescript.disableAutomaticTypeAcquisition": true
 }

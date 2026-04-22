@@ -107,6 +107,36 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   } // end if flight state update
   player.z = playerAltitude
 
+  const cardinalFacings = [0, Math.PI / 2, Math.PI, (Math.PI * 3) / 2]
+  const normalizePositiveAngle = (angle: number): number => {
+    let wrapped = angle
+    while (wrapped < 0) {
+      wrapped += Math.PI * 2
+    } // end while wrapped below zero
+    while (wrapped >= Math.PI * 2) {
+      wrapped -= Math.PI * 2
+    } // end while wrapped above full turn
+    return wrapped
+  } // end function normalizePositiveAngle
+
+  const getNextCardinalFacing = (currentAngle: number, direction: 'left' | 'right'): number => {
+    const normalizedAngle = normalizePositiveAngle(currentAngle)
+
+    if (direction === 'left') {
+      const nextFacing = cardinalFacings.find((facing) => facing > normalizedAngle + 1e-6)
+      return nextFacing ?? cardinalFacings[0]!
+    } // end if snapping left
+
+    for (let index = cardinalFacings.length - 1; index >= 0; index -= 1) {
+      const facing = cardinalFacings[index]!
+      if (facing < normalizedAngle - 1e-6) {
+        return facing
+      } // end if facing is previous rightward cardinal
+    } // end for each cardinal facing in reverse
+
+    return cardinalFacings[cardinalFacings.length - 1]!
+  } // end function getNextCardinalFacing
+
   let snappedFacing: number | null = null
   if (input.snapNorthPending) {
     snappedFacing = -Math.PI / 2
@@ -120,6 +150,12 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   if (input.snapWestPending) {
     snappedFacing = Math.PI
   } // end if west snap requested
+  if (input.snapLeftPending) {
+    snappedFacing = getNextCardinalFacing(player.angle, 'left')
+  } // end if left snap requested
+  if (input.snapRightPending) {
+    snappedFacing = getNextCardinalFacing(player.angle, 'right')
+  } // end if right snap requested
 
   if (snappedFacing !== null) {
     player.angle = snappedFacing
@@ -127,9 +163,11 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     input.snapEastPending = false
     input.snapSouthPending = false
     input.snapWestPending = false
+    input.snapLeftPending = false
+    input.snapRightPending = false
     if (audio.isAudioStarted()) {
-      audio.playCardinalOrientationCue(snappedFacing)
-    } // end if orientation cue should play
+      audio.playCardinalHeadingCueForFacing(snappedFacing)
+    } // end if heading cue should play
   } // end if snap handled
 
   if (input.turnLeft) {

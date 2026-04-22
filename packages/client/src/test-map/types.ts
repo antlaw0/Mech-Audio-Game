@@ -34,6 +34,8 @@ export interface InputState {
   snapEastPending: boolean
   snapSouthPending: boolean
   snapWestPending: boolean
+  snapLeftPending: boolean
+  snapRightPending: boolean
   cycleWeaponPending: boolean
   selectedWeaponSlot: number | null
   spawnTankPending: boolean
@@ -281,6 +283,7 @@ export interface AudioController {
     playerAngle: number,
     soundCandidates: string[]
   ) => void
+  playCardinalHeadingCueForFacing: (playerAngle: number) => void
   playPlayerHealthStatusTone: (hpPercent: number) => void
   updatePlayerHealthStatusAudio: (dt: number, hpPercent: number) => void
   updatePlayerEnergyStatusAudio: (dt: number, epPercent: number) => void

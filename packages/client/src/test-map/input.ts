@@ -22,6 +22,9 @@ export function bindInput(
   isInputBlocked: () => boolean = () => false
 ): void {
   const keys: Record<string, boolean> = {}
+  const shouldHandleDirectionalSnap = (event: KeyboardEvent): boolean => {
+    return event.ctrlKey && (event.code === 'ArrowLeft' || event.code === 'ArrowRight')
+  } // end function shouldHandleDirectionalSnap
 
   const resumeAudioOnInteraction = (): void => {
     void audio.ensureAudio()
@@ -43,6 +46,16 @@ export function bindInput(
     } // end if input blocked
 
     await audio.ensureAudio()
+
+    if (shouldHandleDirectionalSnap(event)) {
+      if (!keys[event.code]) {
+        keys[event.code] = true
+        input.snapLeftPending = event.code === 'ArrowLeft'
+        input.snapRightPending = event.code === 'ArrowRight'
+      } // end if directional snap chord not already held
+      event.preventDefault()
+      return
+    } // end if ctrl directional snap chord
 
     if (!keys[event.code]) {
       keys[event.code] = true
@@ -274,6 +287,14 @@ export function bindInput(
     if (event.code === 'KeyJ') {
       input.snapWestPending = false
     } // end if KeyJ
+
+    if (event.code === 'ArrowLeft') {
+      input.snapLeftPending = false
+    } // end if ArrowLeft directional snap
+
+    if (event.code === 'ArrowRight') {
+      input.snapRightPending = false
+    } // end if ArrowRight directional snap
 
     if (event.code === 'KeyR') {
       input.cycleWeaponPending = false

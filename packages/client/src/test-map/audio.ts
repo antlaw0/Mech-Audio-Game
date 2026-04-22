@@ -71,6 +71,12 @@ interface IncomingProjectileVoice {
   panner: Tone.Panner3D
 } // end interface IncomingProjectileVoice
 
+interface CardinalHeadingCue {
+  id: 'north' | 'east' | 'south' | 'west'
+  angle: number
+  path: string
+} // end interface CardinalHeadingCue
+
 class EnemyAudioRuntime {
   readonly profile: EnemyAudioProfile
 
@@ -637,6 +643,23 @@ export function createAudioController(): AudioController {
     octaves: 1.2
   }).connect(impactPanner)
 
+  const CARDINAL_HEADING_CUES: readonly CardinalHeadingCue[] = [
+    { id: 'north', angle: -Math.PI / 2, path: 'assets/sounds/nav/north.ogg' },
+    { id: 'east', angle: 0, path: 'assets/sounds/nav/east.ogg' },
+    { id: 'south', angle: Math.PI / 2, path: 'assets/sounds/nav/south.ogg' },
+    { id: 'west', angle: Math.PI, path: 'assets/sounds/nav/west.ogg' }
+  ]
+
+  const cardinalHeadingGain = new Tone.Gain(0.95).toDestination()
+  const cardinalHeadingPanner = new Tone.Panner3D({
+    panningModel: 'HRTF',
+    distanceModel: 'inverse',
+    refDistance: 0.8,
+    maxDistance: 12,
+    rolloffFactor: 0.7
+  }).connect(cardinalHeadingGain)
+  const cardinalHeadingPlayerCache = new Map<string, Tone.Player>()
+
   const defaultPlayerFireSoundPath = 'assets/sounds/weapons/pistol_fire.ogg'
   const playerFireSound = new Tone.Player(defaultPlayerFireSoundPath).toDestination()
   const playerFireSoundCache = new Map<string, Tone.Player>([[defaultPlayerFireSoundPath, playerFireSound]])
@@ -899,6 +922,67 @@ export function createAudioController(): AudioController {
     player.start()
   } // end function retriggerLoadedPlayer
 
+  const getOrCreateCardinalHeadingPlayer = (path: string): Tone.Player => {
+    const existing = cardinalHeadingPlayerCache.get(path)
+    if (existing) {
+      return existing
+    } // end if cardinal heading player already cached
+
+    const player = new Tone.Player(path).connect(cardinalHeadingPanner)
+    cardinalHeadingPlayerCache.set(path, player)
+    return player
+  } // end function getOrCreateCardinalHeadingPlayer
+
+  const playCardinalHeadingCue = (playerAngle: number): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryNavigation) {
+      return
+    } // end if cardinal heading cue cannot play
+
+    const now = Tone.now()
+    const cardinalHeadingCueDebounceSeconds = 0.16
+    if (now - lastCardinalHeadingCueTimeSeconds < cardinalHeadingCueDebounceSeconds) {
+      return
+    } // end if heading cue debounce has not elapsed
+    lastCardinalHeadingCueTimeSeconds = now
+
+    let bestCue = CARDINAL_HEADING_CUES[0]
+    let bestDelta = Number.POSITIVE_INFINITY
+    for (const cue of CARDINAL_HEADING_CUES) {
+      const delta = Math.abs(normalizeAngle(cue.angle - playerAngle))
+      if (delta < bestDelta) {
+        bestDelta = delta
+        bestCue = cue
+      } // end if this cue is closer to current facing
+    } // end for each heading cue
+
+    if (!bestCue) {
+      return
+    } // end if no heading cue selected
+
+    const turnDelta = normalizeAngle(bestCue.angle - playerAngle)
+    const distance = 2.4
+    const right = Math.sin(turnDelta) * distance
+    const forward = Math.cos(turnDelta) * distance
+    cardinalHeadingPanner.positionX.value = right
+    cardinalHeadingPanner.positionY.value = 0
+    cardinalHeadingPanner.positionZ.value = -forward
+    cardinalHeadingGain.gain.value = clamp(0.9 * navigationVolume, 0, 1.2)
+
+    const player = getOrCreateCardinalHeadingPlayer(bestCue.path)
+    if (player.loaded) {
+      retriggerLoadedPlayer(player)
+      return
+    } // end if heading player already loaded
+
+    void player.load(bestCue.path)
+      .then(() => {
+        retriggerLoadedPlayer(player)
+      })
+      .catch((error) => {
+        console.warn('Failed to load cardinal heading cue.', { path: bestCue.path, error })
+      })
+  } // end function playCardinalHeadingCue
+
   const setPlaybackRateSafely = (player: Tone.Player, playbackRate: number): void => {
     try {
       player.playbackRate = playbackRate
@@ -1026,6 +1110,7 @@ export function createAudioController(): AudioController {
   let missileLockToneLastStartSeconds = -Infinity
   let missileLockConfirmLastStartSeconds = -Infinity
   let negativeActionLastStartSeconds = -Infinity
+  let lastCardinalHeadingCueTimeSeconds = -Infinity
   let lowHealthAlarmTimerSeconds = 0
 
   const strictlyIncreasingStartTime = (requestedSeconds: number, previousSeconds: number): number => {
@@ -1478,6 +1563,8 @@ export function createAudioController(): AudioController {
     if (player.isFlying) {
       return
     } // end if active sonar disabled while flying
+
+    playCardinalHeadingCue(player.angle)
 
     const nearestEnemyDistance = enemies
       .filter((enemy) => enemy.isAlive)
@@ -2127,6 +2214,7 @@ export function createAudioController(): AudioController {
     playMissileLockTone,
     playMissileLockConfirmTone,
     playNegativeActionTone,
-    playExplosion
+    playExplosion,
+    playCardinalHeadingCueForFacing: (playerAngle: number) => playCardinalHeadingCue(playerAngle)
   } // end object audio controller
 } // end function createAudioController
