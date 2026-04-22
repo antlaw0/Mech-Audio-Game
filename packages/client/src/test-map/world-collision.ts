@@ -100,19 +100,54 @@ function hasVerticalOverlap(zMinA: number, zMaxA: number, zMinB: number, zMaxB: 
   return zMinA <= zMaxB && zMaxA >= zMinB
 } // end function hasVerticalOverlap
 
+function isWallCellFilled(world: WorldCollisionWorld, col: number, row: number): boolean {
+  if (col < 0 || row < 0 || col >= MAP_WIDTH || row >= MAP_HEIGHT) {
+    return false
+  } // end if out of map bounds
+  return world.wallSet.has(row * MAP_WIDTH + col)
+} // end function isWallCellFilled
+
+function collidesWithWallCells(world: WorldCollisionWorld, x: number, y: number, radius: number, zMin: number, zMax: number): boolean {
+  if (!hasVerticalOverlap(zMin, zMax, 0, WORLD_WALL_HEIGHT)) {
+    return false
+  } // end if no wall height overlap
+
+  const colMin = Math.max(0, Math.floor(x - radius))
+  const colMax = Math.min(MAP_WIDTH - 1, Math.floor(x + radius))
+  const rowMin = Math.max(0, Math.floor(y - radius))
+  const rowMax = Math.min(MAP_HEIGHT - 1, Math.floor(y + radius))
+
+  for (let row = rowMin; row <= rowMax; row += 1) {
+    for (let col = colMin; col <= colMax; col += 1) {
+      if (!isWallCellFilled(world, col, row)) {
+        continue
+      } // end if map tile is not a wall
+
+      const wallBox: WallCollider = {
+        xMin: col,
+        xMax: col + 1,
+        yMin: row,
+        yMax: row + 1,
+        zMin: 0,
+        zMax: WORLD_WALL_HEIGHT
+      }
+
+      if (circleIntersectsAabb(x, y, radius, wallBox)) {
+        return true
+      } // end if wall tile blocks sample
+    } // end for each map column
+  } // end for each map row
+
+  return false
+} // end function collidesWithWallCells
+
 function getObstacleType(world: WorldCollisionWorld, x: number, y: number, z: number, radius: number): 'wall' | 'tree' | 'rock' | null {
   const traceZMin = z
   const traceZMax = z + 0.001
 
-  for (const wall of world.walls) {
-    if (!hasVerticalOverlap(traceZMin, traceZMax, wall.zMin, wall.zMax)) {
-      continue
-    } // end if no wall height overlap
-
-    if (circleIntersectsAabb(x, y, radius, wall)) {
-      return 'wall'
-    } // end if wall hit
-  } // end for each wall
+  if (collidesWithWallCells(world, x, y, radius, traceZMin, traceZMax)) {
+    return 'wall'
+  } // end if wall hit
 
   for (const obstacle of world.roundObstacles) {
     if (!hasVerticalOverlap(traceZMin, traceZMax, obstacle.zMin, obstacle.zMax)) {
@@ -183,15 +218,9 @@ export function isPlayerBlocked(
   const playerZMin = Math.max(0, feetZ)
   const playerZMax = playerZMin + Math.max(0.1, collisionHeight)
 
-  for (const wall of world.walls) {
-    if (!hasVerticalOverlap(playerZMin, playerZMax, wall.zMin, wall.zMax)) {
-      continue
-    } // end if no vertical overlap with wall
-
-    if (circleIntersectsAabb(x, y, radius, wall)) {
-      return true
-    } // end if collides with wall
-  } // end for each wall
+  if (collidesWithWallCells(world, x, y, radius, playerZMin, playerZMax)) {
+    return true
+  } // end if collides with wall
 
   for (const obstacle of world.roundObstacles) {
     if (!hasVerticalOverlap(playerZMin, playerZMax, obstacle.zMin, obstacle.zMax)) {

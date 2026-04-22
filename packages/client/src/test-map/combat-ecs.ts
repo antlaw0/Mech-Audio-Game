@@ -43,6 +43,18 @@ const PROJECTILE_OWNER_ENEMY = 2
 const BULLET_HIT_RADIUS = 0.25
 const PLAYER_HIT_HALF_HEIGHT = 0.55
 const TANK_HIT_HALF_HEIGHT = 0.6
+const WORLD_CHUNK_SIZE = 64
+const MAX_ACTIVE_ENEMIES = 20
+const MAX_ACTIVE_AIR_ENEMIES = 5
+const SPAWN_MIN_PLAYER_DISTANCE = 8
+const SPAWN_MAX_PLAYER_DISTANCE = 50
+const SPAWN_MIN_CHUNK_RING = 1
+const SPAWN_MAX_CHUNK_RING = 4
+const ENEMY_FULL_SIM_RANGE = 180
+const ENEMY_BACKGROUND_SIM_RANGE = 360
+const ENEMY_BACKGROUND_AI_TICK_SECONDS = 0.22
+const ENEMY_DISTANT_AI_TICK_SECONDS = 0.55
+const ENEMY_LOS_MAX_DISTANCE = 170
 
 const Position = defineComponent({
   x: Types.f32,
@@ -79,7 +91,8 @@ const Behavior = defineComponent({
   movementTimer: Types.f32,
   cannonFireCooldown: Types.f32,
   attackWindupSeconds: Types.f32,
-  isMoving: Types.ui8
+  isMoving: Types.ui8,
+  lodAccumulatorSeconds: Types.f32
 })
 
 const TankExplosion = defineComponent({
@@ -158,6 +171,7 @@ function addTank(world: CombatEcsWorld, x: number, y: number, enemyId: EnemyId =
   Behavior.cannonFireCooldown[tank] = 0
   Behavior.attackWindupSeconds[tank] = 0
   Behavior.isMoving[tank] = 1
+  Behavior.lodAccumulatorSeconds[tank] = 0
   TankExplosion.timeRemaining[tank] = 0
   TankExplosion.maxDuration[tank] = 0.7
 } // end function addTank
@@ -228,6 +242,11 @@ function canSpawnTankAt(world: CombatEcsWorld, collisionWorld: WorldCollisionWor
     return false
   } // end if too close to player spawn area
 
+  const distanceToPlayer = Math.hypot(x - player.x, y - player.y)
+  if (distanceToPlayer < SPAWN_MIN_PLAYER_DISTANCE || distanceToPlayer > SPAWN_MAX_PLAYER_DISTANCE) {
+    return false
+  } // end if outside organic spawn distance band
+
   const tankEntities = TankQuery(world)
   for (const tank of tankEntities) {
     if ((Meta.alive[tank] ?? 0) !== 1) {
@@ -249,11 +268,91 @@ function canSpawnTankAt(world: CombatEcsWorld, collisionWorld: WorldCollisionWor
   return true
 } // end function canSpawnTankAt
 
+function getActiveEnemyCounts(world: CombatEcsWorld): { total: number; airborne: number } {
+  let total = 0
+  let airborne = 0
+  const tankEntities = TankQuery(world)
+
+  for (const tank of tankEntities) {
+    if ((Meta.alive[tank] ?? 0) !== 1) {
+      continue
+    } // end if tank is not alive
+
+    total += 1
+    if ((Flight.airborne[tank] ?? 0) === 1) {
+      airborne += 1
+    } // end if tank is airborne
+  } // end for each tank
+
+  return { total, airborne }
+} // end function getActiveEnemyCounts
+
+function canSpawnEnemyByBudget(world: CombatEcsWorld, enemyId: EnemyId): boolean {
+  const counts = getActiveEnemyCounts(world)
+  const definition = getEnemyDefinition(enemyId)
+
+  if (counts.total >= MAX_ACTIVE_ENEMIES) {
+    return false
+  } // end if max active enemy budget reached
+
+  if (definition.airborne && counts.airborne >= MAX_ACTIVE_AIR_ENEMIES) {
+    return false
+  } // end if max airborne enemy budget reached
+
+  return true
+} // end function canSpawnEnemyByBudget
+
+function chooseChunkLocalSpawnCandidate(player: Player): { x: number; y: number } {
+  const anchorChunkX = Math.floor(player.x / WORLD_CHUNK_SIZE)
+  const anchorChunkY = Math.floor(player.y / WORLD_CHUNK_SIZE)
+  const chunkRing = SPAWN_MIN_CHUNK_RING + Math.floor(Math.random() * (SPAWN_MAX_CHUNK_RING - SPAWN_MIN_CHUNK_RING + 1))
+  const side = Math.floor(Math.random() * 4)
+  const edgeOffset = -chunkRing + Math.floor(Math.random() * ((chunkRing * 2) + 1))
+
+  let chunkX = anchorChunkX
+  let chunkY = anchorChunkY
+
+  if (side === 0) {
+    chunkX = anchorChunkX + chunkRing
+    chunkY = anchorChunkY + edgeOffset
+  } else if (side === 1) {
+    chunkX = anchorChunkX - chunkRing
+    chunkY = anchorChunkY + edgeOffset
+  } else if (side === 2) {
+    chunkY = anchorChunkY + chunkRing
+    chunkX = anchorChunkX + edgeOffset
+  } else {
+    chunkY = anchorChunkY - chunkRing
+    chunkX = anchorChunkX + edgeOffset
+  } // end if chunk ring side pick
+
+  const baseX = chunkX * WORLD_CHUNK_SIZE
+  const baseY = chunkY * WORLD_CHUNK_SIZE
+  const jitterX = 3 + Math.random() * (WORLD_CHUNK_SIZE - 6)
+  const jitterY = 3 + Math.random() * (WORLD_CHUNK_SIZE - 6)
+  const candidateX = Math.max(1.25, Math.min(MAP_WIDTH - 1.25, baseX + jitterX))
+  const candidateY = Math.max(1.25, Math.min(MAP_HEIGHT - 1.25, baseY + jitterY))
+
+  return { x: candidateX, y: candidateY }
+} // end function chooseChunkLocalSpawnCandidate
+
+function chooseSpawnCandidateNearPlayer(player: Player): { x: number; y: number } {
+  // Always use distance-based radial spawning to ensure spawn band is respected
+  const angle = Math.random() * Math.PI * 2
+  const radius = SPAWN_MIN_PLAYER_DISTANCE + Math.random() * (SPAWN_MAX_PLAYER_DISTANCE - SPAWN_MIN_PLAYER_DISTANCE)
+  const candidateX = Math.max(1.25, Math.min(MAP_WIDTH - 1.25, player.x + Math.cos(angle) * radius))
+  const candidateY = Math.max(1.25, Math.min(MAP_HEIGHT - 1.25, player.y + Math.sin(angle) * radius))
+  return { x: candidateX, y: candidateY }
+} // end function chooseSpawnCandidateNearPlayer
+
 export function spawnRandomTank(world: CombatEcsWorld, collisionWorld: WorldCollisionWorld, player: Player): boolean {
+  if (!canSpawnEnemyByBudget(world, 'tank')) {
+    return false
+  } // end if enemy budget does not allow spawning a tank
+
   const maxAttempts = 90
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const x = 1.25 + Math.random() * (MAP_WIDTH - 2.5)
-    const y = 1.25 + Math.random() * (MAP_HEIGHT - 2.5)
+    const { x, y } = chooseSpawnCandidateNearPlayer(player)
     if (!canSpawnTankAt(world, collisionWorld, x, y, player)) {
       continue
     } // end if random spawn candidate invalid
@@ -292,17 +391,21 @@ function addTankFromConfig(world: CombatEcsWorld, x: number, y: number, config: 
   Behavior.cannonFireCooldown[tank] = 0
   Behavior.attackWindupSeconds[tank] = 0
   Behavior.isMoving[tank] = 1
+  Behavior.lodAccumulatorSeconds[tank] = 0
   TankExplosion.timeRemaining[tank] = 0
   TankExplosion.maxDuration[tank] = 0.7
   world.customConfigs.set(tank, config)
 } // end function addTankFromConfig
 
 export function spawnRandomEnemy(world: CombatEcsWorld, collisionWorld: WorldCollisionWorld, player: Player, enemyId: EnemyId = 'tank'): boolean {
+  if (!canSpawnEnemyByBudget(world, enemyId)) {
+    return false
+  } // end if enemy budget does not allow spawning this enemy type
+
   const definition = getEnemyDefinition(enemyId)
   const maxAttempts = 90
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const x = 1.25 + Math.random() * (MAP_WIDTH - 2.5)
-    const y = 1.25 + Math.random() * (MAP_HEIGHT - 2.5)
+    const { x, y } = chooseSpawnCandidateNearPlayer(player)
     if (!canSpawnTankAt(world, collisionWorld, x, y, player, definition.collisionRadius)) {
       continue
     } // end if random spawn candidate invalid
@@ -313,10 +416,13 @@ export function spawnRandomEnemy(world: CombatEcsWorld, collisionWorld: WorldCol
 } // end function spawnRandomEnemy
 
 export function spawnRandomTankFromConfig(world: CombatEcsWorld, collisionWorld: WorldCollisionWorld, player: Player, config: EnemyDefinitionConfig): boolean {
+  if (!canSpawnEnemyByBudget(world, config.id)) {
+    return false
+  } // end if enemy budget does not allow spawning this config
+
   const maxAttempts = 90
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const x = 1.25 + Math.random() * (MAP_WIDTH - 2.5)
-    const y = 1.25 + Math.random() * (MAP_HEIGHT - 2.5)
+    const { x, y } = chooseSpawnCandidateNearPlayer(player)
     if (!canSpawnTankAt(world, collisionWorld, x, y, player, config.collisionRadius)) {
       continue
     } // end if random spawn candidate invalid
@@ -665,17 +771,45 @@ export function stepCombatEcsWorld(
     const movementTimer = getNumber(Behavior.movementTimer, tank)
     const cannonCooldown = getNumber(Behavior.cannonFireCooldown, tank)
     const attackWindup = getNumber(Behavior.attackWindupSeconds, tank)
+    const lodAccumulator = getNumber(Behavior.lodAccumulatorSeconds, tank)
     if (
       movementAngle === null ||
       movementTimer === null ||
       cannonCooldown === null ||
-      attackWindup === null
+      attackWindup === null ||
+      lodAccumulator === null
     ) {
       continue
     } // end if behavior missing
 
+    const distanceToPlayer = Math.hypot(tankX - player.x, tankY - player.y)
+    let simulationStepSeconds = deltaSeconds
+    let accumulatedLodSeconds = lodAccumulator + deltaSeconds
+
+    if (distanceToPlayer > ENEMY_BACKGROUND_SIM_RANGE) {
+      if (accumulatedLodSeconds < ENEMY_DISTANT_AI_TICK_SECONDS) {
+        Behavior.lodAccumulatorSeconds[tank] = accumulatedLodSeconds
+        continue
+      } // end if distant AI tick budget not reached
+
+      simulationStepSeconds = accumulatedLodSeconds
+      accumulatedLodSeconds = 0
+      Behavior.lodAccumulatorSeconds[tank] = 0
+    } else if (distanceToPlayer > ENEMY_FULL_SIM_RANGE) {
+      if (accumulatedLodSeconds < ENEMY_BACKGROUND_AI_TICK_SECONDS) {
+        Behavior.lodAccumulatorSeconds[tank] = accumulatedLodSeconds
+        continue
+      } // end if background AI tick budget not reached
+
+      simulationStepSeconds = accumulatedLodSeconds
+      accumulatedLodSeconds = 0
+      Behavior.lodAccumulatorSeconds[tank] = 0
+    } else {
+      Behavior.lodAccumulatorSeconds[tank] = 0
+    } // end if LOD simulation gating
+
     // --- Tank movement ---
-    const moveStep = enemyDefinition.movementSpeed * deltaSeconds
+    const moveStep = enemyDefinition.movementSpeed * simulationStepSeconds
     const nextX = tankX + Math.cos(movementAngle) * moveStep
     const nextY = tankY + Math.sin(movementAngle) * moveStep
 
@@ -697,7 +831,7 @@ export function stepCombatEcsWorld(
       Position.x[tank] = nextX
       Position.y[tank] = nextY
       Facing.angle[tank] = movementAngle
-      Behavior.movementTimer[tank] = movementTimer + deltaSeconds
+      Behavior.movementTimer[tank] = movementTimer + simulationStepSeconds
 
       // Retarget movement heading using enemy behavior settings.
       if (movementTimer > enemyDefinition.behavior.retargetIntervalSeconds) {
@@ -711,23 +845,25 @@ export function stepCombatEcsWorld(
     // --- LOS check and cannon fire ---
     const dist = Math.hypot(nextX - player.x, nextY - player.y)
     const tankHeight = Math.max(0, Flight.height[tank] ?? 0)
-    const hasLos = hasWorldLineOfSight3D(
-      collisionWorld,
-      { x: nextX, y: nextY, z: tankHeight + PLAYER_HEIGHT },
-      { x: player.x, y: player.y, z: (player.z ?? 0) + PLAYER_HEIGHT }
-    )
+    const hasLos = dist <= ENEMY_LOS_MAX_DISTANCE
+      ? hasWorldLineOfSight3D(
+          collisionWorld,
+          { x: nextX, y: nextY, z: tankHeight + PLAYER_HEIGHT },
+          { x: player.x, y: player.y, z: (player.z ?? 0) + PLAYER_HEIGHT }
+        )
+      : false
     const canShootByLos = enemyDefinition.behavior.lineOfSightRequiredToShoot ? hasLos : true
     const threatDelaySeconds = enemyDefinition.threatDelaySeconds
 
     if (attackWindup > 0) {
-      const newWindup = Math.max(0, attackWindup - deltaSeconds)
+      const newWindup = Math.max(0, attackWindup - simulationStepSeconds)
       Behavior.attackWindupSeconds[tank] = newWindup
       if (newWindup <= 0 && canShootByLos && dist < enemyDefinition.behavior.preferredEngageRange) {
         spawnTankProjectile(world, tank, nextX, nextY, player.x, player.y, (player.z ?? 0) + PLAYER_HEIGHT)
         audio.playEnemyAttack(`tank-${tank}`, enemyDefinition.id)
       } // end if windup completed and target valid
     } else {
-      const newCooldown = Math.max(0, cannonCooldown - deltaSeconds)
+      const newCooldown = Math.max(0, cannonCooldown - simulationStepSeconds)
       Behavior.cannonFireCooldown[tank] = newCooldown
       if (canShootByLos && dist < enemyDefinition.behavior.preferredEngageRange && newCooldown <= 0) {
         Behavior.attackWindupSeconds[tank] = threatDelaySeconds

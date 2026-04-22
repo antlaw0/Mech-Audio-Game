@@ -191,6 +191,7 @@ function startTestMap(): void {
   const input = createInputState()
   const updateState = createUpdateState()
   const audio = createAudioController()
+  audio.prewarmEnemyAudioAssets()
 
   let isPaused = false
   let isConsoleOpen = false

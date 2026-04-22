@@ -650,6 +650,19 @@ export function createAudioController(): AudioController {
     { id: 'west', angle: Math.PI, path: 'assets/sounds/nav/west.ogg' }
   ]
 
+  const ENEMY_AUDIO_PREWARM_PATHS: readonly string[] = [
+    'assets/sounds/tankMoving.ogg',
+    'assets/sounds/helicopterLoop.ogg',
+    'assets/sounds/servomotor.ogg',
+    'assets/sounds/weapons/reloadCannon.ogg',
+    'assets/sounds/weapons/reload.ogg',
+    'assets/sounds/weapons/pistol_fire.ogg',
+    'assets/sounds/tankHit.ogg',
+    'assets/sounds/explosions/explosion_1A.ogg',
+    'assets/sounds/explosions/explosion_1B.ogg',
+    'assets/sounds/explosions/explosion_2a.ogg'
+  ]
+
   const cardinalHeadingGain = new Tone.Gain(0.95).toDestination()
   const cardinalHeadingPanner = new Tone.Panner3D({
     panningModel: 'HRTF',
@@ -1457,6 +1470,8 @@ export function createAudioController(): AudioController {
     collisionWorld: WorldCollisionWorld,
     sprites: SpriteObject[]
   ): void => {
+    const maxAudioLosDistance = 170
+
     applyHtmlAudioVolumes()
 
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
@@ -1487,16 +1502,21 @@ export function createAudioController(): AudioController {
     const losEnemyCandidates = enemies
       .filter((enemy) => enemy.isAlive)
       .map((enemy) => {
-        const hasSightLine = hasLineOfSight(
-          collisionWorld,
-          { x: enemy.position.x, y: enemy.position.y },
-          { x: player.position.x, y: player.position.y }
-        )
         const distance = Math.hypot(
           enemy.position.x - player.position.x,
           enemy.position.y - player.position.y,
           enemy.position.z - player.position.z
         )
+        if (distance > maxAudioLosDistance) {
+          return { enemyId: enemy.id, hasSightLine: false, distance }
+        } // end if enemy is outside LOS audio trace range
+
+        const hasSightLine = hasLineOfSight(
+          collisionWorld,
+          { x: enemy.position.x, y: enemy.position.y },
+          { x: player.position.x, y: player.position.y }
+        )
+
         return { enemyId: enemy.id, hasSightLine, distance }
       })
       .filter((entry) => entry.hasSightLine)
@@ -2163,6 +2183,26 @@ export function createAudioController(): AudioController {
     return runtime
   } // end function getOrCreateEnemyRuntime
 
+  let prewarmRequested = false
+  const prewarmEnemyAudioAssets = (): void => {
+    if (prewarmRequested) {
+      return
+    } // end if prewarm already requested
+    prewarmRequested = true
+
+    for (const path of ENEMY_AUDIO_PREWARM_PATHS) {
+      const tempPlayer = new Tone.Player(path)
+      void tempPlayer
+        .load(path)
+        .catch((error) => {
+          console.warn('Failed to prewarm enemy audio asset.', { path, error })
+        })
+        .finally(() => {
+          tempPlayer.dispose()
+        })
+    } // end for each enemy prewarm asset
+  } // end function prewarmEnemyAudioAssets
+
   return {
     ensureAudio,
     playPauseOpenChirp,
@@ -2215,6 +2255,7 @@ export function createAudioController(): AudioController {
     playMissileLockConfirmTone,
     playNegativeActionTone,
     playExplosion,
-    playCardinalHeadingCueForFacing: (playerAngle: number) => playCardinalHeadingCue(playerAngle)
+    playCardinalHeadingCueForFacing: (playerAngle: number) => playCardinalHeadingCue(playerAngle),
+    prewarmEnemyAudioAssets
   } // end object audio controller
 } // end function createAudioController
