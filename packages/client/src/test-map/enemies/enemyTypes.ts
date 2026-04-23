@@ -9,7 +9,15 @@ export interface EnemyBehaviorDefinition {
   lineOfSightRequiredToShoot: boolean
 } // end interface EnemyBehaviorDefinition
 
+export interface EnemyAutomaticFireDefinition {
+  enabled: boolean
+  burstRoundCounts: number[]
+  burstIntervalSeconds: number
+  burstAudioPrefix: string
+} // end interface EnemyAutomaticFireDefinition
+
 export interface EnemySoundDefinition {
+  startupSound?: string
   attackSound: string
   hurtSound: string
   deathSound: string
@@ -30,5 +38,6 @@ export interface EnemyDefinitionConfig {
   threatDelaySeconds: number
   projectileMaxDistance: number
   behavior: EnemyBehaviorDefinition
+  automaticFire?: EnemyAutomaticFireDefinition
   sounds: EnemySoundDefinition
 } // end interface EnemyDefinitionConfig

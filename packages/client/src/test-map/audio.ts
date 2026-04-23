@@ -17,6 +17,8 @@ import {
   silenceWallProximityCue,
   worldToListenerSpace
 } from './audio-utils.js'
+import { getEnemyDefinition } from './enemies/index.js'
+import type { EnemyAutomaticFireDefinition, EnemyId } from './enemies/enemyTypes.js'
 import type { AudioCategory, AudioController, AudioVolumeChannel, EnemyAudioState, IncomingProjectileAudioState, ObstructionAwareness, PlayerAudioState, SonarEcho, SpriteObject } from './types.js'
 import { type WorldCollisionWorld } from './world-collision.js'
 
@@ -26,6 +28,7 @@ interface EnemySoundSet {
   passivePing: Tone.Player
   threatCue: Tone.Player
   attackSound: Tone.Player
+  attackVariants: Map<number, Tone.Player>
   hurtSound: Tone.Player
   deathSound: Tone.Player
 } // end interface EnemySoundSet
@@ -59,6 +62,7 @@ function createSilentEnemySoundSet(): EnemySoundSet {
     passivePing: new Tone.Player(),
     threatCue: new Tone.Player(),
     attackSound: new Tone.Player(),
+    attackVariants: new Map(),
     hurtSound: new Tone.Player(),
     deathSound: new Tone.Player()
   }
@@ -114,6 +118,9 @@ class EnemyAudioRuntime {
     profile.sounds.passivePing.connect(this.oneshotGain)
     profile.sounds.threatCue.connect(this.oneshotGain)
     profile.sounds.attackSound.connect(this.oneshotGain)
+    for (const variant of profile.sounds.attackVariants.values()) {
+      variant.connect(this.oneshotGain)
+    } // end for each burst attack variant
     profile.sounds.hurtSound.connect(this.oneshotGain)
     profile.sounds.deathSound.connect(this.oneshotGain)
 
@@ -225,13 +232,17 @@ class EnemyAudioRuntime {
     this.safeRetrigger(this.profile.sounds.threatCue)
   } // end method playThreatCue
 
-  playAttack(): void {
+  playAttack(burstProjectileCount?: number): void {
     if (!this.alive) {
       return
     } // end if enemy not alive
     this.attackDuckingTimerSeconds = AUDIO_CONFIG.enemy.attackDuckingSeconds
-    this.setPlaybackRateSafely(this.profile.sounds.attackSound, 0.9)
-    this.safeRetrigger(this.profile.sounds.attackSound)
+    const burstVariant = burstProjectileCount !== undefined
+      ? this.profile.sounds.attackVariants.get(Math.max(1, Math.round(burstProjectileCount)))
+      : undefined
+    const attackPlayer = burstVariant ?? this.profile.sounds.attackSound
+    this.setPlaybackRateSafely(attackPlayer, 0.9)
+    this.safeRetrigger(attackPlayer)
   } // end method playAttack
 
   playHurt(): void {
@@ -264,6 +275,10 @@ class EnemyAudioRuntime {
     this.profile.sounds.passivePing.dispose()
     this.profile.sounds.threatCue.dispose()
     this.profile.sounds.attackSound.dispose()
+    for (const variant of this.profile.sounds.attackVariants.values()) {
+      variant.dispose()
+    } // end for each burst attack variant
+    this.profile.sounds.attackVariants.clear()
     this.profile.sounds.hurtSound.dispose()
     this.profile.sounds.deathSound.dispose()
     this.profile.effects.filter.dispose()
@@ -329,7 +344,31 @@ class EnemyAudioRuntime {
   } // end method triggerTurnCue
 } // end class EnemyAudioRuntime
 
-function createTankProfile(enemyId: string): EnemyAudioProfile {
+function isEnemyId(enemyType: string): enemyType is EnemyId {
+  return enemyType === 'tank' || enemyType === 'striker' || enemyType === 'brute' || enemyType === 'helicopter'
+} // end function isEnemyId
+
+function createAttackVariantPlayers(automaticFire?: EnemyAutomaticFireDefinition): Map<number, Tone.Player> {
+  const variants = new Map<number, Tone.Player>()
+  if (!automaticFire?.enabled) {
+    return variants
+  } // end if enemy does not use burst attack variants
+
+  for (const configuredRoundCount of automaticFire.burstRoundCounts) {
+    const roundedRoundCount = Math.max(1, Math.round(configuredRoundCount))
+    if (variants.has(roundedRoundCount)) {
+      continue
+    } // end if this burst-count variant already exists
+
+    const variantPath = `${automaticFire.burstAudioPrefix}${roundedRoundCount}.ogg`
+    variants.set(roundedRoundCount, new Tone.Player(variantPath))
+  } // end for each configured burst round count
+
+  return variants
+} // end function createAttackVariantPlayers
+
+function createTankProfile(enemyId: string, enemyType: string): EnemyAudioProfile {
+  const definition = isEnemyId(enemyType) ? getEnemyDefinition(enemyType) : null
   const filter = new Tone.Filter({ type: 'lowpass', frequency: 2600, Q: 0.7 })
   const gain = new Tone.Gain(0)
   const panner = new Tone.Panner3D({
@@ -345,16 +384,17 @@ function createTankProfile(enemyId: string): EnemyAudioProfile {
 
   return {
     id: enemyId,
-    type: AUDIO_CONFIG.tank.type,
+    type: enemyType,
     category: AUDIO_CONFIG.tank.category,
     sounds: {
-      idleLoop: new Tone.Player('assets/sounds/tankMoving.ogg'),
-      movementLoop: new Tone.Player('assets/sounds/tankMoving.ogg'),
+      idleLoop: new Tone.Player(definition?.sounds.positionalLoopSound ?? 'assets/sounds/tankMoving.ogg'),
+      movementLoop: new Tone.Player(definition?.sounds.positionalLoopSound ?? 'assets/sounds/tankMoving.ogg'),
       passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
-      threatCue: new Tone.Player('assets/sounds/weapons/reloadCannon.ogg'),
-      attackSound: new Tone.Player('assets/sounds/explosions/explosion_1A.ogg'),
-      hurtSound: new Tone.Player('assets/sounds/explosions/explosion_1B.ogg'),
-      deathSound: new Tone.Player('assets/sounds/explosions/explosion_2a.ogg')
+      threatCue: new Tone.Player(definition?.sounds.startupSound ?? 'assets/sounds/weapons/reloadCannon.ogg'),
+      attackSound: new Tone.Player(definition?.sounds.attackSound ?? 'assets/sounds/explosions/explosion_1A.ogg'),
+      attackVariants: createAttackVariantPlayers(definition?.automaticFire),
+      hurtSound: new Tone.Player(definition?.sounds.hurtSound ?? 'assets/sounds/explosions/explosion_1B.ogg'),
+      deathSound: new Tone.Player(definition?.sounds.deathSound ?? 'assets/sounds/explosions/explosion_2a.ogg')
     },
     effects: {
       filter,
@@ -370,7 +410,8 @@ function createTankProfile(enemyId: string): EnemyAudioProfile {
   } // end object enemy profile
 } // end function createTankProfile
 
-function createHelicopterProfile(enemyId: string): EnemyAudioProfile {
+function createHelicopterProfile(enemyId: string, enemyType: string): EnemyAudioProfile {
+  const definition = isEnemyId(enemyType) ? getEnemyDefinition(enemyType) : null
   const filter = new Tone.Filter({ type: 'lowpass', frequency: 3400, Q: 0.5 })
   const gain = new Tone.Gain(0)
   const panner = new Tone.Panner3D({
@@ -386,16 +427,17 @@ function createHelicopterProfile(enemyId: string): EnemyAudioProfile {
 
   return {
     id: enemyId,
-    type: AUDIO_CONFIG.helicopter.type,
+    type: enemyType,
     category: AUDIO_CONFIG.helicopter.category,
     sounds: {
-      idleLoop: new Tone.Player('assets/sounds/helicopterLoop.ogg'),
-      movementLoop: new Tone.Player('assets/sounds/helicopterLoop.ogg'),
+      idleLoop: new Tone.Player(definition?.sounds.positionalLoopSound ?? 'assets/sounds/helicopterLoop.ogg'),
+      movementLoop: new Tone.Player(definition?.sounds.positionalLoopSound ?? 'assets/sounds/helicopterLoop.ogg'),
       passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
-      threatCue: new Tone.Player('assets/sounds/weapons/reload.ogg'),
-      attackSound: new Tone.Player('assets/sounds/weapons/pistol_fire.ogg'),
-      hurtSound: new Tone.Player('assets/sounds/tankHit.ogg'),
-      deathSound: new Tone.Player('assets/sounds/explosions/explosion_2a.ogg')
+      threatCue: new Tone.Player(definition?.sounds.startupSound ?? 'assets/sounds/weapons/reload.ogg'),
+      attackSound: new Tone.Player(definition?.sounds.attackSound ?? 'assets/sounds/weapons/pistol_fire.ogg'),
+      attackVariants: createAttackVariantPlayers(definition?.automaticFire),
+      hurtSound: new Tone.Player(definition?.sounds.hurtSound ?? 'assets/sounds/tankHit.ogg'),
+      deathSound: new Tone.Player(definition?.sounds.deathSound ?? 'assets/sounds/explosions/explosion_2a.ogg')
     },
     effects: {
       filter,
@@ -413,9 +455,9 @@ function createHelicopterProfile(enemyId: string): EnemyAudioProfile {
 
 function createEnemyProfile(enemyId: string, enemyType: string): EnemyAudioProfile {
   if (enemyType === AUDIO_CONFIG.helicopter.type) {
-    return createHelicopterProfile(enemyId)
+    return createHelicopterProfile(enemyId, enemyType)
   } // end if helicopter
-  return createTankProfile(enemyId)
+  return createTankProfile(enemyId, enemyType)
 } // end function createEnemyProfile
 
 function createFallbackEnemyProfile(enemyId: string, enemyType: string): EnemyAudioProfile {
@@ -657,6 +699,9 @@ export function createAudioController(): AudioController {
     'assets/sounds/weapons/reloadCannon.ogg',
     'assets/sounds/weapons/reload.ogg',
     'assets/sounds/weapons/pistol_fire.ogg',
+    'assets/sounds/weapons/arBurst3.ogg',
+    'assets/sounds/weapons/arBurst4.ogg',
+    'assets/sounds/weapons/arBurst5.ogg',
     'assets/sounds/tankHit.ogg',
     'assets/sounds/explosions/explosion_1A.ogg',
     'assets/sounds/explosions/explosion_1B.ogg',
@@ -1705,11 +1750,11 @@ export function createAudioController(): AudioController {
     getOrCreateEnemyRuntime(enemyId, enemyType).playThreatCue()
   } // end function playEnemyThreatCue
 
-  const playEnemyAttack = (enemyId: string, enemyType: string = AUDIO_CONFIG.tank.type): void => {
+  const playEnemyAttack = (enemyId: string, enemyType: string = AUDIO_CONFIG.tank.type, burstProjectileCount?: number): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryEnemies) {
       return
     } // end if audio not started or enemies category disabled
-    getOrCreateEnemyRuntime(enemyId, enemyType).playAttack()
+    getOrCreateEnemyRuntime(enemyId, enemyType).playAttack(burstProjectileCount)
   } // end function playEnemyAttack
 
   const playEnemyHurt = (enemyId: string, enemyType: string = AUDIO_CONFIG.tank.type): void => {

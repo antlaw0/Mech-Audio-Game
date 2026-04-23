@@ -242,7 +242,7 @@ export interface AudioController {
   updateFrameAudio: (dt: number, player: PlayerAudioState, enemies: EnemyAudioState[], collisionWorld: WorldCollisionWorld, sprites: SpriteObject[]) => void
   triggerActiveSonar: (player: PlayerAudioState, enemies: EnemyAudioState[], collisionWorld: WorldCollisionWorld, sprites: SpriteObject[]) => void
   playEnemyThreatCue: (enemyId: string, enemyType?: string) => void
-  playEnemyAttack: (enemyId: string, enemyType?: string) => void
+  playEnemyAttack: (enemyId: string, enemyType?: string, burstProjectileCount?: number) => void
   playEnemyHurt: (enemyId: string, enemyType?: string) => void
   playEnemyDeath: (enemyId: string, enemyType?: string) => void
   updateObstructionAwareness: (dt: number, awareness: ObstructionAwareness) => void

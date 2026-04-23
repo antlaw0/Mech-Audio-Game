@@ -91,6 +91,8 @@ const Behavior = defineComponent({
   movementTimer: Types.f32,
   cannonFireCooldown: Types.f32,
   attackWindupSeconds: Types.f32,
+  burstShotsRemaining: Types.ui8,
+  burstShotTimerSeconds: Types.f32,
   isMoving: Types.ui8,
   lodAccumulatorSeconds: Types.f32
 })
@@ -170,6 +172,8 @@ function addTank(world: CombatEcsWorld, x: number, y: number, enemyId: EnemyId =
   Behavior.movementTimer[tank] = 0
   Behavior.cannonFireCooldown[tank] = 0
   Behavior.attackWindupSeconds[tank] = 0
+  Behavior.burstShotsRemaining[tank] = 0
+  Behavior.burstShotTimerSeconds[tank] = 0
   Behavior.isMoving[tank] = 1
   Behavior.lodAccumulatorSeconds[tank] = 0
   TankExplosion.timeRemaining[tank] = 0
@@ -212,6 +216,21 @@ function spawnTankProjectile(
   ProjectileStats.nearMissPlayed[bullet] = 0
   ProjectileStats.owner[bullet] = PROJECTILE_OWNER_ENEMY
 } // end function spawnTankProjectile
+
+function chooseAutomaticBurstRoundCount(definition: EnemyDefinitionConfig): number {
+  const automaticFire = definition.automaticFire
+  if (!automaticFire?.enabled) {
+    return 1
+  } // end if enemy does not use automatic burst fire
+
+  const validRoundCounts = automaticFire.burstRoundCounts.filter((count) => Number.isFinite(count) && count >= 1)
+  if (validRoundCounts.length <= 0) {
+    return 1
+  } // end if burst round count list is not valid
+
+  const burstIndex = Math.floor(Math.random() * validRoundCounts.length)
+  return Math.max(1, Math.round(validRoundCounts[burstIndex] ?? 1))
+} // end function chooseAutomaticBurstRoundCount
 
 export function createCombatEcsWorld(): CombatEcsWorld {
   const world = createWorld() as CombatEcsWorld
@@ -390,6 +409,8 @@ function addTankFromConfig(world: CombatEcsWorld, x: number, y: number, config: 
   Behavior.movementTimer[tank] = 0
   Behavior.cannonFireCooldown[tank] = 0
   Behavior.attackWindupSeconds[tank] = 0
+  Behavior.burstShotsRemaining[tank] = 0
+  Behavior.burstShotTimerSeconds[tank] = 0
   Behavior.isMoving[tank] = 1
   Behavior.lodAccumulatorSeconds[tank] = 0
   TankExplosion.timeRemaining[tank] = 0
@@ -771,12 +792,16 @@ export function stepCombatEcsWorld(
     const movementTimer = getNumber(Behavior.movementTimer, tank)
     const cannonCooldown = getNumber(Behavior.cannonFireCooldown, tank)
     const attackWindup = getNumber(Behavior.attackWindupSeconds, tank)
+    const burstShotsRemaining = getNumber(Behavior.burstShotsRemaining, tank)
+    const burstShotTimerSeconds = getNumber(Behavior.burstShotTimerSeconds, tank)
     const lodAccumulator = getNumber(Behavior.lodAccumulatorSeconds, tank)
     if (
       movementAngle === null ||
       movementTimer === null ||
       cannonCooldown === null ||
       attackWindup === null ||
+      burstShotsRemaining === null ||
+      burstShotTimerSeconds === null ||
       lodAccumulator === null
     ) {
       continue
@@ -859,8 +884,15 @@ export function stepCombatEcsWorld(
       const newWindup = Math.max(0, attackWindup - simulationStepSeconds)
       Behavior.attackWindupSeconds[tank] = newWindup
       if (newWindup <= 0 && canShootByLos && dist < enemyDefinition.behavior.preferredEngageRange) {
-        spawnTankProjectile(world, tank, nextX, nextY, player.x, player.y, (player.z ?? 0) + PLAYER_HEIGHT)
-        audio.playEnemyAttack(`tank-${tank}`, enemyDefinition.id)
+        if (enemyDefinition.automaticFire?.enabled) {
+          const roundsInBurst = chooseAutomaticBurstRoundCount(enemyDefinition)
+          Behavior.burstShotsRemaining[tank] = roundsInBurst
+          Behavior.burstShotTimerSeconds[tank] = 0
+          audio.playEnemyAttack(`tank-${tank}`, enemyDefinition.id, roundsInBurst)
+        } else {
+          spawnTankProjectile(world, tank, nextX, nextY, player.x, player.y, (player.z ?? 0) + PLAYER_HEIGHT)
+          audio.playEnemyAttack(`tank-${tank}`, enemyDefinition.id)
+        } // end if automatic or single-shot fire mode
       } // end if windup completed and target valid
     } else {
       const newCooldown = Math.max(0, cannonCooldown - simulationStepSeconds)
@@ -871,6 +903,27 @@ export function stepCombatEcsWorld(
         audio.playEnemyThreatCue(`tank-${tank}`, enemyDefinition.id)
       } // end if tank can start cannon telegraph
     } // end if cannon windup or cooldown path
+
+    let remainingBurstShots = Math.max(0, Math.round(Behavior.burstShotsRemaining[tank] ?? 0))
+    let burstTimerSeconds = Math.max(0, Behavior.burstShotTimerSeconds[tank] ?? 0)
+
+    if (remainingBurstShots > 0) {
+      const burstIntervalSeconds = enemyDefinition.automaticFire?.enabled
+        ? Math.max(0.01, enemyDefinition.automaticFire.burstIntervalSeconds)
+        : enemyDefinition.fireRateSeconds
+      burstTimerSeconds = Math.max(0, burstTimerSeconds - simulationStepSeconds)
+
+      while (remainingBurstShots > 0 && burstTimerSeconds <= 0) {
+        spawnTankProjectile(world, tank, nextX, nextY, player.x, player.y, (player.z ?? 0) + PLAYER_HEIGHT)
+        remainingBurstShots -= 1
+        burstTimerSeconds += burstIntervalSeconds
+      } // end while burst can fire another round this frame
+    } // end if burst is active
+
+    Behavior.burstShotsRemaining[tank] = remainingBurstShots
+    Behavior.burstShotTimerSeconds[tank] = remainingBurstShots > 0
+      ? Math.max(0, burstTimerSeconds)
+      : 0
   } // end for each tank
 
   const triggerMissileExplosion = (entity: number, worldX: number, worldY: number, worldZ: number): void => {
@@ -1157,19 +1210,31 @@ export function stepCombatEcsWorld(
 
     // --- Tank projectiles hitting player ---
     if (kind === KIND_TANK_PROJECTILE) {
-      const dx = nextX - player.x
-      const dy = nextY - player.y
-      const playerRadius = PLAYER_RADIUS
-      const playerDistance = Math.hypot(dx, dy)
       const playerCenterHeight = (player.z ?? 0) + PLAYER_HEIGHT
-      if (playerDistance < playerRadius + bulletRadius && Math.abs(nextHeight - playerCenterHeight) <= PLAYER_HIT_HALF_HEIGHT) {
+      const playerDistance = Math.hypot(nextX - player.x, nextY - player.y)
+      const impactFraction = getFirstContactFraction(
+        currentX,
+        currentY,
+        currentHeight,
+        nextX,
+        nextY,
+        nextHeight,
+        player.x,
+        player.y,
+        playerCenterHeight,
+        PLAYER_RADIUS + bulletRadius,
+        PLAYER_HIT_HALF_HEIGHT
+      )
+      if (impactFraction >= 0) {
         const projectileDamage = Math.max(0, Math.round(getNumber(ProjectileStats.damage, entity) ?? 0))
         if (projectileDamage > 0) {
           player.hp = Math.max(0, player.hp - projectileDamage)
         } // end if projectile has damage
         Meta.alive[entity] = 0
         ProjectileStats.nearMissPlayed[entity] = 1
-        audio.playImpact(nextX, nextY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
+        const impactX = currentX + ((nextX - currentX) * impactFraction)
+        const impactY = currentY + ((nextY - currentY) * impactFraction)
+        audio.playImpact(impactX, impactY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
         impactFrameCount++
         audio.playPlayerMechHit()
         continue

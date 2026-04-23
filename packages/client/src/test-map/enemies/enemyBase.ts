@@ -1,5 +1,5 @@
 import { getSharedFlightHeight } from '../runtime-config.js'
-import type { EnemyBehaviorDefinition, EnemyDefinitionConfig, EnemyId, EnemySoundDefinition } from './enemyTypes.js'
+import type { EnemyAutomaticFireDefinition, EnemyBehaviorDefinition, EnemyDefinitionConfig, EnemyId, EnemySoundDefinition } from './enemyTypes.js'
 
 export abstract class EnemyDefinitionBase {
   readonly id: EnemyId
@@ -14,6 +14,7 @@ export abstract class EnemyDefinitionBase {
   readonly threatDelaySeconds: number
   readonly projectileMaxDistance: number
   readonly behavior: EnemyBehaviorDefinition
+  readonly automaticFire?: EnemyAutomaticFireDefinition
   readonly sounds: EnemySoundDefinition
   private readonly configuredFlightHeight?: number
 
@@ -39,6 +40,7 @@ export abstract class EnemyDefinitionBase {
     this.threatDelaySeconds = config.threatDelaySeconds
     this.projectileMaxDistance = config.projectileMaxDistance
     this.behavior = config.behavior
+    this.automaticFire = config.automaticFire
     this.sounds = config.sounds
   } // end constructor EnemyDefinitionBase
 } // end class EnemyDefinitionBase
