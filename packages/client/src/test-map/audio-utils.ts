@@ -24,6 +24,7 @@ export interface SonarContact {
   col: number
   row: number
   enemyId?: string
+  enemyType?: string
 }
 
 interface CueUtilityState {
@@ -254,7 +255,8 @@ function getNearestEnemyContact(
           worldY: startPos.y + Math.sin(angle) * distance,
           col: Math.floor(startPos.x + Math.cos(angle) * distance),
           row: Math.floor(startPos.y + Math.sin(angle) * distance),
-          enemyId: enemy.id
+          enemyId: enemy.id,
+          enemyType: enemy.type
         }
       : nearest
   } // end for each enemy

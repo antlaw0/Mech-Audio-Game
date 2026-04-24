@@ -163,7 +163,7 @@ class EnemyAudioRuntime {
     const distance = Math.hypot(relative.x, relative.y, relative.z)
     const distanceVolume = distanceToVolume(distance, AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance)
     const targetVolume = distance <= AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance
-      ? this.profile.params.baseVolume * Math.pow(distanceVolume, 1.35) * volumeScale
+      ? this.profile.params.baseVolume * Math.pow(distanceVolume, AUDIO_NAVIGATION_CONFIG.enemyAudioDistanceExponent) * volumeScale
       : 0
     this.profile.effects.gain.gain.rampTo(targetVolume, 0.08)
 
@@ -240,7 +240,9 @@ class EnemyAudioRuntime {
     const burstVariant = burstProjectileCount !== undefined
       ? this.profile.sounds.attackVariants.get(Math.max(1, Math.round(burstProjectileCount)))
       : undefined
-    const attackPlayer = burstVariant ?? this.profile.sounds.attackSound
+    const attackPlayer = burstVariant?.loaded
+      ? burstVariant
+      : this.profile.sounds.attackSound
     this.setPlaybackRateSafely(attackPlayer, 0.9)
     this.safeRetrigger(attackPlayer)
   } // end method playAttack
@@ -317,10 +319,14 @@ class EnemyAudioRuntime {
       return
     } // end if player buffer not loaded
 
-    if (player.state === 'started') {
-      player.stop()
-    } // end if player started
-    player.start()
+    try {
+      if (player.state === 'started') {
+        player.stop()
+      } // end if player started
+      player.start()
+    } catch {
+      // Ignore dense stop/start race conditions under heavy enemy fire.
+    } // end try/catch retrigger
   } // end method safeRetrigger
 
   private randomPassiveIntervalSeconds(): number {
@@ -361,7 +367,12 @@ function createAttackVariantPlayers(automaticFire?: EnemyAutomaticFireDefinition
     } // end if this burst-count variant already exists
 
     const variantPath = `${automaticFire.burstAudioPrefix}${roundedRoundCount}.ogg`
-    variants.set(roundedRoundCount, new Tone.Player(variantPath))
+    const variantPlayer = new Tone.Player(variantPath)
+    // Kick off variant loading immediately so the first burst can use the intended SFX.
+    void variantPlayer.load(variantPath).catch((error) => {
+      console.warn('Failed to load burst attack variant.', { variantPath, error })
+    })
+    variants.set(roundedRoundCount, variantPlayer)
   } // end for each configured burst round count
 
   return variants
@@ -1137,6 +1148,7 @@ export function createAudioController(): AudioController {
         applyHtmlAudioVolumes()
         void ambienceAudio.play().catch(() => undefined)
         audioStarted = true
+        prewarmEnemyAudioAssets()
       } // end if audio graph not initialized
     } catch {
       // Browser may reject resume when not triggered by a user gesture.
@@ -1424,7 +1436,7 @@ export function createAudioController(): AudioController {
     voice.synth.triggerAttackRelease(frequency, lowVolume ? '64n' : '32n')
   } // end function playObstacleContact
 
-  const playEnemyContact = (distance: number, bearing: number, enemyId?: string, lowVolume = false): void => {
+  const playEnemyContact = (distance: number, bearing: number, enemyId?: string, enemyType?: string, lowVolume = false): void => {
     const voice = enemyPingVoices[enemyPingVoiceCursor % enemyPingVoices.length]
     enemyPingVoiceCursor += 1
     if (!voice) {
@@ -1436,7 +1448,7 @@ export function createAudioController(): AudioController {
     voice.synth.triggerAttackRelease(760 - distance * 8, lowVolume ? '64n' : '16n')
 
     if (enemyId) {
-      getOrCreateEnemyRuntime(enemyId, AUDIO_CONFIG.tank.type).onSonarPing(activeSonarStamp, 0)
+      getOrCreateEnemyRuntime(enemyId, resolveEnemyRuntimeType(enemyId, enemyType)).onSonarPing(activeSonarStamp, 0)
     } // end if enemy runtime should react to ping
   } // end function playEnemyContact
 
@@ -1497,7 +1509,7 @@ export function createAudioController(): AudioController {
       const normalizedSweep = ((currentAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
       const sweepFrequency = AUDIO_NAVIGATION_CONFIG.sweepBaseFrequency + (normalizedSweep / (Math.PI * 2)) * AUDIO_NAVIGATION_CONFIG.sweepPitchSpan
       triggerPassiveSweepTone(sweepFrequency, 0.04)
-      playEnemyContact(contact.distance, contact.bearing, contact.enemyId, true)
+      playEnemyContact(contact.distance, contact.bearing, contact.enemyId, contact.enemyType, true)
     } else if (contact && contact.kind !== 'enemy' && categoryObjects) {
       const normalizedSweep = ((currentAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
       const sweepFrequency = AUDIO_NAVIGATION_CONFIG.sweepBaseFrequency + (normalizedSweep / (Math.PI * 2)) * AUDIO_NAVIGATION_CONFIG.sweepPitchSpan
@@ -1701,7 +1713,7 @@ export function createAudioController(): AudioController {
 
     for (const contact of uniqueEnemyContacts.values()) {
       if (categoryEnemies) {
-        playEnemyContact(contact.distance, contact.bearing, contact.enemyId)
+        playEnemyContact(contact.distance, contact.bearing, contact.enemyId, contact.enemyType)
       } // end if enemies category enabled
     } // end for each enemy sonar contact
   } // end function triggerActiveSonar
@@ -1743,32 +1755,40 @@ export function createAudioController(): AudioController {
     } // end for each sonar echo
   } // end function emitEnvironmentalSonar
 
+  const resolveEnemyRuntimeType = (enemyId: string, requestedType?: string): string => {
+    if (requestedType) {
+      return requestedType
+    } // end if caller provided an explicit enemy type
+
+    return enemyRuntimes.get(enemyId)?.profile.type ?? AUDIO_CONFIG.tank.type
+  } // end function resolveEnemyRuntimeType
+
   const playEnemyThreatCue = (enemyId: string, enemyType: string = AUDIO_CONFIG.tank.type): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryEnemies) {
       return
     } // end if audio not started or enemies category disabled
-    getOrCreateEnemyRuntime(enemyId, enemyType).playThreatCue()
+    getOrCreateEnemyRuntime(enemyId, resolveEnemyRuntimeType(enemyId, enemyType)).playThreatCue()
   } // end function playEnemyThreatCue
 
   const playEnemyAttack = (enemyId: string, enemyType: string = AUDIO_CONFIG.tank.type, burstProjectileCount?: number): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryEnemies) {
       return
     } // end if audio not started or enemies category disabled
-    getOrCreateEnemyRuntime(enemyId, enemyType).playAttack(burstProjectileCount)
+    getOrCreateEnemyRuntime(enemyId, resolveEnemyRuntimeType(enemyId, enemyType)).playAttack(burstProjectileCount)
   } // end function playEnemyAttack
 
   const playEnemyHurt = (enemyId: string, enemyType: string = AUDIO_CONFIG.tank.type): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryEnemies) {
       return
     } // end if audio not started or enemies category disabled
-    getOrCreateEnemyRuntime(enemyId, enemyType).playHurt()
+    getOrCreateEnemyRuntime(enemyId, resolveEnemyRuntimeType(enemyId, enemyType)).playHurt()
   } // end function playEnemyHurt
 
   const playEnemyDeath = (enemyId: string, enemyType: string = AUDIO_CONFIG.tank.type): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryEnemies) {
       return
     } // end if audio not started or enemies category disabled
-    getOrCreateEnemyRuntime(enemyId, enemyType).playDeath()
+    getOrCreateEnemyRuntime(enemyId, resolveEnemyRuntimeType(enemyId, enemyType)).playDeath()
   } // end function playEnemyDeath
 
   const fireGunshot = (soundPath: string = defaultPlayerFireSoundPath): void => {
@@ -2304,3 +2324,4 @@ export function createAudioController(): AudioController {
     prewarmEnemyAudioAssets
   } // end object audio controller
 } // end function createAudioController
+
