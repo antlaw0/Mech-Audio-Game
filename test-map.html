@@ -40,6 +40,131 @@
       font-size: 12px;
       letter-spacing: 1px;
     }
+    #navigationOverlay {
+      position: absolute;
+      inset: 0;
+      display: none;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 18px;
+      background: rgba(5, 11, 17, 0.62);
+      backdrop-filter: blur(2px);
+      z-index: 12;
+    }
+    .navigation-panel {
+      width: min(780px, 100%);
+      border: 1px solid rgba(96, 198, 255, 0.48);
+      background: rgba(4, 14, 24, 0.94);
+      box-shadow: 0 0 26px rgba(0, 149, 255, 0.26);
+      color: #b6ecff;
+      font-family: monospace;
+      padding: 12px;
+    }
+    .navigation-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid rgba(96, 198, 255, 0.35);
+      padding-bottom: 10px;
+      margin-bottom: 10px;
+    }
+    .navigation-title {
+      letter-spacing: 1.4px;
+      font-size: 15px;
+      color: #d4f5ff;
+    }
+    .navigation-subtitle {
+      font-size: 11px;
+      color: #8ed9ff;
+      letter-spacing: 0.7px;
+    }
+    .navigation-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .navigation-action,
+    .navigation-category-toggle,
+    .navigation-poi {
+      border: 1px solid rgba(115, 210, 255, 0.45);
+      background: rgba(3, 35, 54, 0.72);
+      color: #c8f4ff;
+      font-family: monospace;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+    }
+    .navigation-action {
+      padding: 6px 9px;
+      font-size: 12px;
+    }
+    .navigation-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(240px, 1fr));
+      gap: 10px;
+      list-style: none;
+    }
+    .navigation-category {
+      border: 1px solid rgba(78, 162, 215, 0.42);
+      background: rgba(0, 24, 38, 0.7);
+      padding: 8px;
+    }
+    .navigation-category-toggle {
+      width: 100%;
+      padding: 8px;
+      text-align: left;
+      font-size: 13px;
+      text-transform: uppercase;
+    }
+    .navigation-category-items {
+      margin-top: 8px;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .navigation-category-items[hidden] {
+      display: none !important;
+    }
+    .navigation-poi {
+      width: 100%;
+      text-align: left;
+      padding: 8px;
+      font-size: 12px;
+    }
+    .navigation-poi[aria-pressed="true"] {
+      border-color: rgba(255, 214, 104, 0.85);
+      background: rgba(82, 56, 5, 0.82);
+      color: #ffe8b7;
+    }
+    .navigation-action:hover,
+    .navigation-action:focus,
+    .navigation-category-toggle:hover,
+    .navigation-category-toggle:focus,
+    .navigation-poi:hover,
+    .navigation-poi:focus {
+      outline: none;
+      background: rgba(0, 91, 138, 0.78);
+    }
+    .navigation-empty {
+      color: #7ab2ca;
+      font-size: 12px;
+      padding: 3px 2px;
+    }
+    @media (max-width: 720px) {
+      .navigation-list {
+        grid-template-columns: 1fr;
+      }
+      .navigation-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .navigation-actions {
+        width: 100%;
+        justify-content: flex-start;
+      }
+    }
     #pauseOverlay {
       position: absolute;
       inset: 0;
@@ -289,8 +414,42 @@
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
+<div id="navigationOverlay" aria-hidden="true">
+  <header class="navigation-panel" role="dialog" aria-modal="false" aria-label="Navigation Menu">
+    <div class="navigation-header">
+      <div>
+        <div class="navigation-title">Navigation POI Menu</div>
+        <div class="navigation-subtitle">M: Close Menu | Enter: Select Destination | N: Speak Destination Distance | V: Toggle Navigation Audio</div>
+      </div>
+      <div class="navigation-actions">
+        <button id="navClearButton" class="navigation-action" type="button">Clear Destination</button>
+        <button id="navCloseButton" class="navigation-action" type="button">Close (M)</button>
+      </div>
+    </div>
+    <nav aria-label="Location categories">
+      <ul class="navigation-list">
+        <li class="navigation-category">
+          <button id="navCategoryCitiesButton" class="navigation-category-toggle" type="button" aria-expanded="true" aria-controls="navCategoryCitiesList">Cities</button>
+          <ul id="navCategoryCitiesList" class="navigation-category-items"></ul>
+        </li>
+        <li class="navigation-category">
+          <button id="navCategoryTownsButton" class="navigation-category-toggle" type="button" aria-expanded="true" aria-controls="navCategoryTownsList">Towns</button>
+          <ul id="navCategoryTownsList" class="navigation-category-items"></ul>
+        </li>
+        <li class="navigation-category">
+          <button id="navCategoryOutpostsButton" class="navigation-category-toggle" type="button" aria-expanded="true" aria-controls="navCategoryOutpostsList">outposts</button>
+          <ul id="navCategoryOutpostsList" class="navigation-category-items"></ul>
+        </li>
+        <li class="navigation-category">
+          <button id="navCategoryOtherButton" class="navigation-category-toggle" type="button" aria-expanded="true" aria-controls="navCategoryOtherList">Other</button>
+          <ul id="navCategoryOtherList" class="navigation-category-items"></ul>
+        </li>
+      </ul>
+    </nav>
+  </header>
+</div>
 <div id="hud">
-  WASD: MOVE / STRAFE &nbsp;|&nbsp; ←→: TURN &nbsp;|&nbsp; ↑↓: LOOK (TAP BOTH TO CENTER) &nbsp;|&nbsp; SPACE: FIRE &nbsp;|&nbsp; E: MANUAL SONAR PING &nbsp;|&nbsp; H/G: SPEAK HP/EP &nbsp;|&nbsp; I/J/K/L: SNAP N/W/S/E &nbsp;|&nbsp; NUMPAD 1-4: SPAWN ENEMY (PAUSE+NUMPAD: EDIT STATS) &nbsp;|&nbsp; NUMPAD 0: WEAPON EDITOR &nbsp;|&nbsp; Q: AIM ASSIST TOGGLE &nbsp;|&nbsp; `: DEV CONSOLE
+  WASD: MOVE / STRAFE &nbsp;|&nbsp; ←→: TURN &nbsp;|&nbsp; ↑↓: LOOK (TAP BOTH TO CENTER) &nbsp;|&nbsp; SPACE: FIRE &nbsp;|&nbsp; E: MANUAL SONAR PING &nbsp;|&nbsp; H/G/N: SPEAK HP/EP/DEST &nbsp;|&nbsp; I/J/K/L: SNAP N/W/S/E &nbsp;|&nbsp; M: NAV MENU &nbsp;|&nbsp; NUMPAD 1-4: SPAWN ENEMY (PAUSE+NUMPAD: EDIT STATS) &nbsp;|&nbsp; NUMPAD 0: WEAPON EDITOR &nbsp;|&nbsp; Q: AIM ASSIST TOGGLE &nbsp;|&nbsp; `: DEV CONSOLE
   <div id="awarenessStatus">AWARENESS: SCANNING...</div>
   <div id="sonarStatus">SONAR: PASSIVE SWEEP READY</div>
   <div id="playerStatus">STATUS: HP 100% | EP 100% | H: SPEAK HP | G: SPEAK EP</div>

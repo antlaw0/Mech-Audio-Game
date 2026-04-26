@@ -15,7 +15,7 @@ export interface TileRayHit {
 }
 
 export interface SonarContact {
-  kind: 'enemy' | 'wall' | 'boundary' | 'tree' | 'rock'
+  kind: 'enemy' | 'wall' | 'boundary' | 'tree' | 'rock' | 'pillar'
   distance: number
   worldAngle: number
   bearing: number

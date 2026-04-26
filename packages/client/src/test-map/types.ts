@@ -47,6 +47,7 @@ export interface InputState {
   speakHpPending: boolean
   speakEpPending: boolean
   speakCoordsPending: boolean
+  speakDestinationPending: boolean
 } // end interface InputState
 
 export interface WorldPosition {
@@ -191,7 +192,7 @@ export interface IncomingProjectileAudioState {
   distanceToPlayer: number
 } // end interface IncomingProjectileAudioState
 
-export type SpriteType = 'tree' | 'rock'
+export type SpriteType = 'tree' | 'rock' | 'pillar'
 
 export type AudioCategory = 'proximity' | 'objects' | 'enemies' | 'navigation'
 
@@ -240,6 +241,7 @@ export interface AudioController {
   setAimAssistEnabled: (enabled: boolean) => void
   isAimAssistEnabled: () => boolean
   updateFrameAudio: (dt: number, player: PlayerAudioState, enemies: EnemyAudioState[], collisionWorld: WorldCollisionWorld, sprites: SpriteObject[]) => void
+  updateNavigationDestinationCue: (player: PlayerAudioState, destination: WorldPosition | null) => void
   triggerActiveSonar: (player: PlayerAudioState, enemies: EnemyAudioState[], collisionWorld: WorldCollisionWorld, sprites: SpriteObject[]) => void
   playEnemyThreatCue: (enemyId: string, enemyType?: string) => void
   playEnemyAttack: (enemyId: string, enemyType?: string, burstProjectileCount?: number) => void

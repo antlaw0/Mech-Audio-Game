@@ -3,7 +3,7 @@ import { traceWorldHit3D, type WorldCollisionWorld } from './world-collision.js'
 import type { ObstructionAwareness, Player, SpriteObject, TankRender } from './types.js'
 
 interface ObstacleHit {
-  type: 'wall' | 'tree' | 'rock'
+  type: 'wall' | 'tree' | 'rock' | 'pillar'
   distance: number
   x: number
   y: number

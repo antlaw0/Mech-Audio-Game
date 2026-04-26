@@ -33,6 +33,14 @@ import {
 import type { EnemyDefinitionConfig, EnemyId } from './enemies/enemyTypes.js'
 import type { AudioController, Bullet, EnemyRender, IncomingProjectileAudioState, Player, TankRender, TrailPoint } from './types.js'
 
+function getAutomaticFireDefinition(definition: unknown): EnemyDefinitionConfig['automaticFire'] {
+  if (typeof definition !== 'object' || definition === null || !('automaticFire' in definition)) {
+    return undefined
+  } // end if definition cannot expose automatic-fire config
+
+  return definition.automaticFire as EnemyDefinitionConfig['automaticFire']
+} // end function getAutomaticFireDefinition
+
 const KIND_BULLET = 1
 const KIND_ENEMY = 2
 const KIND_TANK = 3
@@ -218,7 +226,7 @@ function spawnTankProjectile(
 } // end function spawnTankProjectile
 
 function chooseAutomaticBurstRoundCount(definition: EnemyDefinitionConfig): number {
-  const automaticFire = definition.automaticFire
+  const automaticFire = getAutomaticFireDefinition(definition)
   if (!automaticFire?.enabled) {
     return 1
   } // end if enemy does not use automatic burst fire
@@ -382,6 +390,10 @@ export function spawnRandomTank(world: CombatEcsWorld, collisionWorld: WorldColl
 
   return false
 } // end function spawnRandomTank
+
+export function spawnEnemyAtPosition(world: CombatEcsWorld, x: number, y: number, enemyId: EnemyId = 'tank'): void {
+  addTank(world, x, y, enemyId)
+} // end function spawnEnemyAtPosition
 
 function addTankFromConfig(world: CombatEcsWorld, x: number, y: number, config: EnemyDefinitionConfig): void {
   const tank = addEntity(world)
@@ -884,7 +896,8 @@ export function stepCombatEcsWorld(
       const newWindup = Math.max(0, attackWindup - simulationStepSeconds)
       Behavior.attackWindupSeconds[tank] = newWindup
       if (newWindup <= 0 && canShootByLos && dist < enemyDefinition.behavior.preferredEngageRange) {
-        if (enemyDefinition.automaticFire?.enabled) {
+        const automaticFire = getAutomaticFireDefinition(enemyDefinition)
+        if (automaticFire?.enabled) {
           const roundsInBurst = chooseAutomaticBurstRoundCount(enemyDefinition)
           Behavior.burstShotsRemaining[tank] = roundsInBurst
           Behavior.burstShotTimerSeconds[tank] = 0
@@ -906,10 +919,11 @@ export function stepCombatEcsWorld(
 
     let remainingBurstShots = Math.max(0, Math.round(Behavior.burstShotsRemaining[tank] ?? 0))
     let burstTimerSeconds = Math.max(0, Behavior.burstShotTimerSeconds[tank] ?? 0)
+    const automaticFire = getAutomaticFireDefinition(enemyDefinition)
 
     if (remainingBurstShots > 0) {
-      const burstIntervalSeconds = enemyDefinition.automaticFire?.enabled
-        ? Math.max(0.01, enemyDefinition.automaticFire.burstIntervalSeconds)
+      const burstIntervalSeconds = automaticFire?.enabled
+        ? Math.max(0.01, automaticFire.burstIntervalSeconds)
         : enemyDefinition.fireRateSeconds
       burstTimerSeconds = Math.max(0, burstTimerSeconds - simulationStepSeconds)
 

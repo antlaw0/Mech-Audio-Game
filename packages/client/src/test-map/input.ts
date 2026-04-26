@@ -187,6 +187,10 @@ export function bindInput(
         input.speakCoordsPending = true
       } // end if KeyT
 
+      if (event.code === 'KeyN') {
+        input.speakDestinationPending = true
+      } // end if KeyN
+
       if (event.code === 'KeyQ') {
         audio.setAimAssistEnabled(!audio.isAimAssistEnabled())
       } // end if KeyQ toggle aim assist
@@ -343,6 +347,10 @@ export function bindInput(
     if (event.code === 'KeyT') {
       input.speakCoordsPending = false
     } // end if KeyT
+
+    if (event.code === 'KeyN') {
+      input.speakDestinationPending = false
+    } // end if KeyN
 
     if (
       (event.code === 'ArrowLeft' || event.code === 'ArrowRight' || event.code === 'ArrowUp' || event.code === 'ArrowDown') &&

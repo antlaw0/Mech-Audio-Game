@@ -19,7 +19,7 @@ import {
 } from './audio-utils.js'
 import { getEnemyDefinition } from './enemies/index.js'
 import type { EnemyAutomaticFireDefinition, EnemyId } from './enemies/enemyTypes.js'
-import type { AudioCategory, AudioController, AudioVolumeChannel, EnemyAudioState, IncomingProjectileAudioState, ObstructionAwareness, PlayerAudioState, SonarEcho, SpriteObject } from './types.js'
+import type { AudioCategory, AudioController, AudioVolumeChannel, EnemyAudioState, IncomingProjectileAudioState, ObstructionAwareness, PlayerAudioState, SonarEcho, SpriteObject, WorldPosition } from './types.js'
 import { type WorldCollisionWorld } from './world-collision.js'
 
 interface EnemySoundSet {
@@ -378,6 +378,14 @@ function createAttackVariantPlayers(automaticFire?: EnemyAutomaticFireDefinition
   return variants
 } // end function createAttackVariantPlayers
 
+function getEnemyAutomaticFireDefinition(definition: unknown): EnemyAutomaticFireDefinition | undefined {
+  if (typeof definition !== 'object' || definition === null || !('automaticFire' in definition)) {
+    return undefined
+  } // end if definition cannot expose automatic-fire config
+
+  return definition.automaticFire as EnemyAutomaticFireDefinition | undefined
+} // end function getEnemyAutomaticFireDefinition
+
 function createTankProfile(enemyId: string, enemyType: string): EnemyAudioProfile {
   const definition = isEnemyId(enemyType) ? getEnemyDefinition(enemyType) : null
   const filter = new Tone.Filter({ type: 'lowpass', frequency: 2600, Q: 0.7 })
@@ -403,7 +411,7 @@ function createTankProfile(enemyId: string, enemyType: string): EnemyAudioProfil
       passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
       threatCue: new Tone.Player(definition?.sounds.startupSound ?? 'assets/sounds/weapons/reloadCannon.ogg'),
       attackSound: new Tone.Player(definition?.sounds.attackSound ?? 'assets/sounds/explosions/explosion_1A.ogg'),
-      attackVariants: createAttackVariantPlayers(definition?.automaticFire),
+      attackVariants: createAttackVariantPlayers(getEnemyAutomaticFireDefinition(definition)),
       hurtSound: new Tone.Player(definition?.sounds.hurtSound ?? 'assets/sounds/explosions/explosion_1B.ogg'),
       deathSound: new Tone.Player(definition?.sounds.deathSound ?? 'assets/sounds/explosions/explosion_2a.ogg')
     },
@@ -446,7 +454,7 @@ function createHelicopterProfile(enemyId: string, enemyType: string): EnemyAudio
       passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
       threatCue: new Tone.Player(definition?.sounds.startupSound ?? 'assets/sounds/weapons/reload.ogg'),
       attackSound: new Tone.Player(definition?.sounds.attackSound ?? 'assets/sounds/weapons/pistol_fire.ogg'),
-      attackVariants: createAttackVariantPlayers(definition?.automaticFire),
+      attackVariants: createAttackVariantPlayers(getEnemyAutomaticFireDefinition(definition)),
       hurtSound: new Tone.Player(definition?.sounds.hurtSound ?? 'assets/sounds/tankHit.ogg'),
       deathSound: new Tone.Player(definition?.sounds.deathSound ?? 'assets/sounds/explosions/explosion_2a.ogg')
     },
@@ -546,6 +554,8 @@ export function createAudioController(): AudioController {
   let categoryObjects = true
   let categoryEnemies = true
   let categoryNavigation = true
+  let radarDetectionOscStarted = false
+  let destinationToneOscStarted = false
   let masterVolume = 1
   let ambienceVolume = 1
   let servoVolume = 1
@@ -891,6 +901,20 @@ export function createAudioController(): AudioController {
     envelope: { attack: 0.01, decay: 0.18, sustain: 0, release: 0.1 }
   }).toDestination()
 
+  // Mid-range radar detection: directional tone with stable loudness and stereo pan.
+  const radarDetectionPanner = new Tone.Panner(0).toDestination()
+  const radarDetectionGain = new Tone.Gain(0).connect(radarDetectionPanner)
+  const radarDetectionBoost = new Tone.Gain(6).connect(radarDetectionGain)
+  const radarDetectionFilter = new Tone.Filter({ frequency: 2400, type: 'lowpass', rolloff: -24 }).connect(radarDetectionBoost)
+  const radarDetectionDistortion = new Tone.Distortion(0.55).connect(radarDetectionFilter)
+  const radarDetectionTremolo = new Tone.Tremolo({ frequency: 1, depth: 1.0, type: 'sine', spread: 0 }).connect(radarDetectionDistortion)
+  radarDetectionTremolo.start()
+  const radarDetectionOsc = new Tone.Oscillator({ frequency: 180, type: 'square' }).connect(radarDetectionTremolo)
+
+  const destinationTonePanner = new Tone.Panner(0).toDestination()
+  const destinationToneGain = new Tone.Gain(0).connect(destinationTonePanner)
+  const destinationToneOsc = new Tone.Oscillator({ frequency: AUDIO_NAVIGATION_CONFIG.destinationToneFarFrequency, type: 'sine' }).connect(destinationToneGain)
+
   const activePingSynth = new Tone.FMSynth({
     harmonicity: 1.2,
     modulationIndex: 6,
@@ -1139,6 +1163,14 @@ export function createAudioController(): AudioController {
           aimAssistOsc.start()
           aimAssistOscStarted = true
         } // end if aim assist oscillator not started
+        if (!radarDetectionOscStarted) {
+          radarDetectionOsc.start()
+          radarDetectionOscStarted = true
+        } // end if radar detection oscillator not started
+        if (!destinationToneOscStarted) {
+          destinationToneOsc.start()
+          destinationToneOscStarted = true
+        } // end if destination oscillator not started
         footstepAudio.muted = false
         servoAudio.muted = false
         ambienceAudio.muted = false
@@ -1409,7 +1441,7 @@ export function createAudioController(): AudioController {
     } // end if disabling aim assist
   } // end function setAimAssistEnabled
 
-  const playObstacleContact = (distance: number, bearing: number, kind: 'wall' | 'boundary' | 'tree' | 'rock', lowVolume = false): void => {
+  const playObstacleContact = (distance: number, bearing: number, kind: 'wall' | 'boundary' | 'tree' | 'rock' | 'pillar', lowVolume = false): void => {
     const voice = sonarEchoVoices[sonarEchoVoiceCursor % sonarEchoVoices.length]
     sonarEchoVoiceCursor += 1
     if (!voice) {
@@ -1422,6 +1454,8 @@ export function createAudioController(): AudioController {
         ? 480
         : kind === 'tree'
           ? 520
+          : kind === 'pillar'
+            ? 610
           : 420
     const oscillatorType = kind === 'boundary'
       ? 'sawtooth'
@@ -1429,6 +1463,8 @@ export function createAudioController(): AudioController {
         ? 'sine'
         : kind === 'tree'
           ? 'triangle'
+          : kind === 'pillar'
+            ? 'sawtooth'
           : 'square'
     voice.panner.pan.rampTo(clamp(Math.sin(bearing), -1, 1), 0.01)
     voice.synth.volume.value = gainToDbSafe(clamp(distanceToVolume(distance, AUDIO_NAVIGATION_CONFIG.obstacleAudioMaxDistance) * (lowVolume ? 0.18 : 0.42) * objectsVolume, 0, 2))
@@ -1474,6 +1510,33 @@ export function createAudioController(): AudioController {
     const intensity = clamp(1 - nearest.distance / AUDIO_NAVIGATION_CONFIG.nearFieldRadius, 0, 1)
     playWallProximityCue(nearest.bearing, intensity, proximityVolume)
   } // end function updateNearFieldNavigation
+
+  const updateNavigationDestinationCue = (player: PlayerAudioState, destination: WorldPosition | null): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryNavigation || destination === null) {
+      destinationToneGain.gain.rampTo(0, 0.06)
+      return
+    } // end if destination cue should be silent
+
+    const dx = destination.x - player.position.x
+    const dy = destination.y - player.position.y
+    const distance = Math.hypot(dx, dy)
+    const bearing = Math.atan2(dy, dx)
+    const relativeBearing = normalizeAngle(bearing - player.angle)
+    const pan = clamp(Math.sin(relativeBearing), -1, 1)
+    destinationTonePanner.pan.rampTo(pan, 0.04)
+
+    const normalizedDistance = clamp(
+      distance / Math.max(1, AUDIO_NAVIGATION_CONFIG.destinationToneRange),
+      0,
+      1
+    )
+    const frequency = AUDIO_NAVIGATION_CONFIG.destinationToneNearFrequency
+      + (AUDIO_NAVIGATION_CONFIG.destinationToneFarFrequency - AUDIO_NAVIGATION_CONFIG.destinationToneNearFrequency) * normalizedDistance
+    destinationToneOsc.frequency.rampTo(frequency, 0.05)
+
+    const targetGain = AUDIO_NAVIGATION_CONFIG.destinationToneGain * navigationVolume
+    destinationToneGain.gain.rampTo(targetGain, 0.07)
+  } // end function updateNavigationDestinationCue
 
   const triggerPassiveSweepTone = (frequency: number, gain: number): void => {
     const now = Tone.now()
@@ -1620,6 +1683,7 @@ export function createAudioController(): AudioController {
     } // end if sonar should be active
 
     updatePassiveRadar(dt)
+    updateRadarDetection(player, enemies)
     updateAimAssist(dt, player, enemies)
 
     previousPlayerX = player.position.x
@@ -1736,6 +1800,8 @@ export function createAudioController(): AudioController {
       const pan = clamp(echo.relativeAngle / (Math.PI * 0.5), -1, 1)
       const baseFrequency = echo.obstacleType === 'wall'
         ? 220
+        : echo.obstacleType === 'pillar'
+          ? 350
         : echo.obstacleType === 'rock'
           ? 300
           : 380
@@ -1750,7 +1816,11 @@ export function createAudioController(): AudioController {
 
       voice.panner.pan.rampTo(pan, 0.01)
       voice.synth.volume.value = gainToDbSafe(objectsVolume)
-      voice.synth.oscillator.type = echo.obstacleType === 'wall' ? 'sine' : 'triangle'
+      voice.synth.oscillator.type = echo.obstacleType === 'wall'
+        ? 'sine'
+        : echo.obstacleType === 'pillar'
+          ? 'sawtooth'
+          : 'triangle'
       voice.synth.triggerAttackRelease(frequency, duration, now + delaySeconds)
     } // end for each sonar echo
   } // end function emitEnvironmentalSonar
@@ -2184,6 +2254,96 @@ export function createAudioController(): AudioController {
     void passiveRadarSweepSynth
   } // end function updatePassiveRadar
 
+  const updateRadarDetection = (player: PlayerAudioState, enemies: EnemyAudioState[]): void => {
+    if (!categoryEnemies) {
+      radarDetectionGain.gain.rampTo(0, 0.2)
+      return
+    } // end if enemies category disabled
+
+    const nearExclusionRange = AUDIO_NAVIGATION_CONFIG.radarNearExclusionRange
+    const detectionRange = AUDIO_NAVIGATION_CONFIG.radarDetectionRange
+
+    const contacts = enemies.filter((enemy) => {
+      if (!enemy.isAlive) {
+        return false
+      } // end if enemy is dead
+      const dist = Math.hypot(
+        enemy.position.x - player.position.x,
+        enemy.position.y - player.position.y,
+        enemy.position.z - player.position.z
+      )
+      const inRange = dist > nearExclusionRange && dist <= detectionRange
+      if (inRange) {
+        console.log(`[RADAR] Contact: id=${enemy.id}, type=${enemy.type}, dist=${dist.toFixed(1)}, range=[${nearExclusionRange}, ${detectionRange}]`)
+      } // end if log radar contact
+      return inRange
+    })
+
+    console.log(`[RADAR] Frame: totalEnemies=${enemies.length}, contacts=${contacts.length}, playerPos=(${player.position.x.toFixed(1)}, ${player.position.y.toFixed(1)})`)
+
+    if (contacts.length === 0) {
+      radarDetectionGain.gain.rampTo(0, 0.4)
+      return
+    } // end if no radar contacts this frame
+
+    // Compute inverse-distance-weighted center of mass for the cluster.
+    let sumX = 0
+    let sumY = 0
+    let sumZ = 0
+    let totalWeight = 0
+    for (const contact of contacts) {
+      const dist = Math.hypot(
+        contact.position.x - player.position.x,
+        contact.position.y - player.position.y,
+        contact.position.z - player.position.z
+      )
+      const weight = 1 / Math.max(dist, 0.1)
+      sumX += contact.position.x * weight
+      sumY += contact.position.y * weight
+      sumZ += contact.position.z * weight
+      totalWeight += weight
+    } // end for each radar contact
+
+    const centerX = sumX / totalWeight
+    const centerY = sumY / totalWeight
+    const centerZ = sumZ / totalWeight
+
+    const clusterDist = Math.hypot(
+      centerX - player.position.x,
+      centerY - player.position.y,
+      centerZ - player.position.z
+    )
+
+    // Pan only by left-right bearing so the radar cue does not lose level with range.
+    const listenerPos = worldToListenerSpace(
+      { x: centerX, y: centerY, z: centerZ },
+      player.position,
+      player.angle
+    )
+    const listenerMag = Math.hypot(listenerPos.x, listenerPos.y, listenerPos.z)
+    if (listenerMag > 0.001) {
+      const stereoPan = clamp(listenerPos.x / listenerMag, -1, 1)
+      radarDetectionPanner.pan.rampTo(stereoPan, 0.12)
+    } else {
+      radarDetectionPanner.pan.rampTo(0, 0.12)
+    } // end if listener position has nonzero magnitude
+
+    // Pitch = closeness: farther cluster yields lower tone.
+    const rangeSpan = Math.max(detectionRange - nearExclusionRange, 1)
+    const distFraction = clamp(1 - (clusterDist - nearExclusionRange) / rangeSpan, 0, 1)
+    const targetFreq = AUDIO_NAVIGATION_CONFIG.radarPitchFar + (AUDIO_NAVIGATION_CONFIG.radarPitchNear - AUDIO_NAVIGATION_CONFIG.radarPitchFar) * distFraction
+    radarDetectionOsc.frequency.rampTo(targetFreq, 0.25)
+
+    // Tremolo rate = density: more enemies pulse faster.
+    const countFraction = clamp((contacts.length - 1) / 9, 0, 1)
+    const tremoloRate = AUDIO_NAVIGATION_CONFIG.radarTremoloMin + (AUDIO_NAVIGATION_CONFIG.radarTremoloMax - AUDIO_NAVIGATION_CONFIG.radarTremoloMin) * countFraction
+    radarDetectionTremolo.frequency.rampTo(tremoloRate, 0.3)
+
+    const targetGain = AUDIO_NAVIGATION_CONFIG.radarGain * enemiesVolume
+    console.log(`[RADAR] Cluster: clusterDist=${clusterDist.toFixed(1)}, freq=${targetFreq.toFixed(1)}, tremolo=${tremoloRate.toFixed(2)}, gain=${targetGain.toFixed(3)}, enemiesVolume=${enemiesVolume.toFixed(2)}`)
+    radarDetectionGain.gain.rampTo(targetGain, 0.3)
+  } // end function updateRadarDetection
+
   const updateAimAssist = (dt: number, player: PlayerAudioState, enemies: EnemyAudioState[]): void => {
     // Target tracking now relies on enemy positional loop audio only.
     aimAssistGain.gain.rampTo(0, 0.08)
@@ -2289,6 +2449,7 @@ export function createAudioController(): AudioController {
     setAimAssistEnabled,
     isAimAssistEnabled: () => aimAssistEnabled,
     updateFrameAudio,
+    updateNavigationDestinationCue,
     triggerActiveSonar,
     playEnemyThreatCue,
     playEnemyAttack,

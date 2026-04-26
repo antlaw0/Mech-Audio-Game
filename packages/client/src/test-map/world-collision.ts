@@ -17,7 +17,7 @@ export interface WorldTraceHit {
   x: number
   y: number
   z: number
-  obstacleType: 'wall' | 'tree' | 'rock'
+  obstacleType: 'wall' | 'tree' | 'rock' | 'pillar'
 } // end interface WorldTraceHit
 
 interface WallCollider {
@@ -35,6 +35,7 @@ interface RoundCollider {
   radius: number
   zMin: number
   zMax: number
+  type: 'tree' | 'rock' | 'pillar'
 } // end interface RoundCollider
 
 export interface WorldCollisionWorld {
@@ -50,16 +51,29 @@ function toRoundObstacle(sprite: SpriteObject): RoundCollider {
       y: sprite.y,
       radius: Math.max(0.25, sprite.radius),
       zMin: 0,
-      zMax: 2.4
+      zMax: 2.4,
+      type: 'tree'
     } // end object tree collider
   } // end if tree collider
+
+  if (sprite.type === 'pillar') {
+    return {
+      x: sprite.x,
+      y: sprite.y,
+      radius: Math.max(0.3, sprite.radius),
+      zMin: 0,
+      zMax: 3.1,
+      type: 'pillar'
+    } // end object pillar collider
+  } // end if pillar collider
 
   return {
     x: sprite.x,
     y: sprite.y,
     radius: Math.max(0.25, sprite.radius),
     zMin: 0,
-    zMax: 1.05
+    zMax: 1.05,
+    type: 'rock'
   } // end object rock collider
 } // end function toRoundObstacle
 
@@ -141,7 +155,7 @@ function collidesWithWallCells(world: WorldCollisionWorld, x: number, y: number,
   return false
 } // end function collidesWithWallCells
 
-function getObstacleType(world: WorldCollisionWorld, x: number, y: number, z: number, radius: number): 'wall' | 'tree' | 'rock' | null {
+function getObstacleType(world: WorldCollisionWorld, x: number, y: number, z: number, radius: number): 'wall' | 'tree' | 'rock' | 'pillar' | null {
   const traceZMin = z
   const traceZMax = z + 0.001
 
@@ -158,7 +172,7 @@ function getObstacleType(world: WorldCollisionWorld, x: number, y: number, z: nu
     const dy = y - obstacle.y
     const minDist = radius + obstacle.radius
     if ((dx * dx) + (dy * dy) <= minDist * minDist) {
-      return obstacle.zMax > 1.5 ? 'tree' : 'rock'
+      return obstacle.type
     } // end if round obstacle hit
   } // end for each obstacle
 

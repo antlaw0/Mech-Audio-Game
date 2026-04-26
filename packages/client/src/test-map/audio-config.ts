@@ -76,5 +76,17 @@ export const AUDIO_NAVIGATION_CONFIG = {
   maxSimultaneousObstacleTones: 5,
   losTickIntervalSeconds: 0.3,
   sweepBaseFrequency: 240,
-  sweepPitchSpan: 70
+  sweepPitchSpan: 70,
+  // Mid-range radar: enemies beyond near exclusion but within radar range
+  radarDetectionRange: 80,
+  radarNearExclusionRange: 26,
+    radarPitchFar: 180,
+    radarPitchNear: 520,
+  radarTremoloMin: 0.4,
+  radarTremoloMax: 7.0,
+    radarGain: 2.5,
+    destinationToneFarFrequency: 260,
+    destinationToneNearFrequency: 980,
+    destinationToneRange: 320,
+    destinationToneGain: 0.16
 } as const

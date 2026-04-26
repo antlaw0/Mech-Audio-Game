@@ -16,6 +16,7 @@ import {
   getCombatRenderState,
   spawnRandomEnemy,
   spawnRandomTankFromConfig,
+  spawnEnemyAtPosition,
   spawnPlayerBullet,
   spawnPlayerBulletToward,
   spawnPlayerMissile,
@@ -34,11 +35,13 @@ import { computeObstructionAwareness } from './awareness.js'
 import { createDeveloperConsole } from './dev-console.js'
 import { createMapData } from './map-data.js'
 import { createInputState, createPlayer } from './player-state.js'
+import { TEST_MAP_NAVIGATION_POIS } from './scene-layout.js'
 import { createSprites } from './sprites.js'
 import { createThreeRenderSystem } from './three-render.js'
 import { createUpdateState, updateFrame } from './update.js'
 import { createWorldCollisionWorld, isPlayerBlocked, PLAYER_COLLISION_HEIGHT } from './world-collision.js'
 import type { AudioCategory, AudioVolumeChannel } from './types.js'
+import type { WorldPosition } from './types.js'
 
 interface TestMapDevConsole {
   help(): string[]
@@ -83,6 +86,15 @@ interface DeveloperConsoleHelpNode {
   lines?: string[]
   children?: DeveloperConsoleHelpNode[]
 } // end interface DeveloperConsoleHelpNode
+
+type NavigationCategoryId = 'cities' | 'towns' | 'outposts' | 'other'
+
+interface KnownPoi {
+  id: string
+  name: string
+  category: NavigationCategoryId
+  position: WorldPosition
+} // end interface KnownPoi
 
 declare global {
   interface Window {
@@ -136,6 +148,17 @@ function startTestMap(): void {
   const devConsoleOutputElement = document.getElementById('devConsoleOutput')
   const devConsoleInputElement = document.getElementById('devConsoleInput')
   const devConsoleStatusElement = document.getElementById('devConsoleStatus')
+  const navigationOverlayElement = document.getElementById('navigationOverlay')
+  const navClearButtonElement = document.getElementById('navClearButton')
+  const navCloseButtonElement = document.getElementById('navCloseButton')
+  const navCategoryCitiesButtonElement = document.getElementById('navCategoryCitiesButton')
+  const navCategoryTownsButtonElement = document.getElementById('navCategoryTownsButton')
+  const navCategoryOutpostsButtonElement = document.getElementById('navCategoryOutpostsButton')
+  const navCategoryOtherButtonElement = document.getElementById('navCategoryOtherButton')
+  const navCategoryCitiesListElement = document.getElementById('navCategoryCitiesList')
+  const navCategoryTownsListElement = document.getElementById('navCategoryTownsList')
+  const navCategoryOutpostsListElement = document.getElementById('navCategoryOutpostsList')
+  const navCategoryOtherListElement = document.getElementById('navCategoryOtherList')
 
   const enemyEditorModalElement = document.getElementById('enemyEditorModal')
   const enemyEditorTitleElement = document.getElementById('enemyEditorTitle')
@@ -195,6 +218,7 @@ function startTestMap(): void {
 
   let isPaused = false
   let isConsoleOpen = false
+  let isNavigationMenuOpen = false
   let consoleResumeOnClose = false
   let queuedEnemySpawn: EnemyDefinitionConfig | null = null
   let isEditorModalOpen = false
@@ -212,6 +236,17 @@ function startTestMap(): void {
   let missileLockTargetId: number | null = null
   let missileLockConfirmed = false
   let missileLockToneTimerSeconds = 0
+  let destinationPoiId: string | null = null
+
+  const knownPois: KnownPoi[] = TEST_MAP_NAVIGATION_POIS.map((poi) => ({
+    id: poi.id,
+    name: poi.name,
+    category: poi.category,
+    position: { x: poi.x, y: poi.y, z: 0 }
+  }))
+  const discoveredPoiIds = new Set<string>(knownPois.map((poi) => poi.id))
+  const expandedNavigationCategories = new Set<NavigationCategoryId>(['cities', 'towns', 'outposts', 'other'])
+  const navigationPoiButtons = new Map<string, HTMLButtonElement>()
 
   const clearGameplayInputs = (): void => {
     input.moveForward = false
@@ -244,6 +279,7 @@ function startTestMap(): void {
     input.speakHpPending = false
     input.speakEpPending = false
     input.speakCoordsPending = false
+    input.speakDestinationPending = false
   } // end function clearGameplayInputs
 
   const equipWeaponAtIndex = (requestedIndex: number): void => {
@@ -275,6 +311,192 @@ function startTestMap(): void {
     pauseOverlayElement.style.display = visible ? 'flex' : 'none'
     pauseOverlayElement.setAttribute('aria-hidden', visible ? 'false' : 'true')
   } // end function setPauseOverlayVisible
+
+  const getDestinationPoi = (): KnownPoi | null => {
+    if (!destinationPoiId) {
+      return null
+    } // end if no destination selected
+    return knownPois.find((poi) => poi.id === destinationPoiId) ?? null
+  } // end function getDestinationPoi
+
+  const updatePoiSelectionVisuals = (): void => {
+    for (const [poiId, button] of navigationPoiButtons.entries()) {
+      const selected = destinationPoiId === poiId
+      button.setAttribute('aria-pressed', selected ? 'true' : 'false')
+    } // end for each POI button
+  } // end function updatePoiSelectionVisuals
+
+  const updateNavigationOverlayVisibility = (visible: boolean): void => {
+    if (!(navigationOverlayElement instanceof HTMLDivElement)) {
+      return
+    } // end if navigation overlay missing
+    navigationOverlayElement.style.display = visible ? 'flex' : 'none'
+    navigationOverlayElement.setAttribute('aria-hidden', visible ? 'false' : 'true')
+  } // end function updateNavigationOverlayVisibility
+
+  const setDestinationPoi = (poiId: string): void => {
+    if (!discoveredPoiIds.has(poiId)) {
+      return
+    } // end if POI not yet discovered
+
+    const poi = knownPois.find((candidate) => candidate.id === poiId)
+    if (!poi) {
+      return
+    } // end if POI id not known
+
+    destinationPoiId = poiId
+    updatePoiSelectionVisuals()
+    if (awarenessStatusElement) {
+      awarenessStatusElement.textContent = `AWARENESS: DESTINATION SET TO ${poi.name.toUpperCase()}`
+    } // end if awareness status element exists
+  } // end function setDestinationPoi
+
+  const clearDestinationPoi = (): void => {
+    destinationPoiId = null
+    updatePoiSelectionVisuals()
+    if (awarenessStatusElement) {
+      awarenessStatusElement.textContent = 'AWARENESS: DESTINATION CLEARED'
+    } // end if awareness status element exists
+  } // end function clearDestinationPoi
+
+  const speakCurrentDestinationStatus = (): void => {
+    const destination = getDestinationPoi()
+    if (!('speechSynthesis' in window)) {
+      return
+    } // end if speech synthesis unavailable
+
+    let message = 'No destination selected'
+    if (destination) {
+      const distance = Math.hypot(destination.position.x - player.x, destination.position.y - player.y)
+      message = `${destination.name}. ${Math.round(distance)} world units`
+    } // end if destination exists
+
+    const utterance = new SpeechSynthesisUtterance(message)
+    utterance.rate = 1
+    utterance.pitch = 1
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utterance)
+  } // end function speakCurrentDestinationStatus
+
+  const setCategoryExpanded = (category: NavigationCategoryId, expanded: boolean): void => {
+    if (expanded) {
+      expandedNavigationCategories.add(category)
+    } else {
+      expandedNavigationCategories.delete(category)
+    } // end if updating category expansion state
+
+    const controls = {
+      cities: {
+        button: navCategoryCitiesButtonElement,
+        list: navCategoryCitiesListElement
+      },
+      towns: {
+        button: navCategoryTownsButtonElement,
+        list: navCategoryTownsListElement
+      },
+      outposts: {
+        button: navCategoryOutpostsButtonElement,
+        list: navCategoryOutpostsListElement
+      },
+      other: {
+        button: navCategoryOtherButtonElement,
+        list: navCategoryOtherListElement
+      }
+    }
+
+    const control = controls[category]
+    if (control?.button instanceof HTMLButtonElement) {
+      control.button.setAttribute('aria-expanded', expanded ? 'true' : 'false')
+    } // end if category toggle button exists
+    if (control?.list instanceof HTMLUListElement) {
+      control.list.hidden = !expanded
+      control.list.setAttribute('aria-hidden', expanded ? 'false' : 'true')
+
+      const childButtons = control.list.querySelectorAll('button')
+      childButtons.forEach((button) => {
+        if (!(button instanceof HTMLButtonElement)) {
+          return
+        } // end if non-button node
+        button.tabIndex = expanded ? 0 : -1
+      })
+    } // end if category list exists
+  } // end function setCategoryExpanded
+
+  const buildCategoryList = (category: NavigationCategoryId, listElement: HTMLElement | null): void => {
+    if (!(listElement instanceof HTMLUListElement)) {
+      return
+    } // end if category list element missing
+
+    listElement.innerHTML = ''
+    const pois = knownPois.filter((poi) => poi.category === category && discoveredPoiIds.has(poi.id))
+
+    if (pois.length === 0) {
+      const item = document.createElement('li')
+      item.className = 'navigation-empty'
+      item.textContent = 'No known locations'
+      listElement.appendChild(item)
+      return
+    } // end if no discovered POIs in category
+
+    for (const poi of pois) {
+      const listItem = document.createElement('li')
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'navigation-poi'
+      button.textContent = poi.name
+      button.setAttribute('data-poi-id', poi.id)
+      button.setAttribute('aria-pressed', destinationPoiId === poi.id ? 'true' : 'false')
+      button.addEventListener('click', () => {
+        setDestinationPoi(poi.id)
+      })
+      listItem.appendChild(button)
+      listElement.appendChild(listItem)
+      navigationPoiButtons.set(poi.id, button)
+    } // end for each POI in category
+  } // end function buildCategoryList
+
+  const renderNavigationPoiMenu = (): void => {
+    navigationPoiButtons.clear()
+    buildCategoryList('cities', navCategoryCitiesListElement)
+    buildCategoryList('towns', navCategoryTownsListElement)
+    buildCategoryList('outposts', navCategoryOutpostsListElement)
+    buildCategoryList('other', navCategoryOtherListElement)
+    updatePoiSelectionVisuals()
+  } // end function renderNavigationPoiMenu
+
+  const closeNavigationMenu = (): void => {
+    isNavigationMenuOpen = false
+    updateNavigationOverlayVisibility(false)
+    clearGameplayInputs()
+    if (awarenessStatusElement) {
+      awarenessStatusElement.textContent = 'AWARENESS: NAVIGATION MENU CLOSED'
+    } // end if awareness status element exists
+  } // end function closeNavigationMenu
+
+  const openNavigationMenu = (): void => {
+    if (isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen || isPaused) {
+      return
+    } // end if another modal interface is open
+
+    isNavigationMenuOpen = true
+    renderNavigationPoiMenu()
+    updateNavigationOverlayVisibility(true)
+    clearGameplayInputs()
+    if (awarenessStatusElement) {
+      awarenessStatusElement.textContent = 'AWARENESS: NAVIGATION MENU OPEN'
+    } // end if awareness status element exists
+    if (navCategoryCitiesButtonElement instanceof HTMLButtonElement) {
+      navCategoryCitiesButtonElement.focus()
+    } // end if first category button exists
+  } // end function openNavigationMenu
+
+  const toggleNavigationMenu = (): void => {
+    if (isNavigationMenuOpen) {
+      closeNavigationMenu()
+      return
+    } // end if menu should close
+    openNavigationMenu()
+  } // end function toggleNavigationMenu
 
   const setEditorModalVisible = (visible: boolean): void => {
     if (!(enemyEditorModalElement instanceof HTMLDivElement)) {
@@ -424,6 +646,10 @@ function startTestMap(): void {
   } // end function closeEnemyEditorModal
 
   const enterPausedState = async (showPauseOverlay: boolean): Promise<void> => {
+    if (isNavigationMenuOpen) {
+      closeNavigationMenu()
+    } // end if navigation menu open while pausing
+
     clearGameplayInputs()
 
     if (!isPaused) {
@@ -476,7 +702,49 @@ function startTestMap(): void {
     await pauseGame()
   } // end function togglePause
 
-  bindInput(input, audio, () => isPaused || isWeaponEditorOpen || isConsoleOpen)
+  bindInput(input, audio, () => isPaused || isWeaponEditorOpen || isConsoleOpen || isNavigationMenuOpen)
+
+  const categoryToggleBindings: Array<[NavigationCategoryId, HTMLElement | null]> = [
+    ['cities', navCategoryCitiesButtonElement],
+    ['towns', navCategoryTownsButtonElement],
+    ['outposts', navCategoryOutpostsButtonElement],
+    ['other', navCategoryOtherButtonElement]
+  ]
+  for (const [category, toggleElement] of categoryToggleBindings) {
+    if (!(toggleElement instanceof HTMLButtonElement)) {
+      continue
+    } // end if category toggle element missing
+
+    setCategoryExpanded(category, expandedNavigationCategories.has(category))
+    toggleElement.addEventListener('click', () => {
+      const nextExpanded = !expandedNavigationCategories.has(category)
+      setCategoryExpanded(category, nextExpanded)
+    })
+  } // end for each category toggle
+
+  if (navClearButtonElement instanceof HTMLButtonElement) {
+    navClearButtonElement.addEventListener('click', () => {
+      clearDestinationPoi()
+    })
+  } // end if clear-destination button exists
+
+  if (navCloseButtonElement instanceof HTMLButtonElement) {
+    navCloseButtonElement.addEventListener('click', () => {
+      closeNavigationMenu()
+    })
+  } // end if close button exists
+
+  renderNavigationPoiMenu()
+  updateNavigationOverlayVisibility(false)
+
+  document.addEventListener('keydown', (event) => {
+    if (event.code !== 'KeyM' || event.repeat || isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen) {
+      return
+    } // end if not menu toggle key or conflicting modal state
+
+    event.preventDefault()
+    toggleNavigationMenu()
+  })
 
   document.addEventListener('keydown', (event) => {
     if (event.code !== 'Escape' || event.repeat) {
@@ -500,11 +768,16 @@ function startTestMap(): void {
       return
     } // end if closing weapon editor
 
+    if (isNavigationMenuOpen) {
+      closeNavigationMenu()
+      return
+    } // end if closing navigation menu
+
     void togglePause()
   })
 
   document.addEventListener('keydown', (event) => {
-    if (event.code !== 'Backquote' || event.repeat || isEditorModalOpen || isWeaponEditorOpen) {
+    if (event.code !== 'Backquote' || event.repeat || isEditorModalOpen || isWeaponEditorOpen || isNavigationMenuOpen) {
       return
     } // end if not developer console key or another editor is open
 
@@ -584,6 +857,13 @@ function startTestMap(): void {
   })
 
   const combatWorld = createCombatEcsWorld()
+
+  // Radar test cluster: 2 tanks + 1 striker placed ~70 units east of player spawn (200, 500),
+  // outside engage range but already inside mid-range radar detection range at spawn.
+  spawnEnemyAtPosition(combatWorld, 270, 500, 'tank')
+  spawnEnemyAtPosition(combatWorld, 274, 504, 'tank')
+  spawnEnemyAtPosition(combatWorld, 268, 496, 'striker')
+
   const targetLockState = createTargetLockState()
   let lastTimeMs = 0
   let previousPlayerX = player.x
@@ -1868,6 +2148,11 @@ function startTestMap(): void {
       speakCoordinates(player.x, player.y)
     } // end if coordinate speech requested
 
+    if (input.speakDestinationPending) {
+      input.speakDestinationPending = false
+      speakCurrentDestinationStatus()
+    } // end if destination speech requested
+
     if (input.refillEpPending) {
       input.refillEpPending = false
       player.ep = player.maxEp
@@ -2098,6 +2383,9 @@ function startTestMap(): void {
       height: tank.height
     }))
 
+    const destinationPoi = getDestinationPoi()
+    audio.updateNavigationDestinationCue(playerAudioState, destinationPoi?.position ?? null)
+
     if (shouldTriggerManualPing) {
       audio.triggerActiveSonar(playerAudioState, enemyAudioStates, collisionWorld, sprites)
     } // end if manual sonar ping was requested
@@ -2140,7 +2428,10 @@ function startTestMap(): void {
       const hpPercent = Math.max(0, Math.min(100, Math.round((player.hp / Math.max(1, player.maxHp)) * 100)))
       const epPercent = Math.max(0, Math.min(100, Math.round((player.ep / Math.max(1, player.maxEp)) * 100)))
       const centered = mapToCenteredCoordinates(player.x, player.y)
-      playerStatusElement.textContent = `STATUS: HP ${hpPercent}% | EP ${epPercent}% | X ${centered.x.toFixed(1)} Y ${centered.y.toFixed(1)} | T: SPEAK XY | H: SPEAK HP | G: SPEAK EP`
+      const destinationLabel = destinationPoi
+        ? `${destinationPoi.name} ${Math.round(Math.hypot(destinationPoi.position.x - player.x, destinationPoi.position.y - player.y))}u`
+        : 'NONE'
+      playerStatusElement.textContent = `STATUS: HP ${hpPercent}% | EP ${epPercent}% | DEST ${destinationLabel} | X ${centered.x.toFixed(1)} Y ${centered.y.toFixed(1)} | T: SPEAK XY | H: SPEAK HP | G: SPEAK EP | N: SPEAK DEST`
     } // end if player status element exists
 
     previousPlayerX = player.x

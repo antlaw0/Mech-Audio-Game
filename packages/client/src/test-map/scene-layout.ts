@@ -25,6 +25,16 @@ interface CityDistrictSpec {
   streetWidth: number
 } // end interface CityDistrictSpec
 
+export type PoiCategory = 'cities' | 'towns' | 'outposts' | 'other'
+
+export interface NavigationPoi {
+  id: string
+  name: string
+  category: PoiCategory
+  x: number
+  y: number
+} // end interface NavigationPoi
+
 const CITY_DISTRICTS: CityDistrictSpec[] = [
   {
     colStart: 120,
@@ -43,6 +53,57 @@ const CITY_DISTRICTS: CityDistrictSpec[] = [
     avenueWidth: 14,
     buildingSize: 18,
     streetWidth: 12
+  }
+]
+
+const TEST_TOWN_DISTRICT: CityDistrictSpec = {
+  colStart: 780,
+  rowStart: 210,
+  width: 110,
+  height: 96,
+  avenueWidth: 8,
+  buildingSize: 10,
+  streetWidth: 6
+}
+
+const ALL_URBAN_DISTRICTS: CityDistrictSpec[] = [...CITY_DISTRICTS, TEST_TOWN_DISTRICT]
+
+const NOVA_CITY_CENTER = {
+  x: CITY_DISTRICTS[0]!.colStart + CITY_DISTRICTS[0]!.width / 2,
+  y: CITY_DISTRICTS[0]!.rowStart + CITY_DISTRICTS[0]!.height / 2
+}
+
+const TEST_TOWN_CENTER = {
+  x: TEST_TOWN_DISTRICT.colStart + TEST_TOWN_DISTRICT.width / 2,
+  y: TEST_TOWN_DISTRICT.rowStart + TEST_TOWN_DISTRICT.height / 2
+}
+
+const RADIO_STATION_ALPHA = {
+  x: 566,
+  y: 178
+}
+
+export const TEST_MAP_NAVIGATION_POIS: NavigationPoi[] = [
+  {
+    id: 'nova-city',
+    name: 'NovaCity',
+    category: 'cities',
+    x: NOVA_CITY_CENTER.x,
+    y: NOVA_CITY_CENTER.y
+  },
+  {
+    id: 'test-town',
+    name: 'Test Town',
+    category: 'towns',
+    x: TEST_TOWN_CENTER.x,
+    y: TEST_TOWN_CENTER.y
+  },
+  {
+    id: 'radio-station-alpha',
+    name: 'Radio Station Alpha',
+    category: 'other',
+    x: RADIO_STATION_ALPHA.x,
+    y: RADIO_STATION_ALPHA.y
   }
 ]
 
@@ -95,7 +156,7 @@ function createSeededRandom(seed: number): () => number {
 function createCityWallSpans(): SceneWallSpan[] {
   const spans: SceneWallSpan[] = []
 
-  for (const district of CITY_DISTRICTS) {
+  for (const district of ALL_URBAN_DISTRICTS) {
     const innerColStart = district.colStart + district.avenueWidth
     const innerColEnd = district.colStart + district.width - district.avenueWidth - 1
     const innerRowStart = district.rowStart + district.avenueWidth
@@ -117,6 +178,19 @@ function createCityWallSpans(): SceneWallSpan[] {
   return spans
 } // end function createCityWallSpans
 
+function isInsideAnyUrbanDistrict(x: number, y: number): boolean {
+  return ALL_URBAN_DISTRICTS.some((district) => {
+    const districtArea: RectArea = {
+      colStart: district.colStart,
+      colEnd: district.colStart + district.width - 1,
+      rowStart: district.rowStart,
+      rowEnd: district.rowStart + district.height - 1
+    }
+
+    return isPointInRect(x, y, districtArea)
+  })
+} // end function isInsideAnyUrbanDistrict
+
 function createRockSprites(random: () => number): SpriteObject[] {
   const sprites: SpriteObject[] = []
   const maxAttempts = 1400
@@ -130,18 +204,7 @@ function createRockSprites(random: () => number): SpriteObject[] {
       continue
     } // end if inside player safe area
 
-    const inCityDistrict = CITY_DISTRICTS.some((district) => {
-      const districtArea: RectArea = {
-        colStart: district.colStart,
-        colEnd: district.colStart + district.width - 1,
-        rowStart: district.rowStart,
-        rowEnd: district.rowStart + district.height - 1
-      }
-
-      return isPointInRect(x, y, districtArea)
-    })
-
-    if (inCityDistrict) {
+    if (isInsideAnyUrbanDistrict(x, y)) {
       continue
     } // end if inside city district
 
@@ -182,18 +245,7 @@ function createSparseOpenAreaTrees(random: () => number): SpriteObject[] {
       continue
     } // end if blocked by reserved area
 
-    const blockedByTown = CITY_DISTRICTS.some((district) => {
-      const districtArea: RectArea = {
-        colStart: district.colStart,
-        colEnd: district.colStart + district.width - 1,
-        rowStart: district.rowStart,
-        rowEnd: district.rowStart + district.height - 1
-      }
-
-      return isPointInRect(x, y, districtArea)
-    })
-
-    if (blockedByTown) {
+    if (isInsideAnyUrbanDistrict(x, y)) {
       continue
     } // end if blocked by town
 
@@ -229,6 +281,14 @@ export function createSceneSprites(): SpriteObject[] {
   const forestTrees = createForestSprites(random)
   const sparseTrees = createSparseOpenAreaTrees(random)
   const rocks = createRockSprites(random)
+  const landmarks: SpriteObject[] = [
+    {
+      x: RADIO_STATION_ALPHA.x,
+      y: RADIO_STATION_ALPHA.y,
+      type: 'pillar',
+      radius: 0.62
+    }
+  ]
 
-  return [...forestTrees, ...sparseTrees, ...rocks]
+  return [...forestTrees, ...sparseTrees, ...rocks, ...landmarks]
 } // end function createSceneSprites

@@ -56,6 +56,26 @@ function createRockMesh(radius: number): THREE.Mesh {
   )
 } // end function createRockMesh
 
+function createPillarMesh(radius: number): THREE.Group {
+  const group = new THREE.Group()
+
+  const shaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(Math.max(0.18, radius * 0.36), Math.max(0.22, radius * 0.44), 3.2, 16),
+    new THREE.MeshStandardMaterial({ color: 0x8b9098, roughness: 0.62, metalness: 0.32 })
+  )
+  shaft.position.y = 1.6
+  group.add(shaft)
+
+  const cap = new THREE.Mesh(
+    new THREE.CylinderGeometry(Math.max(0.24, radius * 0.5), Math.max(0.24, radius * 0.5), 0.35, 18),
+    new THREE.MeshStandardMaterial({ color: 0xc2cad5, roughness: 0.46, metalness: 0.4 })
+  )
+  cap.position.y = 3.35
+  group.add(cap)
+
+  return group
+} // end function createPillarMesh
+
 function createTankMesh(): THREE.Group {
   const group = new THREE.Group()
 
@@ -360,6 +380,13 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
       decorGroup.add(tree)
       continue
     } // end if tree
+
+    if (sprite.type === 'pillar') {
+      const pillar = createPillarMesh(sprite.radius)
+      pillar.position.set(sprite.x, 0, sprite.y)
+      decorGroup.add(pillar)
+      continue
+    } // end if pillar
 
     const rock = createRockMesh(sprite.radius)
     rock.position.set(sprite.x, Math.max(0.15, sprite.radius * 0.55), sprite.y)
