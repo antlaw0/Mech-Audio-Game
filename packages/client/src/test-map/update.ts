@@ -1,6 +1,7 @@
 import {
   FOOTSTEP_INTERVAL_SECONDS,
   LOOK_SPEED,
+  PLAYER_BOOST_SPEED,
   PLAYER_FLIGHT_SPEED,
   PLAYER_FLIGHT_VERTICAL_SPEED,
   MAX_LOOK_PITCH,
@@ -48,7 +49,11 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     environment.player.z = 0
   } // end if altitude is uninitialized
 
-  const moveSpeed = environment.player.flightState === 'grounded' ? PLAYER_SPEED : PLAYER_FLIGHT_SPEED
+  const moveSpeed = (environment.player.isBoosting ?? false)
+    ? PLAYER_BOOST_SPEED
+    : environment.player.flightState === 'grounded'
+      ? PLAYER_SPEED
+      : PLAYER_FLIGHT_SPEED
   const moveAmount = moveSpeed * deltaSeconds
   const turnAmount = TURN_SPEED * deltaSeconds
   const lookAmount = LOOK_SPEED * deltaSeconds
@@ -68,6 +73,13 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
         audio.startFlightLoop()
       } // end if flight loop should start
     } else {
+      // Cancel boost before descent begins
+      if (player.isBoosting) {
+        player.isBoosting = false
+        if (audio.isAudioStarted()) {
+          audio.stopBoostAudio()
+        } // end if stopping boost audio on flight exit
+      } // end if was boosting
       player.flightState = 'descending'
       player.isFlying = true
       if (audio.isAudioStarted()) {
@@ -75,6 +87,26 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
       } // end if flight loop should stop immediately
     } // end if toggle entering or exiting flight
   } // end if flight toggle requested
+
+  // Toggle boost mode — only permitted while ascending or airborne
+  if (input.boostTogglePending) {
+    input.boostTogglePending = false
+    const canBoost = player.isFlying &&
+      (player.flightState === 'ascending' || player.flightState === 'airborne')
+    if (canBoost) {
+      if (!player.isBoosting) {
+        player.isBoosting = true
+        if (audio.isAudioStarted()) {
+          audio.startBoostAudio()
+        } // end if starting boost audio
+      } else {
+        player.isBoosting = false
+        if (audio.isAudioStarted()) {
+          audio.stopBoostAudio()
+        } // end if stopping boost audio voluntarily
+      } // end if toggling boost on or off
+    } // end if can boost
+  } // end if boost toggle requested
 
   const targetFlightAltitude = Math.max(0, environment.flightAltitude)
   const verticalStep = PLAYER_FLIGHT_VERTICAL_SPEED * deltaSeconds
@@ -96,6 +128,10 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
       playerAltitude = 0
       player.flightState = 'grounded'
       player.isFlying = false
+      // Ensure boost state is cleared on landing (jet is stopping so no audio fade needed)
+      if (player.isBoosting) {
+        player.isBoosting = false
+      } // end if resetting boost on landing
       if (audio.isAudioStarted()) {
         audio.playHardLanding()
       } // end if hard landing should play

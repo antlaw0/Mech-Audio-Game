@@ -540,8 +540,7 @@ export function createAudioController(): AudioController {
   let enemyPingVoiceCursor = 0
   let boundaryWarningTimerSeconds = 0
   let boundaryPulseCooldownSeconds = 0
-  let aimAssistWasCentered = false
-  let aimAssistOscStarted = false
+  let aimAssistCueTimerSeconds = 0
   let bulletNearMissVoiceCursor = 0
   let projectileNearMissVoiceCursor = 0
   let playerMechHitBaseVoiceCursor = 0
@@ -743,9 +742,18 @@ export function createAudioController(): AudioController {
   const playerFireSound = new Tone.Player(defaultPlayerFireSoundPath).toDestination()
   const playerFireSoundCache = new Map<string, Tone.Player>([[defaultPlayerFireSoundPath, playerFireSound]])
   const flightLoopGain = new Tone.Gain(0.78).toDestination()
-  const flightLoopSound = new Tone.Player('assets/sounds/jetLoop.ogg').connect(flightLoopGain)
+  // Boost effect chain sits between the jet player and the main gain so effects
+  // can be ramped without touching the user-configurable volume level.
+  const flightBoostGain = new Tone.Gain(1).connect(flightLoopGain)
+  // Lowpass filter: bypass at 20 kHz, ramps to ~500 Hz during boost for a deep rumble.
+  const flightBoostFilter = new Tone.Filter({ type: 'lowpass', frequency: 20000, Q: 2 }).connect(flightBoostGain)
+  // Distortion: wet=0 (dry) at idle, ramps to 0.75 during boost for afterburner grit.
+  const flightBoostDistortion = new Tone.Distortion({ distortion: 0.45, wet: 0 }).connect(flightBoostFilter)
+  const flightLoopSound = new Tone.Player('assets/sounds/jetLoop.ogg').connect(flightBoostDistortion)
   flightLoopSound.loop = true
   applyFlightLoopVolume()
+  const boostEngageGain = new Tone.Gain(0.9).toDestination()
+  const boostEngageSound = new Tone.Player('assets/sounds/boostEngage.ogg').connect(boostEngageGain)
   const hardLandingGain = new Tone.Gain(0.92).toDestination()
   const hardLandingSound = new Tone.Player('assets/sounds/hardLanding.ogg').connect(hardLandingGain)
 
@@ -866,7 +874,7 @@ export function createAudioController(): AudioController {
   }).toDestination()
 
   const missileLockToneSynth = new Tone.Synth({
-    oscillator: { type: 'square' },
+    oscillator: { type: 'triangle' },
     envelope: { attack: 0.001, decay: 0.045, sustain: 0, release: 0.02 }
   }).toDestination()
 
@@ -926,13 +934,13 @@ export function createAudioController(): AudioController {
     envelope: { attack: 0.01, decay: 0.22, sustain: 0, release: 0.05 }
   }).toDestination()
 
-  const aimAssistGain = new Tone.Gain(0).toDestination()
+  const aimAssistPanner = new Tone.Panner(0).toDestination()
+  const aimAssistGain = new Tone.Gain(0.22).connect(aimAssistPanner)
   const aimAssistFilter = new Tone.Filter(900, 'lowpass').connect(aimAssistGain)
-  const aimAssistOsc = new Tone.Oscillator({ frequency: AUDIO_CONFIG.player.aimAssistBaseFrequency, type: 'triangle' }).connect(aimAssistFilter)
-  const aimAssistLockClick = new Tone.Synth({
-    oscillator: { type: 'square' },
-    envelope: { attack: 0.001, decay: 0.02, sustain: 0, release: 0.01 }
-  }).toDestination()
+  const aimAssistTrackingSynth = new Tone.Synth({
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.002, decay: 0.11, sustain: 0, release: 0.05 }
+  }).connect(aimAssistFilter)
 
   const environmentalSonarScanSynth = new Tone.Synth({
     oscillator: { type: 'triangle' },
@@ -1159,10 +1167,6 @@ export function createAudioController(): AudioController {
           firstTerrainStep.currentTime = 0
         }
         initializeAudioCueUtilities()
-        if (!aimAssistOscStarted) {
-          aimAssistOsc.start()
-          aimAssistOscStarted = true
-        } // end if aim assist oscillator not started
         if (!radarDetectionOscStarted) {
           radarDetectionOsc.start()
           radarDetectionOscStarted = true
@@ -1211,6 +1215,7 @@ export function createAudioController(): AudioController {
   let lockLostChirpLastStartSeconds = -Infinity
   let missileLockToneLastStartSeconds = -Infinity
   let missileLockConfirmLastStartSeconds = -Infinity
+  let aimAssistTrackingLastStartSeconds = -Infinity
   let negativeActionLastStartSeconds = -Infinity
   let lastCardinalHeadingCueTimeSeconds = -Infinity
   let lowHealthAlarmTimerSeconds = 0
@@ -1251,10 +1256,12 @@ export function createAudioController(): AudioController {
     if (!audioStarted || !isAudioContextRunning()) {
       return
     } // end if audio not ready
-    const start = strictlyIncreasingStartTime(Tone.now(), missileLockToneLastStartSeconds)
-    missileLockToneLastStartSeconds = start
-    missileLockToneSynth.volume.value = Tone.gainToDb(0.38)
-    missileLockToneSynth.triggerAttackRelease('A5', '64n', start)
+    const firstStart = strictlyIncreasingStartTime(Tone.now(), missileLockToneLastStartSeconds)
+    const secondStart = strictlyIncreasingStartTime(firstStart + 0.12, firstStart)
+    missileLockToneLastStartSeconds = secondStart
+    missileLockToneSynth.volume.value = Tone.gainToDb(0.2)
+    missileLockToneSynth.triggerAttackRelease('A4', '32n', firstStart)
+    missileLockToneSynth.triggerAttackRelease('C5', '32n', secondStart)
   } // end function playMissileLockTone
 
   const playMissileLockConfirmTone = (): void => {
@@ -1422,6 +1429,30 @@ export function createAudioController(): AudioController {
     } // end if player flight loop should stop
   } // end function stopFlightLoop
 
+  const startBoostAudio = (): void => {
+    // Play the one-shot engage cue
+    if (audioStarted && !audioPaused && isAudioContextRunning() && boostEngageSound.loaded) {
+      if (boostEngageSound.state === 'started') {
+        boostEngageSound.stop()
+      } // end if engage sound already playing
+      boostEngageSound.start()
+    } // end if engage sound can play
+
+    // Ramp the jet loop to afterburner character: lower pitch, heavy rumble, louder
+    flightLoopSound.playbackRate = 0.65
+    flightBoostFilter.frequency.rampTo(500, 0.6)
+    flightBoostDistortion.wet.rampTo(0.75, 0.6)
+    flightBoostGain.gain.rampTo(1.2, 0.6)
+  } // end function startBoostAudio
+
+  const stopBoostAudio = (): void => {
+    // Gradually return the jet loop to its normal sound profile
+    flightLoopSound.playbackRate = 1.0
+    flightBoostFilter.frequency.rampTo(20000, 1.5)
+    flightBoostDistortion.wet.rampTo(0, 1.5)
+    flightBoostGain.gain.rampTo(1.0, 1.5)
+  } // end function stopBoostAudio
+
   const playHardLanding = (): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning() || !hardLandingSound.loaded) {
       return
@@ -1437,7 +1468,7 @@ export function createAudioController(): AudioController {
   const setAimAssistEnabled = (enabled: boolean): void => {
     aimAssistEnabled = enabled
     if (!enabled) {
-      aimAssistGain.gain.rampTo(0, 0.08)
+      aimAssistCueTimerSeconds = 0
     } // end if disabling aim assist
   } // end function setAimAssistEnabled
 
@@ -2345,14 +2376,82 @@ export function createAudioController(): AudioController {
   } // end function updateRadarDetection
 
   const updateAimAssist = (dt: number, player: PlayerAudioState, enemies: EnemyAudioState[]): void => {
-    // Target tracking now relies on enemy positional loop audio only.
-    aimAssistGain.gain.rampTo(0, 0.08)
-    aimAssistWasCentered = false
-    void aimAssistEnabled
+    aimAssistCueTimerSeconds = Math.max(0, aimAssistCueTimerSeconds - dt)
+
+    if (!aimAssistEnabled || !categoryEnemies) {
+      aimAssistCueTimerSeconds = 0
+      return
+    } // end if aim assist tracking is disabled
+
+    const trackingRange = Math.min(AUDIO_NAVIGATION_CONFIG.radarDetectionRange, 42)
+
+    let bestEnemy: EnemyAudioState | null = null
+    let bestScore = Number.NEGATIVE_INFINITY
+    let bestDistance = Number.POSITIVE_INFINITY
+    let bestBearingDelta = 0
+
+    for (const enemy of enemies) {
+      if (!enemy.isAlive) {
+        continue
+      } // end if enemy is dead
+
+      const dx = enemy.position.x - player.position.x
+      const dy = enemy.position.y - player.position.y
+      const dz = enemy.position.z - player.position.z
+      const distance = Math.hypot(dx, dy, dz)
+      if (distance > trackingRange) {
+        continue
+      } // end if enemy is outside tracking range
+
+      const bearingDelta = normalizeAngle(Math.atan2(dy, dx) - player.angle)
+      const alignment = 1 - clamp(Math.abs(bearingDelta) / Math.PI, 0, 1)
+      const proximity = 1 - clamp(distance / trackingRange, 0, 1)
+      const score = alignment * 0.72 + proximity * 0.28
+      if (score <= bestScore) {
+        continue
+      } // end if current enemy is not a better tracking candidate
+
+      bestEnemy = enemy
+      bestScore = score
+      bestDistance = distance
+      bestBearingDelta = bearingDelta
+    } // end for each enemy
+
+    if (!bestEnemy) {
+      aimAssistCueTimerSeconds = 0
+      return
+    } // end if no enemy is suitable for aim-assist tracking
+
+    const relative = worldToListenerSpace(bestEnemy.position, player.position, player.angle)
+    const relativeMagnitude = Math.hypot(relative.x, relative.y, relative.z)
+    const stereoPan = relativeMagnitude > 0.001
+      ? clamp(relative.x / relativeMagnitude, -1, 1)
+      : 0
+    const normalizedDistance = clamp(bestDistance / trackingRange, 0, 1)
+    const closeness = 1 - normalizedDistance
+    const alignmentStrength = 1 - clamp(Math.abs(bestBearingDelta) / (Math.PI * 0.75), 0, 1)
+
+    aimAssistPanner.pan.rampTo(stereoPan, 0.05)
+    aimAssistFilter.frequency.rampTo(850 + closeness * 2400, 0.08)
+
+    if (aimAssistCueTimerSeconds > 0) {
+      return
+    } // end if aim assist ping interval has not elapsed
+
+    const baseFrequency = AUDIO_NAVIGATION_CONFIG.radarPitchFar
+      + (AUDIO_CONFIG.player.aimAssistMaxFrequency - AUDIO_NAVIGATION_CONFIG.radarPitchFar) * Math.pow(closeness, 0.7)
+    const secondFrequency = baseFrequency * (1.16 + alignmentStrength * 0.08)
+    const cueGain = clamp((0.06 + closeness * 0.12 + alignmentStrength * 0.08) * enemiesVolume, 0, 0.32)
+    const firstStart = strictlyIncreasingStartTime(Tone.now(), aimAssistTrackingLastStartSeconds)
+    const secondStart = strictlyIncreasingStartTime(firstStart + 0.14, firstStart)
+
+    aimAssistTrackingLastStartSeconds = secondStart
+    aimAssistGain.gain.value = cueGain
+    aimAssistTrackingSynth.volume.value = gainToDbSafe(1)
+    aimAssistTrackingSynth.triggerAttackRelease(baseFrequency, '32n', firstStart)
+    aimAssistTrackingSynth.triggerAttackRelease(secondFrequency, '16n', secondStart)
+    aimAssistCueTimerSeconds = 1
     void aimAssistProjectileRadius
-    void player
-    void enemies
-    void dt
   } // end function updateAimAssist
 
   const updateObstructionAwareness = (dt: number, awareness: ObstructionAwareness): void => {
@@ -2441,6 +2540,8 @@ export function createAudioController(): AudioController {
     playBump,
     startFlightLoop,
     stopFlightLoop,
+    startBoostAudio,
+    stopBoostAudio,
     playHardLanding,
     playCollisionThud,
     playPitchCenterConfirm,

@@ -192,8 +192,8 @@ export function bindInput(
       } // end if KeyN
 
       if (event.code === 'KeyQ') {
-        audio.setAimAssistEnabled(!audio.isAimAssistEnabled())
-      } // end if KeyQ toggle aim assist
+        input.boostTogglePending = true
+      } // end if KeyQ toggle boost mode
 
       if (event.code === 'KeyZ') {
         const enabled = audio.toggleCategory('proximity')

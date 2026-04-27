@@ -12,7 +12,8 @@ export function createPlayer(): Player {
     maxEp: 1000,
     z: 0,
     flightState: 'grounded',
-    isFlying: false
+    isFlying: false,
+    isBoosting: false
   } // end object player
 } // end function createPlayer
 
@@ -48,6 +49,7 @@ export function createInputState(): InputState {
     speakHpPending: false,
     speakEpPending: false,
     speakCoordsPending: false,
-    speakDestinationPending: false
+    speakDestinationPending: false,
+    boostTogglePending: false
   } // end object input state
 } // end function createInputState

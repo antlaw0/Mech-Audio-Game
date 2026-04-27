@@ -11,34 +11,84 @@
     #gameCanvas { display: block; cursor: none; }
     #hud {
       position: absolute;
-      bottom: 24px;
-      left: 50%;
-      transform: translateX(-50%);
-      color: #0af;
-      font-family: monospace;
-      font-size: 13px;
-      letter-spacing: 1px;
+      inset: 0;
       pointer-events: none;
-      text-align: center;
-      text-shadow: 0 0 6px #0af;
+      font-family: monospace;
+      letter-spacing: 0.8px;
+    }
+    #awarenessStatus,
+    #sonarStatus {
+      position: absolute;
+      right: 20px;
+      width: min(420px, 42vw);
+      padding: 10px 12px;
+      border: 1px solid rgba(68, 198, 255, 0.38);
+      background: rgba(1, 14, 23, 0.66);
+      color: #b8ecff;
+      font-size: 12px;
+      line-height: 1.45;
+      text-shadow: 0 0 6px rgba(47, 182, 255, 0.42);
+    }
+    #awarenessStatus dl,
+    #sonarStatus dl {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 2px 8px;
+    }
+    #awarenessStatus dt,
+    #sonarStatus dt {
+      color: #7fcfef;
     }
     #awarenessStatus {
-      margin-top: 8px;
-      color: #8ef;
-      font-size: 12px;
-      letter-spacing: 1px;
+      bottom: 150px;
     }
     #sonarStatus {
-      margin-top: 6px;
-      color: #7fdfbf;
-      font-size: 12px;
-      letter-spacing: 1px;
+      bottom: 20px;
+      min-height: 110px;
     }
     #playerStatus {
-      margin-top: 6px;
-      color: #ffd58e;
+      position: absolute;
+      left: 50%;
+      bottom: 20px;
+      transform: translateX(-50%);
+      width: min(540px, calc(100vw - 460px));
+      min-width: 280px;
+      padding: 10px 12px;
+      border: 1px solid rgba(96, 198, 255, 0.42);
+      background: rgba(2, 10, 20, 0.78);
+      color: #d8f4ff;
+      text-shadow: 0 0 6px rgba(48, 188, 255, 0.35);
+    }
+    .resource-row {
+      margin-bottom: 9px;
+    }
+    .resource-row:last-child {
+      margin-bottom: 0;
+    }
+    .resource-label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
       font-size: 12px;
-      letter-spacing: 1px;
+      color: #ccf2ff;
+    }
+    .resource-track {
+      width: 100%;
+      height: 12px;
+      border: 1px solid rgba(128, 227, 255, 0.42);
+      background: rgba(9, 18, 30, 0.82);
+      overflow: hidden;
+    }
+    .resource-fill {
+      height: 100%;
+      width: 100%;
+      transition: width 80ms linear;
+    }
+    .resource-fill.hp {
+      background: linear-gradient(90deg, #f04747, #ff8a6b);
+    }
+    .resource-fill.ep {
+      background: linear-gradient(90deg, #34d7ff, #57f3c1);
     }
     #navigationOverlay {
       position: absolute;
@@ -152,7 +202,28 @@
       font-size: 12px;
       padding: 3px 2px;
     }
+    @media (max-width: 900px) {
+      #awarenessStatus,
+      #sonarStatus {
+        right: 10px;
+        width: min(360px, calc(100vw - 20px));
+      }
+      #playerStatus {
+        width: min(430px, calc(100vw - 20px));
+        min-width: 0;
+      }
+    }
     @media (max-width: 720px) {
+      #awarenessStatus {
+        bottom: 196px;
+      }
+      #sonarStatus {
+        bottom: 94px;
+        min-height: 88px;
+      }
+      #playerStatus {
+        bottom: 10px;
+      }
       .navigation-list {
         grid-template-columns: 1fr;
       }
@@ -449,10 +520,34 @@
   </header>
 </div>
 <div id="hud">
-  WASD: MOVE / STRAFE &nbsp;|&nbsp; ←→: TURN &nbsp;|&nbsp; ↑↓: LOOK (TAP BOTH TO CENTER) &nbsp;|&nbsp; SPACE: FIRE &nbsp;|&nbsp; E: MANUAL SONAR PING &nbsp;|&nbsp; H/G/N: SPEAK HP/EP/DEST &nbsp;|&nbsp; I/J/K/L: SNAP N/W/S/E &nbsp;|&nbsp; M: NAV MENU &nbsp;|&nbsp; NUMPAD 1-4: SPAWN ENEMY (PAUSE+NUMPAD: EDIT STATS) &nbsp;|&nbsp; NUMPAD 0: WEAPON EDITOR &nbsp;|&nbsp; Q: AIM ASSIST TOGGLE &nbsp;|&nbsp; `: DEV CONSOLE
-  <div id="awarenessStatus">AWARENESS: SCANNING...</div>
-  <div id="sonarStatus">SONAR: PASSIVE SWEEP READY</div>
-  <div id="playerStatus">STATUS: HP 100% | EP 100% | H: SPEAK HP | G: SPEAK EP</div>
+  <div id="awarenessStatus" aria-label="Weapon Status">
+    <dl>
+      <dt>Weapon</dt><dd id="awarenessWeaponName">-</dd>
+      <dt>Type</dt><dd id="awarenessWeaponType">-</dd>
+      <dt>Damage</dt><dd id="awarenessWeaponDamage">-</dd>
+      <dt>Rate of Fire</dt><dd id="awarenessWeaponRate">-</dd>
+      <dt>Range</dt><dd id="awarenessWeaponRange">-</dd>
+      <dt>Projectiles</dt><dd id="awarenessWeaponProjectiles">-</dd>
+      <dt>Spread</dt><dd id="awarenessWeaponSpread">-</dd>
+    </dl>
+  </div>
+  <div id="sonarStatus" aria-label="Navigation Status">
+    <dl>
+      <dt>Coordinates</dt><dd id="sonarCoordinates">X 0.0, Y 0.0</dd>
+      <dt>Radar Range</dt><dd id="sonarRadarRange">0</dd>
+      <dt>Destination</dt><dd id="sonarDestination">None</dd>
+    </dl>
+  </div>
+  <div id="playerStatus">
+    <div class="resource-row">
+      <div class="resource-label"><span>HP</span><span id="hpBarLabel">0 / 0</span></div>
+      <div class="resource-track"><div id="hpBarFill" class="resource-fill hp"></div></div>
+    </div>
+    <div class="resource-row">
+      <div class="resource-label"><span>EP</span><span id="epBarLabel">0 / 0</span></div>
+      <div class="resource-track"><div id="epBarFill" class="resource-fill ep"></div></div>
+    </div>
+  </div>
 </div>
 <div id="pauseOverlay" aria-hidden="true">
   <div class="pause-panel" role="dialog" aria-modal="true" aria-label="Pause Menu">

@@ -12,13 +12,16 @@
     "build:server": "npm run build -w @mech-audio/server",
 
     "dev:playtest": "node ./scripts/with-dev-lock.mjs npm run dev:playtest:boot",
+
     "dev:playtest:boot": "npm run build:server && npm run build:client && npm run dev:playtest:inner",
-    "dev:playtest:inner": "concurrently --kill-others --names server,watch,static -c yellow,cyan,green \"npm run dev:server\" \"npm run dev:watch\" \"npm run dev:static\"",
+
+    "dev:playtest:inner": "concurrently --handle-input --restart-tries 3 --restart-after 2000 --names server,watch,static -c yellow,cyan,green \"npm run dev:server\" \"npm run dev:watch\" \"npm run dev:static\"",
+
     "stop:playtest": "stop.bat",
 
-    "dev": "concurrently --kill-others --names watch,serve -c cyan,green \"npm run dev:watch\" \"npm run dev:static\"",
+    "dev": "concurrently --handle-input --names watch,serve -c cyan,green \"npm run dev:watch\" \"npm run dev:static\"",
 
-    "dev:watch": "tsc -b tsconfig.json --watch --preserveWatchOutput",
+    "dev:watch": "tsc -b tsconfig.json --watch --preserveWatchOutput --watchDirectory useFsEvents",
 
     "predev:static": "npm run build:client",
     "dev:static": "serve . --listen tcp://localhost:3000",

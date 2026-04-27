@@ -14,6 +14,7 @@ export interface Player {
   z?: number
   flightState?: PlayerFlightState
   isFlying?: boolean
+  isBoosting?: boolean
 } // end interface Player
 
 export interface InputState {
@@ -48,6 +49,7 @@ export interface InputState {
   speakEpPending: boolean
   speakCoordsPending: boolean
   speakDestinationPending: boolean
+  boostTogglePending: boolean
 } // end interface InputState
 
 export interface WorldPosition {
@@ -235,6 +237,8 @@ export interface AudioController {
   fireGunshot: (soundPath?: string) => void
   startFlightLoop: () => void
   stopFlightLoop: () => void
+  startBoostAudio: () => void
+  stopBoostAudio: () => void
   playHardLanding: () => void
   playCollisionThud: (direction: number) => void
   playCardinalOrientationCue: (newFacing: number) => void

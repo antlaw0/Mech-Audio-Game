@@ -1,4 +1,5 @@
 import {
+  BOOST_EP_DRAIN_PER_SECOND,
   CANVAS_HEIGHT_LIMIT,
   CANVAS_WIDTH_LIMIT,
   MAP_HEIGHT,
@@ -11,6 +12,7 @@ import {
   WEAPON_DEFAULT_ACCURACY
 } from './constants.js'
 import { createAudioController } from './audio.js'
+import { AUDIO_NAVIGATION_CONFIG } from './audio-config.js'
 import {
   createCombatEcsWorld,
   getCombatRenderState,
@@ -31,7 +33,6 @@ import { getSharedFlightHeight, setSharedFlightHeight } from './runtime-config.j
 import type { WeaponStats } from './types.js'
 import { PLAYER_WEAPON_DEFINITIONS, type PlayerWeaponDefinition } from './weapons.js'
 import { bindInput } from './input.js'
-import { computeObstructionAwareness } from './awareness.js'
 import { createDeveloperConsole } from './dev-console.js'
 import { createMapData } from './map-data.js'
 import { createInputState, createPlayer } from './player-state.js'
@@ -140,7 +141,20 @@ function startTestMap(): void {
 
   const awarenessStatusElement = document.getElementById('awarenessStatus')
   const sonarStatusElement = document.getElementById('sonarStatus')
-  const playerStatusElement = document.getElementById('playerStatus')
+  const awarenessWeaponNameElement = document.getElementById('awarenessWeaponName')
+  const awarenessWeaponTypeElement = document.getElementById('awarenessWeaponType')
+  const awarenessWeaponDamageElement = document.getElementById('awarenessWeaponDamage')
+  const awarenessWeaponRateElement = document.getElementById('awarenessWeaponRate')
+  const awarenessWeaponRangeElement = document.getElementById('awarenessWeaponRange')
+  const awarenessWeaponProjectilesElement = document.getElementById('awarenessWeaponProjectiles')
+  const awarenessWeaponSpreadElement = document.getElementById('awarenessWeaponSpread')
+  const sonarCoordinatesElement = document.getElementById('sonarCoordinates')
+  const sonarRadarRangeElement = document.getElementById('sonarRadarRange')
+  const sonarDestinationElement = document.getElementById('sonarDestination')
+  const hpBarLabelElement = document.getElementById('hpBarLabel')
+  const epBarLabelElement = document.getElementById('epBarLabel')
+  const hpBarFillElement = document.getElementById('hpBarFill')
+  const epBarFillElement = document.getElementById('epBarFill')
   const pauseOverlayElement = document.getElementById('pauseOverlay')
   const resumeButtonElement = document.getElementById('pauseResumeButton')
   const exitButtonElement = document.getElementById('pauseExitButton')
@@ -298,9 +312,6 @@ function startTestMap(): void {
     missileLockToneTimerSeconds = 0
     audio.playLockLostChirp()
 
-    if (awarenessStatusElement) {
-      awarenessStatusElement.textContent = `WEAPON: ${playerWeapon.name.toUpperCase()} [${playerWeapon.selectionKey}]`
-    } // end if awareness status element exists
   } // end function equipWeaponAtIndex
 
   const setPauseOverlayVisible = (visible: boolean): void => {
@@ -346,17 +357,11 @@ function startTestMap(): void {
 
     destinationPoiId = poiId
     updatePoiSelectionVisuals()
-    if (awarenessStatusElement) {
-      awarenessStatusElement.textContent = `AWARENESS: DESTINATION SET TO ${poi.name.toUpperCase()}`
-    } // end if awareness status element exists
   } // end function setDestinationPoi
 
   const clearDestinationPoi = (): void => {
     destinationPoiId = null
     updatePoiSelectionVisuals()
-    if (awarenessStatusElement) {
-      awarenessStatusElement.textContent = 'AWARENESS: DESTINATION CLEARED'
-    } // end if awareness status element exists
   } // end function clearDestinationPoi
 
   const speakCurrentDestinationStatus = (): void => {
@@ -468,9 +473,6 @@ function startTestMap(): void {
     isNavigationMenuOpen = false
     updateNavigationOverlayVisibility(false)
     clearGameplayInputs()
-    if (awarenessStatusElement) {
-      awarenessStatusElement.textContent = 'AWARENESS: NAVIGATION MENU CLOSED'
-    } // end if awareness status element exists
   } // end function closeNavigationMenu
 
   const openNavigationMenu = (): void => {
@@ -482,9 +484,6 @@ function startTestMap(): void {
     renderNavigationPoiMenu()
     updateNavigationOverlayVisibility(true)
     clearGameplayInputs()
-    if (awarenessStatusElement) {
-      awarenessStatusElement.textContent = 'AWARENESS: NAVIGATION MENU OPEN'
-    } // end if awareness status element exists
     if (navCategoryCitiesButtonElement instanceof HTMLButtonElement) {
       navCategoryCitiesButtonElement.focus()
     } // end if first category button exists
@@ -2129,9 +2128,24 @@ function startTestMap(): void {
     const hpBeforeCombat = Math.max(0, player.hp)
 
     const energyRegenPerSecond = 1
-    const energyDrainPerSecond = player.isFlying ? 2 : 0
+    const energyDrainPerSecond = (player.isFlying ? 2 : 0) + ((player.isBoosting ?? false) ? BOOST_EP_DRAIN_PER_SECOND : 0)
     const epDelta = (energyRegenPerSecond - energyDrainPerSecond) * deltaSeconds
     player.ep = Math.max(0, Math.min(player.maxEp, player.ep + epDelta))
+
+    // Force landing when EP is fully depleted while in flight
+    if (player.ep <= 0 && player.isFlying &&
+        player.flightState !== 'descending' && player.flightState !== 'grounded') {
+      if (player.isBoosting) {
+        player.isBoosting = false
+        if (audio.isAudioStarted()) {
+          audio.stopBoostAudio()
+        } // end if stopping boost audio on EP depletion
+      } // end if was boosting
+      player.flightState = 'descending'
+      if (audio.isAudioStarted()) {
+        audio.stopFlightLoop()
+      } // end if stopping flight loop on EP depletion
+    } // end if EP depleted while flying
 
     if (input.speakHpPending) {
       input.speakHpPending = false
@@ -2156,17 +2170,11 @@ function startTestMap(): void {
     if (input.refillEpPending) {
       input.refillEpPending = false
       player.ep = player.maxEp
-      if (awarenessStatusElement) {
-        awarenessStatusElement.textContent = 'AWARENESS: EP RESTORED TO MAX'
-      } // end if awareness status element exists
     } // end if EP refill requested
 
     if (input.refillHpPending) {
       input.refillHpPending = false
       player.hp = player.maxHp
-      if (awarenessStatusElement) {
-        awarenessStatusElement.textContent = 'AWARENESS: HP RESTORED TO MAX'
-      } // end if awareness status element exists
     } // end if HP refill requested
 
     const pendingManualPing = input.sonarPingPending
@@ -2175,42 +2183,22 @@ function startTestMap(): void {
 
     if (input.spawnTankPending) {
       input.spawnTankPending = false
-      const spawned = spawnRandomEnemy(combatWorld, collisionWorld, player, 'tank')
-      if (awarenessStatusElement) {
-        awarenessStatusElement.textContent = spawned
-          ? 'AWARENESS: TANK SPAWNED'
-          : 'AWARENESS: NO VALID SPAWN LOCATION'
-      } // end if awareness status element exists
+      spawnRandomEnemy(combatWorld, collisionWorld, player, 'tank')
     } // end if spawn tank pending
 
     if (input.spawnStrikerPending) {
       input.spawnStrikerPending = false
-      const spawned = spawnRandomEnemy(combatWorld, collisionWorld, player, 'striker')
-      if (awarenessStatusElement) {
-        awarenessStatusElement.textContent = spawned
-          ? 'AWARENESS: STRIKER SPAWNED'
-          : 'AWARENESS: NO VALID SPAWN LOCATION'
-      } // end if awareness status element exists
+      spawnRandomEnemy(combatWorld, collisionWorld, player, 'striker')
     } // end if spawn striker pending
 
     if (input.spawnBrutePending) {
       input.spawnBrutePending = false
-      const spawned = spawnRandomEnemy(combatWorld, collisionWorld, player, 'brute')
-      if (awarenessStatusElement) {
-        awarenessStatusElement.textContent = spawned
-          ? 'AWARENESS: BRUTE SPAWNED'
-          : 'AWARENESS: NO VALID SPAWN LOCATION'
-      } // end if awareness status element exists
+      spawnRandomEnemy(combatWorld, collisionWorld, player, 'brute')
     } // end if spawn brute pending
 
     if (input.spawnHelicopterPending) {
       input.spawnHelicopterPending = false
-      const spawned = spawnRandomEnemy(combatWorld, collisionWorld, player, 'helicopter')
-      if (awarenessStatusElement) {
-        awarenessStatusElement.textContent = spawned
-          ? 'AWARENESS: HELICOPTER SPAWNED'
-          : 'AWARENESS: NO VALID SPAWN LOCATION'
-      } // end if awareness status element exists
+      spawnRandomEnemy(combatWorld, collisionWorld, player, 'helicopter')
     } // end if spawn helicopter pending
 
     stepCombatEcsWorld(combatWorld, collisionWorld, audio, player, deltaSeconds)
@@ -2264,7 +2252,7 @@ function startTestMap(): void {
         if (!missileLockConfirmed) {
           missileLockProgressMs += deltaSeconds * 1000
           missileLockToneTimerSeconds += deltaSeconds
-          if (missileLockToneTimerSeconds >= 0.14) {
+          if (missileLockToneTimerSeconds >= 1) {
             audio.playMissileLockTone()
             missileLockToneTimerSeconds = 0
           } // end if another lock-acquiring tone is due
@@ -2358,8 +2346,6 @@ function startTestMap(): void {
       } // end if missile or ballistic firing mode
     } // end if fire input and cooldown allow
 
-    const awareness = computeObstructionAwareness(player, combatRender.tanks, collisionWorld, sprites)
-
     const playerAudioState = {
       position: { x: player.x, y: player.y, z: player.z ?? 0 },
       angle: player.angle,
@@ -2399,45 +2385,46 @@ function startTestMap(): void {
     )
 
     if (awarenessStatusElement) {
-      if (!awareness.hasTarget) {
-        awarenessStatusElement.textContent = 'AWARENESS: NO TARGET'
-      } else if (!awareness.isBlocked) {
-        awarenessStatusElement.textContent = `AWARENESS: CLEAR PATH TO TANK (${awareness.targetDistance.toFixed(1)}m)`
-      } else {
-        const obstacleLabel = awareness.obstacleType ? awareness.obstacleType.toUpperCase() : 'UNKNOWN'
-        awarenessStatusElement.textContent = `AWARENESS: BLOCKED BY ${obstacleLabel} (${awareness.obstacleDistance.toFixed(1)}m)`
-      } // end if awareness status branch
-    } // end if awareness status element exists
+      const rateOfFireLabel = playerWeapon.fireRateCooldownSeconds > 0
+        ? `${(1 / playerWeapon.fireRateCooldownSeconds).toFixed(2)}/s`
+        : 'Unlimited'
+      if (awarenessWeaponNameElement) awarenessWeaponNameElement.textContent = playerWeapon.name
+      if (awarenessWeaponTypeElement) awarenessWeaponTypeElement.textContent = playerWeapon.weaponType
+      if (awarenessWeaponDamageElement) awarenessWeaponDamageElement.textContent = String(playerWeapon.damagePerShot)
+      if (awarenessWeaponRateElement) awarenessWeaponRateElement.textContent = rateOfFireLabel
+      if (awarenessWeaponRangeElement) awarenessWeaponRangeElement.textContent = playerWeapon.maxRange.toFixed(1)
+      if (awarenessWeaponProjectilesElement) awarenessWeaponProjectilesElement.textContent = String(playerWeapon.projectileCount)
+      if (awarenessWeaponSpreadElement) awarenessWeaponSpreadElement.textContent = `${playerWeapon.spreadDegrees.toFixed(1)}°`
+    } // end if weapon info element exists
 
     if (sonarStatusElement) {
-      const contextState = audio.getAudioContextState()
-      if (contextState !== 'running') {
-        sonarStatusElement.textContent = 'SONAR: AUDIO SUSPENDED (PRESS ANY KEY OR CLICK)'
-      } else {
-        sonarStatusElement.textContent = pendingManualPing
-          ? (shouldTriggerManualPing
-              ? 'SONAR: PASSIVE SWEEP ACTIVE | MANUAL PING FIRED'
-              : 'SONAR: FLIGHT MODE | MANUAL PING DISABLED')
-          : player.isFlying
-            ? 'SONAR: FLIGHT MODE | MANUAL PING DISABLED'
-            : 'SONAR: PASSIVE SWEEP ACTIVE | E: MANUAL PING'
-      } // end if context running and timer active
-    } // end if sonar status element exists
-
-    if (playerStatusElement) {
-      const hpPercent = Math.max(0, Math.min(100, Math.round((player.hp / Math.max(1, player.maxHp)) * 100)))
-      const epPercent = Math.max(0, Math.min(100, Math.round((player.ep / Math.max(1, player.maxEp)) * 100)))
       const centered = mapToCenteredCoordinates(player.x, player.y)
       const destinationLabel = destinationPoi
-        ? `${destinationPoi.name} ${Math.round(Math.hypot(destinationPoi.position.x - player.x, destinationPoi.position.y - player.y))}u`
-        : 'NONE'
-      playerStatusElement.textContent = `STATUS: HP ${hpPercent}% | EP ${epPercent}% | DEST ${destinationLabel} | X ${centered.x.toFixed(1)} Y ${centered.y.toFixed(1)} | T: SPEAK XY | H: SPEAK HP | G: SPEAK EP | N: SPEAK DEST`
-    } // end if player status element exists
+        ? `${destinationPoi.name}, ${Math.hypot(destinationPoi.position.x - player.x, destinationPoi.position.y - player.y).toFixed(1)}`
+        : 'None'
+      if (sonarCoordinatesElement) sonarCoordinatesElement.textContent = `X ${centered.x.toFixed(1)}, Y ${centered.y.toFixed(1)}`
+      if (sonarRadarRangeElement) sonarRadarRangeElement.textContent = AUDIO_NAVIGATION_CONFIG.radarDetectionRange.toFixed(0)
+      if (sonarDestinationElement) sonarDestinationElement.textContent = destinationLabel
+    } // end if coordinate/radar/destination element exists
+
+    const hpPercent = Math.max(0, Math.min(100, Math.round((player.hp / Math.max(1, player.maxHp)) * 100)))
+    const epPercent = Math.max(0, Math.min(100, Math.round((player.ep / Math.max(1, player.maxEp)) * 100)))
+    if (hpBarLabelElement) {
+      hpBarLabelElement.textContent = `${Math.round(player.hp)} / ${Math.round(player.maxHp)}`
+    } // end if HP label element exists
+    if (epBarLabelElement) {
+      epBarLabelElement.textContent = `${Math.round(player.ep)} / ${Math.round(player.maxEp)}`
+    } // end if EP label element exists
+    if (hpBarFillElement instanceof HTMLElement) {
+      hpBarFillElement.style.width = `${hpPercent}%`
+    } // end if HP fill element exists
+    if (epBarFillElement instanceof HTMLElement) {
+      epBarFillElement.style.width = `${epPercent}%`
+    } // end if EP fill element exists
 
     previousPlayerX = player.x
     previousPlayerY = player.y
     previousPlayerZ = player.z ?? 0
-
     const muzzleFlashAlpha = updateState.muzzleFlashTimer / MUZZLE_FLASH_DURATION
 
     threeRenderer.renderFrame({

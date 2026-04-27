@@ -9,7 +9,7 @@ export const MAP_HEIGHT = 1000
 export const WALL_HEIGHT = 1
 export const PLAYER_HEIGHT = 0.5
 export const PLAYER_SPEED = 3.0
-export const PLAYER_FLIGHT_SPEED = 5.2
+export const PLAYER_FLIGHT_SPEED = 8
 export const PLAYER_FLIGHT_VERTICAL_SPEED = 3.4
 export const DEFAULT_FLIGHT_HEIGHT = 3
 export const TURN_SPEED = 1.8
@@ -44,3 +44,6 @@ export const MISSILE_DEFAULT_LOCK_ON_TIME_MS = 1200
 export const MISSILE_DEFAULT_TRACKING_RATING = 0.9
 export const MISSILE_DEFAULT_EXPLOSION_RADIUS = 2.3
 export const MISSILE_DEFAULT_EXPLOSION_DAMAGE = 42
+
+export const PLAYER_BOOST_SPEED = 16
+export const BOOST_EP_DRAIN_PER_SECOND = 2
