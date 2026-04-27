@@ -6,6 +6,8 @@ export const AUDIO_CONFIG = {
     terrainStepVolume: 0.6,
     terrainStepVariantCount: 16,
     buildingStepVariantCount: 10,
+    cityStepVariantCount: 10,
+    townStepVariantCount: 10,
     ambienceVolume: 0.28,
     terrainType: 'field',
     ambienceTrack: 'day',
@@ -16,6 +18,12 @@ export const AUDIO_CONFIG = {
       width: 250,
       height: 240,
       blendDistance: 120
+    },
+    testTownZone: {
+      colStart: 780,
+      rowStart: 210,
+      width: 110,
+      height: 96
     },
     zoneAmbienceBlendSeconds: 1.6,
     aimAssistBaseFrequency: 220,

@@ -727,11 +727,44 @@ export function createAudioController(): AudioController {
     return audio
   })
 
-  const allTerrainStepAudios = [...defaultTerrainStepAudios, ...buildingTerrainStepAudios]
+  const cityTerrainStepFiles = Array.from(
+    { length: AUDIO_CONFIG.player.cityStepVariantCount },
+    (_, index) => `assets/sounds/steps/city/${index + 1}.ogg`
+  )
+  const cityTerrainStepAudios = cityTerrainStepFiles.map((file) => {
+    const audio = new Audio(file)
+    audio.preload = 'auto'
+    audio.volume = AUDIO_CONFIG.player.terrainStepVolume
+    return audio
+  })
+
+  const townTerrainStepFiles = Array.from(
+    { length: AUDIO_CONFIG.player.townStepVariantCount },
+    (_, index) => `assets/sounds/steps/town/${index + 1}.ogg`
+  )
+  const townTerrainStepAudios = townTerrainStepFiles.map((file) => {
+    const audio = new Audio(file)
+    audio.preload = 'auto'
+    audio.volume = AUDIO_CONFIG.player.terrainStepVolume
+    return audio
+  })
+
+  const allTerrainStepAudios = [
+    ...defaultTerrainStepAudios,
+    ...buildingTerrainStepAudios,
+    ...cityTerrainStepAudios,
+    ...townTerrainStepAudios
+  ]
 
   const getTerrainStepAudios = (terrainLayer: FootstepTerrainLayer): HTMLAudioElement[] => {
     if (terrainLayer === 'building') {
       return buildingTerrainStepAudios
+    }
+    if (terrainLayer === 'city') {
+      return cityTerrainStepAudios
+    }
+    if (terrainLayer === 'town') {
+      return townTerrainStepAudios
     }
     return defaultTerrainStepAudios
   } // end function getTerrainStepAudios
@@ -1238,6 +1271,18 @@ export function createAudioController(): AudioController {
           await firstBuildingTerrainStep.play().catch(() => undefined)
           firstBuildingTerrainStep.pause()
           firstBuildingTerrainStep.currentTime = 0
+        }
+        const firstCityTerrainStep = cityTerrainStepAudios[0]
+        if (firstCityTerrainStep) {
+          await firstCityTerrainStep.play().catch(() => undefined)
+          firstCityTerrainStep.pause()
+          firstCityTerrainStep.currentTime = 0
+        }
+        const firstTownTerrainStep = townTerrainStepAudios[0]
+        if (firstTownTerrainStep) {
+          await firstTownTerrainStep.play().catch(() => undefined)
+          firstTownTerrainStep.pause()
+          firstTownTerrainStep.currentTime = 0
         }
         initializeAudioCueUtilities()
         if (!radarDetectionOscStarted) {

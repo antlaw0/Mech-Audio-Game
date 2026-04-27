@@ -222,7 +222,7 @@ export interface RenderContext {
   projectionPlane: number
 } // end interface RenderContext
 
-export type FootstepTerrainLayer = 'default' | 'building'
+export type FootstepTerrainLayer = 'default' | 'building' | 'city' | 'town'
 
 export interface AudioController {
   ensureAudio: () => Promise<void>

@@ -11,6 +11,7 @@ import {
   PLAYER_SPEED,
   TURN_SPEED
 } from './constants.js'
+import { AUDIO_CONFIG } from './audio-config.js'
 import { normalizeAngle } from './audio-utils.js'
 import { getTopSurfaceHeight, isPlayerBlocked, type WorldCollisionWorld, WORLD_WALL_HEIGHT } from './world-collision.js'
 import type { AudioController, InputState, Player } from './types.js'
@@ -43,6 +44,16 @@ export function createUpdateState(): UpdateState {
     verticalVelocityZ: 0
   } // end object update state
 } // end function createUpdateState
+
+function isPointInsideZone(
+  x: number,
+  y: number,
+  zone: { colStart: number, rowStart: number, width: number, height: number }
+): boolean {
+  const colEnd = zone.colStart + zone.width - 1
+  const rowEnd = zone.rowStart + zone.height - 1
+  return x >= zone.colStart && x <= colEnd && y >= zone.rowStart && y <= rowEnd
+} // end function isPointInsideZone
 
 export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number): void {
   if (environment.player.flightState === undefined) {
@@ -326,7 +337,14 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     state.footstepTimerSeconds += deltaSeconds
     if (state.footstepTimerSeconds >= FOOTSTEP_INTERVAL_SECONDS) {
       const stepSupportHeight = getTopSurfaceHeight(environment.collisionWorld, player.x, player.y, PLAYER_RADIUS)
-      const terrainLayer = stepSupportHeight > LANDING_EPSILON ? 'building' : 'default'
+      let terrainLayer: 'default' | 'building' | 'city' | 'town' = 'default'
+      if (stepSupportHeight > LANDING_EPSILON) {
+        terrainLayer = 'building'
+      } else if (isPointInsideZone(player.x, player.y, AUDIO_CONFIG.player.testTownZone)) {
+        terrainLayer = 'town'
+      } else if (isPointInsideZone(player.x, player.y, AUDIO_CONFIG.player.novaCityZone)) {
+        terrainLayer = 'city'
+      }
       audio.playFootstep(terrainLayer)
       state.footstepTimerSeconds -= FOOTSTEP_INTERVAL_SECONDS
     } // end if footstep timer reached
