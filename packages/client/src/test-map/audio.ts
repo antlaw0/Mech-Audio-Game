@@ -19,7 +19,7 @@ import {
 } from './audio-utils.js'
 import { getEnemyDefinition } from './enemies/index.js'
 import type { EnemyAutomaticFireDefinition, EnemyId } from './enemies/enemyTypes.js'
-import type { AudioCategory, AudioController, AudioVolumeChannel, EnemyAudioState, IncomingProjectileAudioState, ObstructionAwareness, PlayerAudioState, SonarEcho, SpriteObject, WorldPosition } from './types.js'
+import type { AudioCategory, AudioController, AudioVolumeChannel, EnemyAudioState, FootstepTerrainLayer, IncomingProjectileAudioState, ObstructionAwareness, PlayerAudioState, SonarEcho, SpriteObject, WorldPosition } from './types.js'
 import { type WorldCollisionWorld } from './world-collision.js'
 
 interface EnemySoundSet {
@@ -523,6 +523,9 @@ export function createAudioController(): AudioController {
   let footstepTimeBeforePause = 0
   let ambienceWasPlayingBeforePause = false
   let ambienceTimeBeforePause = 0
+  let cityAmbienceWasPlayingBeforePause = false
+  let cityAmbienceTimeBeforePause = 0
+  let cityAmbienceMix = 0
   let flightLoopWasPlayingBeforePause = false
   let contextWasRunningBeforePause = false
   let aimAssistEnabled = true
@@ -574,15 +577,49 @@ export function createAudioController(): AudioController {
 
   const gainToDbSafe = (value: number): number => value <= 0.0001 ? -80 : Tone.gainToDb(value)
 
+  const smoothstep01 = (value: number): number => {
+    const t = clamp(value, 0, 1)
+    return (t * t) * (3 - (2 * t))
+  } // end function smoothstep01
+
+  const getDistanceToRect = (
+    x: number,
+    y: number,
+    xMin: number,
+    yMin: number,
+    xMax: number,
+    yMax: number
+  ): number => {
+    const dx = x < xMin ? xMin - x : x > xMax ? x - xMax : 0
+    const dy = y < yMin ? yMin - y : y > yMax ? y - yMax : 0
+    return Math.hypot(dx, dy)
+  } // end function getDistanceToRect
+
+  const updateZoneAmbienceMix = (player: PlayerAudioState, dt: number): void => {
+    const zone = AUDIO_CONFIG.player.novaCityZone
+    const xMin = zone.colStart
+    const yMin = zone.rowStart
+    const xMax = zone.colStart + zone.width - 1
+    const yMax = zone.rowStart + zone.height - 1
+    const distanceToCity = getDistanceToRect(player.position.x, player.position.y, xMin, yMin, xMax, yMax)
+    const targetMix = smoothstep01(1 - (distanceToCity / Math.max(0.001, zone.blendDistance)))
+    const blendSeconds = Math.max(0.001, AUDIO_CONFIG.player.zoneAmbienceBlendSeconds)
+    const blendAmount = clamp(dt / blendSeconds, 0, 1)
+    cityAmbienceMix += (targetMix - cityAmbienceMix) * blendAmount
+    cityAmbienceMix = clamp(cityAmbienceMix, 0, 1)
+  } // end function updateZoneAmbienceMix
+
   const applyFlightLoopVolume = (): void => {
     flightLoopGain.gain.value = 0.78 * flightLoopVolume
   } // end function applyFlightLoopVolume
 
   const applyHtmlAudioVolumes = (): void => {
-    ambienceAudio.volume = AUDIO_CONFIG.player.ambienceVolume * masterVolume * ambienceVolume
+    const ambienceBaseVolume = AUDIO_CONFIG.player.ambienceVolume * masterVolume * ambienceVolume
+    ambienceAudio.volume = ambienceBaseVolume * (1 - cityAmbienceMix)
+    cityAmbienceAudio.volume = ambienceBaseVolume * cityAmbienceMix
     servoAudio.volume = AUDIO_CONFIG.player.servoVolume * masterVolume * servoVolume
     footstepAudio.volume = 0.25 * masterVolume * footstepsVolume
-    terrainStepAudios.forEach((audio) => {
+    allTerrainStepAudios.forEach((audio) => {
       audio.volume = AUDIO_CONFIG.player.terrainStepVolume * masterVolume * footstepsVolume
     })
   } // end function applyHtmlAudioVolumes
@@ -668,21 +705,46 @@ export function createAudioController(): AudioController {
   footstepAudio.preload = 'auto'
   footstepAudio.volume = 0.25
 
-  const terrainStepFiles = Array.from(
-    { length: 16 },
+  const defaultTerrainStepFiles = Array.from(
+    { length: AUDIO_CONFIG.player.terrainStepVariantCount },
     (_, index) => `assets/sounds/steps/${AUDIO_CONFIG.player.terrainType}/${index + 1}.ogg`
   )
-  const terrainStepAudios = terrainStepFiles.map((file) => {
+  const defaultTerrainStepAudios = defaultTerrainStepFiles.map((file) => {
     const audio = new Audio(file)
     audio.preload = 'auto'
     audio.volume = AUDIO_CONFIG.player.terrainStepVolume
     return audio
   })
 
+  const buildingTerrainStepFiles = Array.from(
+    { length: AUDIO_CONFIG.player.buildingStepVariantCount },
+    (_, index) => `assets/sounds/steps/building/${index + 1}.ogg`
+  )
+  const buildingTerrainStepAudios = buildingTerrainStepFiles.map((file) => {
+    const audio = new Audio(file)
+    audio.preload = 'auto'
+    audio.volume = AUDIO_CONFIG.player.terrainStepVolume
+    return audio
+  })
+
+  const allTerrainStepAudios = [...defaultTerrainStepAudios, ...buildingTerrainStepAudios]
+
+  const getTerrainStepAudios = (terrainLayer: FootstepTerrainLayer): HTMLAudioElement[] => {
+    if (terrainLayer === 'building') {
+      return buildingTerrainStepAudios
+    }
+    return defaultTerrainStepAudios
+  } // end function getTerrainStepAudios
+
   const ambienceAudio = new Audio(`assets/sounds/ambience/${AUDIO_CONFIG.player.terrainType}/${AUDIO_CONFIG.player.ambienceTrack}.ogg`)
   ambienceAudio.preload = 'auto'
   ambienceAudio.loop = true
   ambienceAudio.volume = AUDIO_CONFIG.player.ambienceVolume
+
+  const cityAmbienceAudio = new Audio(`assets/sounds/ambience/city/${AUDIO_CONFIG.player.cityAmbienceTrack}`)
+  cityAmbienceAudio.preload = 'auto'
+  cityAmbienceAudio.loop = true
+  cityAmbienceAudio.volume = 0
 
   const servoAudio = new Audio('assets/sounds/servomotor.ogg')
   servoAudio.preload = 'auto'
@@ -1149,7 +1211,8 @@ export function createAudioController(): AudioController {
         footstepAudio.muted = true
         servoAudio.muted = true
         ambienceAudio.muted = true
-        terrainStepAudios.forEach((audio) => {
+        cityAmbienceAudio.muted = true
+        allTerrainStepAudios.forEach((audio) => {
           audio.muted = true
         })
         await footstepAudio.play().catch(() => undefined)
@@ -1161,11 +1224,20 @@ export function createAudioController(): AudioController {
         await ambienceAudio.play().catch(() => undefined)
         ambienceAudio.pause()
         ambienceAudio.currentTime = 0
-        const firstTerrainStep = terrainStepAudios[0]
+        await cityAmbienceAudio.play().catch(() => undefined)
+        cityAmbienceAudio.pause()
+        cityAmbienceAudio.currentTime = 0
+        const firstTerrainStep = defaultTerrainStepAudios[0]
         if (firstTerrainStep) {
           await firstTerrainStep.play().catch(() => undefined)
           firstTerrainStep.pause()
           firstTerrainStep.currentTime = 0
+        }
+        const firstBuildingTerrainStep = buildingTerrainStepAudios[0]
+        if (firstBuildingTerrainStep) {
+          await firstBuildingTerrainStep.play().catch(() => undefined)
+          firstBuildingTerrainStep.pause()
+          firstBuildingTerrainStep.currentTime = 0
         }
         initializeAudioCueUtilities()
         if (!radarDetectionOscStarted) {
@@ -1179,11 +1251,13 @@ export function createAudioController(): AudioController {
         footstepAudio.muted = false
         servoAudio.muted = false
         ambienceAudio.muted = false
-        terrainStepAudios.forEach((audio) => {
+        cityAmbienceAudio.muted = false
+        allTerrainStepAudios.forEach((audio) => {
           audio.muted = false
         })
         applyHtmlAudioVolumes()
         void ambienceAudio.play().catch(() => undefined)
+        void cityAmbienceAudio.play().catch(() => undefined)
         audioStarted = true
         prewarmEnemyAudioAssets()
       } // end if audio graph not initialized
@@ -1360,6 +1434,12 @@ export function createAudioController(): AudioController {
       ambienceAudio.pause()
     } // end if ambience was playing
 
+    cityAmbienceWasPlayingBeforePause = !cityAmbienceAudio.paused
+    cityAmbienceTimeBeforePause = cityAmbienceAudio.currentTime
+    if (cityAmbienceWasPlayingBeforePause) {
+      cityAmbienceAudio.pause()
+    } // end if city ambience was playing
+
     flightLoopWasPlayingBeforePause = flightLoopSound.state === 'started'
     if (flightLoopWasPlayingBeforePause) {
       flightLoopSound.stop()
@@ -1403,6 +1483,11 @@ export function createAudioController(): AudioController {
       void ambienceAudio.play().catch(() => undefined)
     } // end if ambience should resume
 
+    if (cityAmbienceWasPlayingBeforePause) {
+      cityAmbienceAudio.currentTime = cityAmbienceTimeBeforePause
+      void cityAmbienceAudio.play().catch(() => undefined)
+    } // end if city ambience should resume
+
     if (flightLoopWasPlayingBeforePause && flightLoopSound.loaded && flightLoopSound.state !== 'started') {
       flightLoopSound.start()
     } // end if player flight loop should resume
@@ -1410,6 +1495,7 @@ export function createAudioController(): AudioController {
     servoWasPlayingBeforePause = false
     footstepWasPlayingBeforePause = false
     ambienceWasPlayingBeforePause = false
+    cityAmbienceWasPlayingBeforePause = false
     flightLoopWasPlayingBeforePause = false
     contextWasRunningBeforePause = false
     audioPaused = false
@@ -1624,6 +1710,7 @@ export function createAudioController(): AudioController {
   ): void => {
     const maxAudioLosDistance = 170
 
+    updateZoneAmbienceMix(player, dt)
     applyHtmlAudioVolumes()
 
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
@@ -2222,7 +2309,7 @@ export function createAudioController(): AudioController {
     servoAudio.currentTime = 0
   } // end function stopServo
 
-  const playFootstep = (): void => {
+  const playFootstep = (terrainLayer: FootstepTerrainLayer = 'default'): void => {
     if (!audioStarted || audioPaused) {
       return
     } // end if audio not started
@@ -2230,6 +2317,7 @@ export function createAudioController(): AudioController {
     footstepAudio.currentTime = 0
     void footstepAudio.play().catch(() => undefined)
 
+    const terrainStepAudios = getTerrainStepAudios(terrainLayer)
     if (terrainStepAudios.length > 0) {
       const randomIndex = Math.floor(Math.random() * terrainStepAudios.length)
       const terrainStep = terrainStepAudios[randomIndex]

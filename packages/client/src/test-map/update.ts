@@ -325,7 +325,9 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   if (isMoving && !movementBlockedByObstacle && player.flightState === 'grounded' && audio.isAudioStarted()) {
     state.footstepTimerSeconds += deltaSeconds
     if (state.footstepTimerSeconds >= FOOTSTEP_INTERVAL_SECONDS) {
-      audio.playFootstep()
+      const stepSupportHeight = getTopSurfaceHeight(environment.collisionWorld, player.x, player.y, PLAYER_RADIUS)
+      const terrainLayer = stepSupportHeight > LANDING_EPSILON ? 'building' : 'default'
+      audio.playFootstep(terrainLayer)
       state.footstepTimerSeconds -= FOOTSTEP_INTERVAL_SECONDS
     } // end if footstep timer reached
   } else {

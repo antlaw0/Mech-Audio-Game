@@ -222,6 +222,8 @@ export interface RenderContext {
   projectionPlane: number
 } // end interface RenderContext
 
+export type FootstepTerrainLayer = 'default' | 'building'
+
 export interface AudioController {
   ensureAudio: () => Promise<void>
   playPauseOpenChirp: () => void
@@ -230,7 +232,7 @@ export interface AudioController {
   resumeAllAudio: () => Promise<void>
   startServo: () => void
   stopServo: () => void
-  playFootstep: () => void
+  playFootstep: (terrainLayer?: FootstepTerrainLayer) => void
   stopFootstep: () => void
   playBump: () => void
   playPitchCenterConfirm: () => void
