@@ -151,6 +151,10 @@ export function bindInput(
         input.selectedWeaponSlot = 4
       } // end if Digit4
 
+      if (event.code === 'Digit5') {
+        input.selectedWeaponSlot = 5
+      } // end if Digit5
+
       if (event.code === 'Numpad1') {
         input.spawnTankPending = true
       } // end if Numpad1
@@ -308,7 +312,7 @@ export function bindInput(
       input.cycleWeaponPending = false
     } // end if KeyR
 
-    if (event.code === 'Digit1' || event.code === 'Digit2' || event.code === 'Digit3' || event.code === 'Digit4') {
+    if (event.code === 'Digit1' || event.code === 'Digit2' || event.code === 'Digit3' || event.code === 'Digit4' || event.code === 'Digit5') {
       input.selectedWeaponSlot = null
     } // end if Digit key released
 

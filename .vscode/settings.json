@@ -1,0 +1,45 @@
+{
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/node_modules/**": true,
+    "**/assets/**": true,
+    "**/assets/sounds/**": true,
+    "**/assets/audio/**": true,
+    "**/packages/*/dist/**": true,
+    "**/.mech-audio/**": true,
+    "**/.next/**": true,
+    "**/.turbo/**": true
+  },
+  "files.exclude": {
+    "**/node_modules": true,
+    "**/assets/sounds": true,
+    "**/assets/audio": true,
+    "**/packages/*/dist": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/assets": true,
+    "**/assets/sounds": true,
+    "**/assets/audio": true,
+    "**/packages/*/dist": true
+  },
+  "typescript.tsserver.watchOptions": {
+    "watchFile": "useFsEventsOnParentDirectory",
+    "watchDirectory": "useFsEvents",
+    "fallbackPolling": "dynamicPriority",
+    "synchronousWatchDirectory": false,
+    "excludeDirectories": [
+      "**/node_modules",
+      "**/assets",
+      "**/assets/sounds",
+      "**/assets/audio",
+      "**/packages/*/dist"
+    ]
+  },
+  "typescript.tsserver.maxTsServerMemory": 4096,
+  "typescript.disableAutomaticTypeAcquisition": true,
+  "npm.autoDetect": "off",
+  "git.autorefresh": false,
+  "task.allowAutomaticTasks": "off"
+}

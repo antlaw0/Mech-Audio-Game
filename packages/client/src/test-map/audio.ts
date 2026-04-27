@@ -719,6 +719,7 @@ export function createAudioController(): AudioController {
     'assets/sounds/weapons/reloadCannon.ogg',
     'assets/sounds/weapons/reload.ogg',
     'assets/sounds/weapons/pistol_fire.ogg',
+    'assets/sounds/weapons/rocket_fire.OGG',
     'assets/sounds/weapons/arBurst3.ogg',
     'assets/sounds/weapons/arBurst4.ogg',
     'assets/sounds/weapons/arBurst5.ogg',

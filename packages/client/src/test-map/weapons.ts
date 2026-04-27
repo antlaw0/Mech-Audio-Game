@@ -12,9 +12,9 @@ import {
 import type { WeaponStats } from './types.js'
 
 export interface PlayerWeaponDefinition extends WeaponStats {
-  id: 'pistol' | 'shotgun' | 'assault-rifle' | 'missile-launcher'
+  id: 'pistol' | 'shotgun' | 'assault-rifle' | 'missile-launcher' | 'rocket-launcher'
   name: string
-  selectionKey: '1' | '2' | '3' | '4'
+  selectionKey: '1' | '2' | '3' | '4' | '5'
   fireSoundPath: string
 } // end interface PlayerWeaponDefinition
 
@@ -113,6 +113,34 @@ export const PLAYER_WEAPON_DEFINITIONS: readonly PlayerWeaponDefinition[] = [
     trackingRating: MISSILE_DEFAULT_TRACKING_RATING,
     explosionRadius: MISSILE_DEFAULT_EXPLOSION_RADIUS,
     explosionDamage: MISSILE_DEFAULT_EXPLOSION_DAMAGE,
+    explosionSounds: [
+      'assets/sounds/explosions/explosion_1A.ogg',
+      'assets/sounds/explosions/explosion_2a.ogg',
+      'assets/sounds/explosions/explosion3.ogg'
+    ]
+  },
+  {
+    id: 'rocket-launcher',
+    name: 'Rocket Launcher',
+    selectionKey: '5',
+    fireSoundPath: 'assets/sounds/weapons/rocket_fire.OGG',
+    weaponType: 'missile',
+    accuracy: 0.72,
+    lockOnRange: WEAPON_LOCK_ON_RANGE,
+    damagePerShot: 20,
+    projectileCount: 1,
+    spreadDegrees: 0,
+    bulletSpeed: MISSILE_DEFAULT_SPEED * 0.88,
+    maxRange: BULLET_MAX_DIST,
+    isFullAuto: false,
+    fireRateCooldownSeconds: 1.7,
+    projectileSize: 0.38,
+    lockOnWindowWidthPercent: 100,
+    lockOnWindowHeightPercent: 100,
+    lockOnTimeMs: 0,
+    trackingRating: 0,
+    explosionRadius: MISSILE_DEFAULT_EXPLOSION_RADIUS,
+    explosionDamage: 20,
     explosionSounds: [
       'assets/sounds/explosions/explosion_1A.ogg',
       'assets/sounds/explosions/explosion_2a.ogg',

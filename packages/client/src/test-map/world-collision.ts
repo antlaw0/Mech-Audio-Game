@@ -111,7 +111,9 @@ function circleIntersectsAabb(x: number, y: number, radius: number, box: WallCol
 } // end function circleIntersectsAabb
 
 function hasVerticalOverlap(zMinA: number, zMaxA: number, zMinB: number, zMaxB: number): boolean {
-  return zMinA <= zMaxB && zMaxA >= zMinB
+  // Treat exact face contact as non-overlap so standing exactly on top of a
+  // surface does not count as intersecting it.
+  return zMinA < zMaxB && zMaxA > zMinB
 } // end function hasVerticalOverlap
 
 function isWallCellFilled(world: WorldCollisionWorld, col: number, row: number): boolean {
@@ -182,6 +184,47 @@ function getObstacleType(world: WorldCollisionWorld, x: number, y: number, z: nu
 export function isWorldBlockedAtHeight(world: WorldCollisionWorld, x: number, y: number, z: number, radius = 0.02): boolean {
   return getObstacleType(world, x, y, z, radius) !== null
 } // end function isWorldBlockedAtHeight
+
+export function getTopSurfaceHeight(world: WorldCollisionWorld, x: number, y: number, radius: number): number {
+  let topSurfaceHeight = 0
+
+  const colMin = Math.max(0, Math.floor(x - radius))
+  const colMax = Math.min(MAP_WIDTH - 1, Math.floor(x + radius))
+  const rowMin = Math.max(0, Math.floor(y - radius))
+  const rowMax = Math.min(MAP_HEIGHT - 1, Math.floor(y + radius))
+
+  for (let row = rowMin; row <= rowMax; row += 1) {
+    for (let col = colMin; col <= colMax; col += 1) {
+      if (!isWallCellFilled(world, col, row)) {
+        continue
+      } // end if map tile is not a wall
+
+      const wallBox: WallCollider = {
+        xMin: col,
+        xMax: col + 1,
+        yMin: row,
+        yMax: row + 1,
+        zMin: 0,
+        zMax: WORLD_WALL_HEIGHT
+      }
+
+      if (circleIntersectsAabb(x, y, radius, wallBox)) {
+        topSurfaceHeight = Math.max(topSurfaceHeight, wallBox.zMax)
+      } // end if standing footprint overlaps wall tile
+    } // end for each map column
+  } // end for each map row
+
+  for (const obstacle of world.roundObstacles) {
+    const dx = x - obstacle.x
+    const dy = y - obstacle.y
+    const minDist = radius + obstacle.radius
+    if ((dx * dx) + (dy * dy) <= minDist * minDist) {
+      topSurfaceHeight = Math.max(topSurfaceHeight, obstacle.zMax)
+    } // end if standing footprint overlaps round obstacle
+  } // end for each round obstacle
+
+  return topSurfaceHeight
+} // end function getTopSurfaceHeight
 
 export function traceWorldHit3D(world: WorldCollisionWorld, from: Point3D, to: Point3D, radius = 0.02): WorldTraceHit | null {
   const dx = to.x - from.x

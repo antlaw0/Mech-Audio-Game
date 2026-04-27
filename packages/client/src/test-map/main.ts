@@ -2231,7 +2231,16 @@ function startTestMap(): void {
       audio.playLockOnChirp()
     } // end if lock acquired
 
+    const missileRequiresLock = playerWeapon.weaponType === 'missile'
+      && (playerWeapon.lockOnTimeMs > 0 || playerWeapon.trackingRating > 0)
+
     if (playerWeapon.weaponType === 'missile') {
+      if (!missileRequiresLock) {
+        missileLockProgressMs = 0
+        missileLockTargetId = null
+        missileLockConfirmed = false
+        missileLockToneTimerSeconds = 0
+      } else {
       const currentLockId = lockUpdate.lockedTank?.id ?? null
       if (currentLockId === null) {
         if (missileLockProgressMs > 0 || missileLockConfirmed) {
@@ -2263,6 +2272,7 @@ function startTestMap(): void {
           } // end if lock-on timer completed
         } // end if missile lock not yet confirmed
       } // end if missile lock candidate exists
+      } // end if this missile weapon requires lock behavior
     } else {
       missileLockProgressMs = 0
       missileLockTargetId = null
@@ -2281,7 +2291,8 @@ function startTestMap(): void {
       const speedFraction = Math.min(1, playerSpeed / maxMoveSpeed)
 
       if (playerWeapon.weaponType === 'missile') {
-        if (!missileLockConfirmed || lockUpdate.lockedTank === null) {
+        const lockedTargetId = lockUpdate.lockedTank?.id ?? null
+        if (missileRequiresLock && (!missileLockConfirmed || lockedTargetId === null)) {
           audio.playNegativeActionTone()
         } else {
           audio.fireGunshot(playerWeapon.fireSoundPath)
@@ -2295,7 +2306,7 @@ function startTestMap(): void {
             spawnPlayerMissile(
               combatWorld,
               player,
-              lockUpdate.lockedTank.id,
+              lockedTargetId,
               playerWeapon.damagePerShot,
               playerWeapon.bulletSpeed,
               playerWeapon.maxRange,
@@ -2303,7 +2314,9 @@ function startTestMap(): void {
               playerWeapon.trackingRating,
               playerWeapon.explosionRadius,
               playerWeapon.explosionDamage,
-              playerWeapon.explosionSounds
+              playerWeapon.explosionSounds,
+              playerWeapon.accuracy,
+              speedFraction
             )
           } // end for each missile in shot
         } // end if missile shot blocked or fired

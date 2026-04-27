@@ -1,0 +1,139 @@
+VS Code Freeze/Multiple Instances Investigation
+Date: 2026-04-26
+Workspace: Mech-Audio-Game
+
+Summary (current best explanation)
+- Most likely trigger is editor load pressure from this repository size/profile (large assets + node_modules + TypeScript watch activity), combined with extension host churn.
+- A second factor is extension overlap/conflict history (logs show DanielSanMedium.dscodegpt and GitHub Copilot Chat activation and command registration collisions).
+- The project README expects a dedicated .code-workspace file with watcher exclusions, but that file and .vscode settings were missing. This means VS Code had no local guardrails for watcher-heavy paths.
+
+Evidence captured
+1) Missing workspace and VS Code settings guardrails
+- README says to open Mech-Audio-Game.dev.code-workspace for watcher exclusions.
+- The file did not exist before this investigation.
+- .vscode folder existed but was empty (no settings.json/tasks.json).
+
+2) Log indicators from latest session
+- Renderer log contains:
+  - Started local extension host with pid 14460.
+  - [DanielSanMedium.dscodegpt]: Command workbench.action.restartExtensionHost already registered.
+  - [DanielSanMedium.dscodegpt]: Menu item references the same command as default and alt-command.
+- Extension host log contains startup activations of multiple extensions, including GitHub.copilot-chat and DanielSanMedium.dscodegpt.
+- No explicit renderer crash/OOM line was found in the sampled latest-session snippets, so this is currently a high-confidence performance/churn diagnosis, not a proven crash signature.
+
+3) Process fan-out in this repo is expected during playtest
+- npm run dev:playtest intentionally runs concurrently:
+  - server
+  - TypeScript watch
+  - static server
+- That is normal and can look like “many processes” in Task Manager.
+
+Fixes applied in workspace (already done)
+1) Added .vscode/settings.json with protective exclusions and TS watch tuning
+- files.watcherExclude excludes heavy folders:
+  - node_modules
+  - assets/sounds
+  - assets/audio
+  - package dist folders
+  - .mech-audio
+- search.exclude mirrors the same heavy paths.
+- typescript.tsserver.watchOptions excludes heavy directories.
+- typescript.tsserver.maxTsServerMemory set to 4096.
+- npm.autoDetect set to off to reduce background scanning load.
+
+2) Added Mech-Audio-Game.dev.code-workspace
+- Includes same protective settings.
+- Intended to be the preferred file to open in VS Code for this repo.
+
+Operational guidance (if freeze happens again)
+1) Reopen VS Code using only:
+- Mech-Audio-Game.dev.code-workspace
+
+2) Keep extension surface minimal while testing stability
+- Leave non-essential AI/code-assistant extensions disabled.
+- Avoid running multiple assistant extensions together.
+
+3) If freezes persist, collect fast triage evidence before kill/restart
+- Open command palette and run: Developer: Open Logs Folder
+- Grab latest:
+  - window*/renderer.log
+  - window*/exthost/exthost.log
+  - ptyhost.log
+- Search for these terms:
+  - renderer process gone
+  - extension host terminated
+  - out of memory
+  - ENOSPC
+  - crashed
+
+4) Distinguish expected process fan-out from runaway behavior
+- Expected while playtesting: one VS Code window + terminal child processes for server/watch/static.
+- Suspect runaway behavior: repeated new Code.exe renderer/exthost trees appear without user action.
+
+Next investigation steps if issue repeats
+1) Capture process snapshot immediately after freeze starts
+- Save output of:
+  - tasklist /v /fi "imagename eq Code.exe"
+- Include parent-child tree if possible (Process Explorer recommended).
+
+2) Capture extension bisect result
+- Use: Help: Start Extension Bisect
+- Record the first extension that reproduces freeze.
+
+3) Compare logs across 2-3 sessions
+- Confirm whether the same extension or watcher-heavy operation appears right before each freeze.
+
+Status
+- Investigation is ongoing, but this report and the new workspace/settings files provide a stable baseline and a repeatable path for next diagnostics.
+
+Update 2 (same day, deeper log sweep)
+- Additional log sweep across recent sessions found repeated signatures in these categories:
+  - renderer process gone
+  - extension host terminated/restart
+  - out of memory / heap pressure
+  - watcher pressure (ENOSPC/watcher)
+  - gpu process crashed
+  - command registration collisions (already registered)
+- Conclusion tightened: this is likely a mixed failure mode (watcher + memory + extension/gpu churn), not a single one-off error.
+
+Additional fixes applied after Update 2
+1) Stronger workspace-level throttling
+- Expanded files.watcherExclude to include the entire assets tree and additional build/cache folders.
+- Added files.exclude to keep heavy directories out of Explorer indexing overhead.
+- Expanded search.exclude and tsserver excludeDirectories.
+- Disabled automatic type acquisition to reduce background tsserver work.
+- Disabled git autorefresh and automatic tasks to reduce background process churn.
+
+2) Added one-command crash capture script
+- File: scripts/capture-vscode-freeze.ps1
+- What it writes (timestamped folder under .mech-audio/freeze-captures):
+  - capture-summary.txt
+  - code-processes.txt
+  - code-process-tree.txt
+  - latest-log-sessions.txt
+  - log-keywords.txt
+- It captures Code.exe process snapshots and keyword hits from the latest VS Code log sessions.
+
+How to run capture script quickly after a freeze starts (or right after restart)
+- In repo root PowerShell:
+  - powershell -ExecutionPolicy Bypass -File .\scripts\capture-vscode-freeze.ps1
+
+If freezing still occurs after these changes
+- Next likely high-impact step is user-level GPU mitigation:
+  - Start VS Code with --disable-gpu once and compare stability.
+  - If confirmed, set disable-hardware-acceleration in user-level argv.json.
+
+Update 3 (capture script validation)
+- Ran the capture script end-to-end successfully.
+- Exit status: 0
+- Example output folder:
+  - .mech-audio/freeze-captures/20260426-195630
+- Confirmed generated files:
+  - capture-summary.txt
+  - code-processes.txt
+  - code-process-tree.txt
+  - latest-log-sessions.txt
+  - log-keywords.txt
+
+Use this exact command after any freeze event
+- powershell -ExecutionPolicy Bypass -File .\scripts\capture-vscode-freeze.ps1

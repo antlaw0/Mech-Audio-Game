@@ -640,7 +640,7 @@ export function spawnPlayerBulletToward(
 export function spawnPlayerMissile(
   world: CombatEcsWorld,
   player: Player,
-  targetTankId: number,
+  targetTankId: number | null,
   damage: number,
   speed: number,
   maxDistance: number,
@@ -648,13 +648,22 @@ export function spawnPlayerMissile(
   trackingRating: number,
   explosionRadius: number,
   explosionDamage: number,
-  explosionSounds: string[]
+  explosionSounds: string[],
+  accuracy = 1,
+  playerSpeedFraction = 0
 ): void {
-  const targetX = getNumber(Position.x, targetTankId) ?? player.x
-  const targetY = getNumber(Position.y, targetTankId) ?? player.y
-  const targetZ = Math.max(0, getNumber(Flight.height, targetTankId) ?? (player.z ?? 0)) + PLAYER_HEIGHT
-  const angle = Math.atan2(targetY - player.y, targetX - player.x)
+  const hasValidTarget = targetTankId !== null && (Meta.alive[targetTankId] ?? 0) === 1
+  const targetX = hasValidTarget ? (getNumber(Position.x, targetTankId) ?? player.x) : player.x
+  const targetY = hasValidTarget ? (getNumber(Position.y, targetTankId) ?? player.y) : player.y
+  const targetZ = hasValidTarget
+    ? (Math.max(0, getNumber(Flight.height, targetTankId) ?? (player.z ?? 0)) + PLAYER_HEIGHT)
+    : ((player.z ?? 0) + PLAYER_HEIGHT)
+  const angle = hasValidTarget ? Math.atan2(targetY - player.y, targetX - player.x) : player.angle
   const originHeight = (player.z ?? 0) + PLAYER_HEIGHT
+  const clampedAccuracy = Math.max(0, Math.min(1, accuracy))
+  const baseHalfAngle = WEAPON_MAX_CONE_RADIANS * Math.max(0, 1 - clampedAccuracy)
+  const accuracyHalfAngle = baseHalfAngle * (1 + Math.min(1, playerSpeedFraction) * WEAPON_MOVEMENT_ACCURACY_PENALTY)
+  const launchOffset = sampleConeOffset(accuracyHalfAngle)
   const missile = addEntity(world)
   addComponent(world, Position, missile)
   addComponent(world, Facing, missile)
@@ -664,8 +673,12 @@ export function spawnPlayerMissile(
 
   Position.x[missile] = player.x
   Position.y[missile] = player.y
-  Facing.angle[missile] = angle
-  Facing.pitch[missile] = getPitchToTarget(player.x, player.y, originHeight, targetX, targetY, targetZ)
+  Facing.angle[missile] = angle + launchOffset.yawOffset
+  Facing.pitch[missile] = clampProjectilePitch(
+    (hasValidTarget
+      ? getPitchToTarget(player.x, player.y, originHeight, targetX, targetY, targetZ)
+      : player.pitch) + launchOffset.pitchOffset
+  )
   Meta.kind[missile] = KIND_MISSILE
   Meta.radius[missile] = Math.max(0.08, projectileSize)
   Meta.distance[missile] = 0
@@ -676,7 +689,7 @@ export function spawnPlayerMissile(
   ProjectileStats.originHeight[missile] = originHeight
   ProjectileStats.nearMissPlayed[missile] = 0
   ProjectileStats.owner[missile] = PROJECTILE_OWNER_PLAYER
-  MissileStats.targetId[missile] = targetTankId
+  MissileStats.targetId[missile] = targetTankId ?? 0
   MissileStats.trackingRating[missile] = Math.max(0, Math.min(1, trackingRating))
   MissileStats.guidanceTimer[missile] = 0
   MissileStats.explosionRadius[missile] = Math.max(0.2, explosionRadius)
@@ -1050,7 +1063,7 @@ export function stepCombatEcsWorld(
         let deltaPitch = desiredPitch - pitch
         while (deltaPitch > Math.PI) deltaPitch -= Math.PI * 2
         while (deltaPitch < -Math.PI) deltaPitch += Math.PI * 2
-        const maxTurnRate = 2.4 + trackingRating * 6.4
+        const maxTurnRate = Math.max(0, trackingRating) * 8.8
         const maxTurn = maxTurnRate * deltaSeconds
         const appliedTurn = Math.max(-maxTurn, Math.min(maxTurn, deltaAngle))
         const appliedPitchTurn = Math.max(-maxTurn, Math.min(maxTurn, deltaPitch))

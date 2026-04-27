@@ -1,8 +1,6 @@
-# **AI_CONTEXT.md**
-
 # Project: Audio-First Mech Shooter (Hybrid 2D + Spatial Audio)
 
-This document defines the architecture, design principles, coding conventions, and system expectations for the project. All AI assistants (including GitHub Copilot) must follow this specification unless explicitly overridden.
+    This document defines the architecture, design principles, coding conventions, and system expectations for the project. All AI assistants (including GitHub Copilot) must follow this specification unless explicitly overridden.
 
 ---
 

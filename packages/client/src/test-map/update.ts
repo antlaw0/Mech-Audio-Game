@@ -12,13 +12,18 @@ import {
   TURN_SPEED
 } from './constants.js'
 import { normalizeAngle } from './audio-utils.js'
-import { isPlayerBlocked, type WorldCollisionWorld } from './world-collision.js'
+import { getTopSurfaceHeight, isPlayerBlocked, type WorldCollisionWorld, WORLD_WALL_HEIGHT } from './world-collision.js'
 import type { AudioController, InputState, Player } from './types.js'
+
+const PLAYER_FALL_GRAVITY = 18
+const PLAYER_MAX_FALL_SPEED = 14
+const LANDING_EPSILON = 0.001
 
 export interface UpdateState {
   footstepTimerSeconds: number
   lastBumpTimeSeconds: number
   muzzleFlashTimer: number
+  verticalVelocityZ: number
 } // end interface UpdateState
 
 export interface UpdateEnvironment {
@@ -34,7 +39,8 @@ export function createUpdateState(): UpdateState {
   return {
     footstepTimerSeconds: 0,
     lastBumpTimeSeconds: 0,
-    muzzleFlashTimer: 0
+    muzzleFlashTimer: 0,
+    verticalVelocityZ: 0
   } // end object update state
 } // end function createUpdateState
 
@@ -48,6 +54,9 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   if (environment.player.z === undefined) {
     environment.player.z = 0
   } // end if altitude is uninitialized
+  if (!Number.isFinite(environment.state.verticalVelocityZ)) {
+    environment.state.verticalVelocityZ = 0
+  } // end if vertical velocity is uninitialized
 
   const moveSpeed = (environment.player.isBoosting ?? false)
     ? PLAYER_BOOST_SPEED
@@ -108,40 +117,65 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     } // end if can boost
   } // end if boost toggle requested
 
-  const targetFlightAltitude = Math.max(0, environment.flightAltitude)
+  const minimumCruiseAltitude = WORLD_WALL_HEIGHT + 0.05
+  const targetFlightAltitude = Math.max(0, environment.flightAltitude, minimumCruiseAltitude)
   const verticalStep = PLAYER_FLIGHT_VERTICAL_SPEED * deltaSeconds
   let playerAltitude = player.z ?? 0
+  const supportHeight = getTopSurfaceHeight(environment.collisionWorld, player.x, player.y, PLAYER_RADIUS)
+  let justLanded = false
+
   if (player.flightState === 'ascending') {
-    playerAltitude = Math.min(targetFlightAltitude, playerAltitude + verticalStep)
-    if (playerAltitude >= targetFlightAltitude - 0.001) {
-      playerAltitude = targetFlightAltitude
+    if (playerAltitude >= targetFlightAltitude - LANDING_EPSILON) {
       player.flightState = 'airborne'
       player.isFlying = true
+      state.verticalVelocityZ = 0
+    } else {
+      playerAltitude = Math.min(targetFlightAltitude, playerAltitude + verticalStep)
+      state.verticalVelocityZ = 0
+      if (playerAltitude >= targetFlightAltitude - LANDING_EPSILON) {
+        playerAltitude = targetFlightAltitude
+        player.flightState = 'airborne'
+        player.isFlying = true
+      } // end if reached flight altitude
     } // end if reached flight altitude
   } else if (player.flightState === 'airborne') {
-    playerAltitude = targetFlightAltitude
+    playerAltitude = Math.max(playerAltitude, targetFlightAltitude)
+    state.verticalVelocityZ = 0
     player.isFlying = true
-  } else if (player.flightState === 'descending') {
-    playerAltitude = Math.max(0, playerAltitude - verticalStep)
-    player.isFlying = playerAltitude > 0
-    if (playerAltitude <= 0.001) {
-      playerAltitude = 0
+  } else {
+    const wasDescendingFromFlight = player.flightState === 'descending'
+    const shouldFall = wasDescendingFromFlight || playerAltitude > supportHeight + LANDING_EPSILON
+
+    if (shouldFall) {
+      state.verticalVelocityZ = Math.max(-PLAYER_MAX_FALL_SPEED, state.verticalVelocityZ - PLAYER_FALL_GRAVITY * deltaSeconds)
+      playerAltitude = Math.max(supportHeight, playerAltitude + state.verticalVelocityZ * deltaSeconds)
+
+      if (playerAltitude <= supportHeight + LANDING_EPSILON) {
+        playerAltitude = supportHeight
+        state.verticalVelocityZ = 0
+        player.flightState = 'grounded'
+        player.isFlying = false
+        justLanded = true
+
+        // Ensure boost state is cleared on landing (jet is stopping so no audio fade needed)
+        if (player.isBoosting) {
+          player.isBoosting = false
+        } // end if resetting boost on landing
+      } else {
+        player.isFlying = wasDescendingFromFlight
+      } // end if landed this frame
+    } else {
+      playerAltitude = supportHeight
+      state.verticalVelocityZ = 0
       player.flightState = 'grounded'
       player.isFlying = false
-      // Ensure boost state is cleared on landing (jet is stopping so no audio fade needed)
-      if (player.isBoosting) {
-        player.isBoosting = false
-      } // end if resetting boost on landing
-      if (audio.isAudioStarted()) {
-        audio.playHardLanding()
-      } // end if hard landing should play
-    } // end if landed
-  } else {
-    playerAltitude = 0
-    player.flightState = 'grounded'
-    player.isFlying = false
+    } // end if player should fall toward support
   } // end if flight state update
   player.z = playerAltitude
+
+  if (justLanded && audio.isAudioStarted()) {
+    audio.playHardLanding()
+  } // end if landing cue should play
 
   const cardinalFacings = [0, Math.PI / 2, Math.PI, (Math.PI * 3) / 2]
   const normalizePositiveAngle = (angle: number): number => {
@@ -254,10 +288,15 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     let moved = false
 
     const playerFeet = player.z ?? 0
+    const collisionFeet = (
+      player.flightState === 'ascending' || player.flightState === 'airborne'
+    )
+      ? Math.max(playerFeet, minimumCruiseAltitude)
+      : playerFeet
     const xWithinMap = Math.max(0.06, Math.min(MAP_WIDTH - 0.06, nextX))
     const yWithinMap = Math.max(0.06, Math.min(MAP_HEIGHT - 0.06, nextY))
 
-    const canMoveX = !isPlayerBlocked(environment.collisionWorld, xWithinMap, player.y, playerFeet, PLAYER_RADIUS)
+    const canMoveX = !isPlayerBlocked(environment.collisionWorld, xWithinMap, player.y, collisionFeet, PLAYER_RADIUS)
     if (canMoveX) {
       player.x = xWithinMap
       moved = true
@@ -267,7 +306,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
       collisionDirection = normalizeAngle(Math.atan2(0, directionX) - player.angle)
     } // end if canMoveX
 
-    const canMoveY = !isPlayerBlocked(environment.collisionWorld, player.x, yWithinMap, playerFeet, PLAYER_RADIUS)
+    const canMoveY = !isPlayerBlocked(environment.collisionWorld, player.x, yWithinMap, collisionFeet, PLAYER_RADIUS)
     if (canMoveY) {
       player.y = yWithinMap
       moved = true
