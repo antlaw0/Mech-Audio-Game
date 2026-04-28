@@ -1611,6 +1611,7 @@ export function getCombatRenderState(world: CombatEcsWorld): {
     const profile = getEnemyDefinitionFromNumericId(EnemyProfile.id[tank] ?? ENEMY_NUMERIC_ID.tank)
     const velocityX = isMoving ? Math.cos(movementAngle) * profile.movementSpeed : 0
     const velocityY = isMoving ? Math.sin(movementAngle) * profile.movementSpeed : 0
+    const customSounds = world.customConfigs.get(tank)?.sounds
 
     tanks.push({
       id: tank,
@@ -1628,7 +1629,10 @@ export function getCombatRenderState(world: CombatEcsWorld): {
       alive,
       explosionIntensity: !alive && explosionMaxDuration > 0
         ? Math.max(0, Math.min(1, explosionTimeRemaining / explosionMaxDuration))
-        : 0
+        : 0,
+      positionalLoopSound: customSounds?.positionalLoopSound,
+      loopSoundPauseIntervalMs: customSounds?.loopSoundPauseIntervalMs,
+      stopLoopSoundWhileStationary: customSounds?.stopLoopSoundWhileStationary
     })
   } // end for each tank
 

@@ -32,7 +32,9 @@ export class BruiserEnemyDefinition extends EnemyDefinitionBase {
         attackSound: 'assets/sounds/weapons/swing_medium1.ogg',
         hurtSound: 'assets/sounds/tankHit.ogg',
         deathSound: 'assets/sounds/explosions/explosion_2a.ogg',
-        positionalLoopSound: 'assets/sounds/tankMoving.ogg'
+        positionalLoopSound: 'assets/sounds/footstep2.ogg',
+        loopSoundPauseIntervalMs: 0,
+        stopLoopSoundWhileStationary: true
       }
     })
   } // end constructor BruiserEnemyDefinition

@@ -26,7 +26,8 @@ export class TankEnemyDefinition extends EnemyDefinitionBase {
         attackSound: 'assets/sounds/weapons/tankCannon.ogg',
         hurtSound: 'assets/sounds/tankHit.ogg',
         deathSound: 'assets/sounds/explosions/explosion_2a.ogg',
-        positionalLoopSound: 'assets/sounds/tankMoving.ogg'
+        positionalLoopSound: 'assets/sounds/tankMoving.ogg',
+        loopSoundPauseIntervalMs: 0
       }
     })
   } // end constructor TankEnemyDefinition

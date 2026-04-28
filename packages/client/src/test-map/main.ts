@@ -221,6 +221,7 @@ function startTestMap(): void {
   const editorHurtSoundInput = getInput('editorHurtSound')
   const editorDeathSoundInput = getInput('editorDeathSound')
   const editorLoopSoundInput = getInput('editorLoopSound')
+  const editorLoopSoundPauseIntervalInput = getInput('editorLoopSoundPauseIntervalMs')
 
   const mapData = createMapData()
   const sprites = createSprites()
@@ -611,6 +612,7 @@ function startTestMap(): void {
     if (editorHurtSoundInput) editorHurtSoundInput.value = config.sounds.hurtSound
     if (editorDeathSoundInput) editorDeathSoundInput.value = config.sounds.deathSound
     if (editorLoopSoundInput) editorLoopSoundInput.value = config.sounds.positionalLoopSound
+    if (editorLoopSoundPauseIntervalInput) editorLoopSoundPauseIntervalInput.value = String(config.sounds.loopSoundPauseIntervalMs ?? 0)
   } // end function populateEditorForm
 
   const readEditorForm = (baseId: EnemyId): EnemyDefinitionConfig => {
@@ -644,7 +646,8 @@ function startTestMap(): void {
         attackSound: editorAttackSoundInput?.value.trim() || def.sounds.attackSound,
         hurtSound: editorHurtSoundInput?.value.trim() || def.sounds.hurtSound,
         deathSound: editorDeathSoundInput?.value.trim() || def.sounds.deathSound,
-        positionalLoopSound: editorLoopSoundInput?.value.trim() || def.sounds.positionalLoopSound
+        positionalLoopSound: editorLoopSoundInput?.value.trim() || def.sounds.positionalLoopSound,
+        loopSoundPauseIntervalMs: Math.max(0, Math.round(parseNum(editorLoopSoundPauseIntervalInput, def.sounds.loopSoundPauseIntervalMs ?? 0)))
       }
     } // end object enemy config
   } // end function readEditorForm
@@ -2439,7 +2442,10 @@ function startTestMap(): void {
       facingAngle: tank.angle,
       isMoving: Math.hypot(tank.velocityX, tank.velocityY) > 0.05,
       isAlive: tank.alive,
-      height: tank.height
+      height: tank.height,
+      positionalLoopSound: tank.positionalLoopSound,
+      loopSoundPauseIntervalMs: tank.loopSoundPauseIntervalMs,
+      stopLoopSoundWhileStationary: tank.stopLoopSoundWhileStationary
     }))
 
     const destinationPoi = getDestinationPoi()

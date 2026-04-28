@@ -30,6 +30,10 @@ export interface EnemySoundDefinition {
   hurtSound: string
   deathSound: string
   positionalLoopSound: string
+  /** Milliseconds to pause between loop iterations. 0 or undefined = continuous loop. */
+  loopSoundPauseIntervalMs?: number
+  /** If true, stop the loop sound when the enemy is not moving and resume when it moves again. If false or undefined, always loop. */
+  stopLoopSoundWhileStationary?: boolean
 } // end interface EnemySoundDefinition
 
 export interface EnemyDefinitionConfig {

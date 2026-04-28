@@ -44,12 +44,21 @@ interface EnemyAudioParams {
   passivePingRateMs: number
   movementVariance: number
   threatCueDelayMs: number
+  loopSoundPauseIntervalMs: number
+  stopLoopSoundWhileStationary: boolean
 } // end interface EnemyAudioParams
+
+interface EnemySoundOverrides {
+  positionalLoopSound?: string
+  loopSoundPauseIntervalMs?: number
+  stopLoopSoundWhileStationary?: boolean
+} // end interface EnemySoundOverrides
 
 interface EnemyAudioProfile {
   id: string
   type: string
   category: string
+  loopSoundPath: string
   sounds: EnemySoundSet
   effects: EnemyEffects
   params: EnemyAudioParams
@@ -97,6 +106,10 @@ class EnemyAudioRuntime {
   private activeSonarStamp = -1
   private alive = true
   private lastTurnCueTime = -1
+  private loopPauseTimerSeconds = 0
+  private loopIsInPause = false
+  private loopWasMoving = false
+  private loopHasStartedSinceMove = false
 
   constructor(profile: EnemyAudioProfile) {
     this.profile = profile
@@ -106,7 +119,7 @@ class EnemyAudioRuntime {
     this.oneshotGain = new Tone.Gain(1)
 
     profile.sounds.idleLoop.loop = true
-    profile.sounds.movementLoop.loop = true
+    profile.sounds.movementLoop.loop = profile.params.loopSoundPauseIntervalMs <= 0
 
     // Route every source through a single enemy chain.
     profile.sounds.idleLoop.connect(this.idleGain)
@@ -146,14 +159,16 @@ class EnemyAudioRuntime {
 
   initializeLoops(): void {
     // Start once and keep running so enemy loops remain trackable in 3D space.
-    this.safeStart(this.profile.sounds.movementLoop)
+    if (!this.profile.params.stopLoopSoundWhileStationary) {
+      this.safeStart(this.profile.sounds.movementLoop)
+    } // end if loop should run regardless of movement
     this.idleGain.gain.rampTo(0, AUDIO_CONFIG.enemy.idleFadeSeconds)
     this.movementGain.gain.rampTo(1, AUDIO_CONFIG.enemy.movementFadeSeconds)
   } // end method initializeLoops
 
   updateAudio(dt: number, enemy: EnemyAudioState, player: PlayerAudioState, hasSightLine: boolean, volumeScale: number): void {
-    // Keep trying to start the loop until its buffer is loaded; safeStart is idempotent.
-    this.safeStart(this.profile.sounds.movementLoop)
+    // Handle movement-gated and pause-interval loop logic.
+    this.updateMovementLoop(dt, enemy)
 
     const relative = worldToListenerSpace(enemy.position, player.position, player.angle)
     this.profile.effects.panner.positionX.value = relative.x
@@ -296,6 +311,70 @@ class EnemyAudioRuntime {
     this.safeRetrigger(this.profile.sounds.passivePing)
   } // end method triggerPassivePing
 
+  private updateMovementLoop(dt: number, enemy: EnemyAudioState): void {
+    const { stopLoopSoundWhileStationary, loopSoundPauseIntervalMs } = this.profile.params
+    const player = this.profile.sounds.movementLoop
+
+    if (stopLoopSoundWhileStationary) {
+      const justStartedMoving = enemy.isMoving && !this.loopWasMoving
+      const justStoppedMoving = !enemy.isMoving && this.loopWasMoving
+      this.loopWasMoving = enemy.isMoving
+
+      if (justStoppedMoving) {
+        // Immediately stop the loop when the enemy halts.
+        if (player.state === 'started') {
+          try { player.stop() } catch { /* ignore race */ }
+        } // end if player running
+        this.loopIsInPause = false
+        this.loopPauseTimerSeconds = 0
+        this.loopHasStartedSinceMove = false
+        return
+      } // end if just stopped moving
+
+      if (!enemy.isMoving) {
+        return
+      } // end if enemy is stationary
+
+      if (justStartedMoving) {
+        // Reset pause state so the loop starts immediately.
+        this.loopIsInPause = false
+        this.loopPauseTimerSeconds = 0
+        this.loopHasStartedSinceMove = false
+      } // end if just started moving
+    } // end if stop-while-stationary
+
+    if (loopSoundPauseIntervalMs > 0) {
+      if (this.loopIsInPause) {
+        this.loopPauseTimerSeconds -= dt
+        if (this.loopPauseTimerSeconds <= 0) {
+          this.loopIsInPause = false
+          this.safeStart(player)
+          if (player.state === 'started') {
+            this.loopHasStartedSinceMove = true
+          } // end if resumed from pause
+        } // end if pause elapsed
+      } else {
+        if (!this.loopHasStartedSinceMove) {
+          // Initial start after movement/load.
+          this.safeStart(player)
+          if (player.state === 'started') {
+            this.loopHasStartedSinceMove = true
+          } // end if first play successfully started
+        } else if (player.loaded && player.state === 'stopped') {
+          // A play has completed, so enter pause phase before the next play.
+          this.loopIsInPause = true
+          this.loopPauseTimerSeconds = loopSoundPauseIntervalMs / 1000
+        } else {
+          // Buffer may not be loaded yet — keep trying to start.
+          this.safeStart(player)
+        } // end if player stopped
+      } // end if not in pause
+    } else {
+      // Continuous loop (existing behaviour).
+      this.safeStart(player)
+    } // end if pause interval
+  } // end method updateMovementLoop
+
   private setPlaybackRateSafely(player: Tone.Player, playbackRate: number): void {
     try {
       player.playbackRate = playbackRate
@@ -386,8 +465,9 @@ function getEnemyAutomaticFireDefinition(definition: unknown): EnemyAutomaticFir
   return definition.automaticFire as EnemyAutomaticFireDefinition | undefined
 } // end function getEnemyAutomaticFireDefinition
 
-function createTankProfile(enemyId: string, enemyType: string): EnemyAudioProfile {
+function createTankProfile(enemyId: string, enemyType: string, overrides?: EnemySoundOverrides): EnemyAudioProfile {
   const definition = isEnemyId(enemyType) ? getEnemyDefinition(enemyType) : null
+  const loopSoundPath = overrides?.positionalLoopSound ?? definition?.sounds.positionalLoopSound ?? 'assets/sounds/tankMoving.ogg'
   const filter = new Tone.Filter({ type: 'lowpass', frequency: 2600, Q: 0.7 })
   const gain = new Tone.Gain(0)
   const panner = new Tone.Panner3D({
@@ -405,9 +485,10 @@ function createTankProfile(enemyId: string, enemyType: string): EnemyAudioProfil
     id: enemyId,
     type: enemyType,
     category: AUDIO_CONFIG.tank.category,
+    loopSoundPath,
     sounds: {
-      idleLoop: new Tone.Player(definition?.sounds.positionalLoopSound ?? 'assets/sounds/tankMoving.ogg'),
-      movementLoop: new Tone.Player(definition?.sounds.positionalLoopSound ?? 'assets/sounds/tankMoving.ogg'),
+      idleLoop: new Tone.Player(loopSoundPath),
+      movementLoop: new Tone.Player(loopSoundPath),
       passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
       threatCue: new Tone.Player(definition?.sounds.startupSound ?? 'assets/sounds/weapons/reloadCannon.ogg'),
       attackSound: new Tone.Player(definition?.sounds.attackSound ?? 'assets/sounds/explosions/explosion_1A.ogg'),
@@ -424,13 +505,16 @@ function createTankProfile(enemyId: string, enemyType: string): EnemyAudioProfil
       baseVolume: AUDIO_CONFIG.tank.baseVolume,
       passivePingRateMs: AUDIO_CONFIG.tank.passivePingRateMs,
       movementVariance: AUDIO_CONFIG.tank.movementVariance,
-      threatCueDelayMs: AUDIO_CONFIG.tank.threatCueDelayMs
+      threatCueDelayMs: AUDIO_CONFIG.tank.threatCueDelayMs,
+      loopSoundPauseIntervalMs: overrides?.loopSoundPauseIntervalMs ?? definition?.sounds.loopSoundPauseIntervalMs ?? 0,
+      stopLoopSoundWhileStationary: overrides?.stopLoopSoundWhileStationary ?? definition?.sounds.stopLoopSoundWhileStationary ?? false
     }
   } // end object enemy profile
 } // end function createTankProfile
 
-function createHelicopterProfile(enemyId: string, enemyType: string): EnemyAudioProfile {
+function createHelicopterProfile(enemyId: string, enemyType: string, overrides?: EnemySoundOverrides): EnemyAudioProfile {
   const definition = isEnemyId(enemyType) ? getEnemyDefinition(enemyType) : null
+  const loopSoundPath = overrides?.positionalLoopSound ?? definition?.sounds.positionalLoopSound ?? 'assets/sounds/helicopterLoop.ogg'
   const filter = new Tone.Filter({ type: 'lowpass', frequency: 3400, Q: 0.5 })
   const gain = new Tone.Gain(0)
   const panner = new Tone.Panner3D({
@@ -448,9 +532,10 @@ function createHelicopterProfile(enemyId: string, enemyType: string): EnemyAudio
     id: enemyId,
     type: enemyType,
     category: AUDIO_CONFIG.helicopter.category,
+    loopSoundPath,
     sounds: {
-      idleLoop: new Tone.Player(definition?.sounds.positionalLoopSound ?? 'assets/sounds/helicopterLoop.ogg'),
-      movementLoop: new Tone.Player(definition?.sounds.positionalLoopSound ?? 'assets/sounds/helicopterLoop.ogg'),
+      idleLoop: new Tone.Player(loopSoundPath),
+      movementLoop: new Tone.Player(loopSoundPath),
       passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
       threatCue: new Tone.Player(definition?.sounds.startupSound ?? 'assets/sounds/weapons/reload.ogg'),
       attackSound: new Tone.Player(definition?.sounds.attackSound ?? 'assets/sounds/weapons/pistol_fire.ogg'),
@@ -467,16 +552,18 @@ function createHelicopterProfile(enemyId: string, enemyType: string): EnemyAudio
       baseVolume: AUDIO_CONFIG.helicopter.baseVolume,
       passivePingRateMs: AUDIO_CONFIG.helicopter.passivePingRateMs,
       movementVariance: AUDIO_CONFIG.helicopter.movementVariance,
-      threatCueDelayMs: AUDIO_CONFIG.helicopter.threatCueDelayMs
+      threatCueDelayMs: AUDIO_CONFIG.helicopter.threatCueDelayMs,
+      loopSoundPauseIntervalMs: overrides?.loopSoundPauseIntervalMs ?? definition?.sounds.loopSoundPauseIntervalMs ?? 0,
+      stopLoopSoundWhileStationary: overrides?.stopLoopSoundWhileStationary ?? definition?.sounds.stopLoopSoundWhileStationary ?? false
     }
   }
 } // end function createHelicopterProfile
 
-function createEnemyProfile(enemyId: string, enemyType: string): EnemyAudioProfile {
+function createEnemyProfile(enemyId: string, enemyType: string, overrides?: EnemySoundOverrides): EnemyAudioProfile {
   if (enemyType === AUDIO_CONFIG.helicopter.type) {
-    return createHelicopterProfile(enemyId, enemyType)
+    return createHelicopterProfile(enemyId, enemyType, overrides)
   } // end if helicopter
-  return createTankProfile(enemyId, enemyType)
+  return createTankProfile(enemyId, enemyType, overrides)
 } // end function createEnemyProfile
 
 function createFallbackEnemyProfile(enemyId: string, enemyType: string): EnemyAudioProfile {
@@ -498,6 +585,7 @@ function createFallbackEnemyProfile(enemyId: string, enemyType: string): EnemyAu
     id: enemyId,
     type: enemyType,
     category: isHelicopter ? AUDIO_CONFIG.helicopter.category : AUDIO_CONFIG.tank.category,
+    loopSoundPath: '',
     sounds: createSilentEnemySoundSet(),
     effects: {
       filter,
@@ -508,7 +596,9 @@ function createFallbackEnemyProfile(enemyId: string, enemyType: string): EnemyAu
       baseVolume: isHelicopter ? AUDIO_CONFIG.helicopter.baseVolume : AUDIO_CONFIG.tank.baseVolume,
       passivePingRateMs: isHelicopter ? AUDIO_CONFIG.helicopter.passivePingRateMs : AUDIO_CONFIG.tank.passivePingRateMs,
       movementVariance: isHelicopter ? AUDIO_CONFIG.helicopter.movementVariance : AUDIO_CONFIG.tank.movementVariance,
-      threatCueDelayMs: isHelicopter ? AUDIO_CONFIG.helicopter.threatCueDelayMs : AUDIO_CONFIG.tank.threatCueDelayMs
+      threatCueDelayMs: isHelicopter ? AUDIO_CONFIG.helicopter.threatCueDelayMs : AUDIO_CONFIG.tank.threatCueDelayMs,
+      loopSoundPauseIntervalMs: 0,
+      stopLoopSoundWhileStationary: false
     }
   }
 } // end function createFallbackEnemyProfile
@@ -1886,7 +1976,11 @@ export function createAudioController(): AudioController {
     const liveEnemyIds = new Set<string>()
     for (const enemy of enemies) {
       liveEnemyIds.add(enemy.id)
-      const runtime = getOrCreateEnemyRuntime(enemy.id, enemy.type)
+      const runtime = getOrCreateEnemyRuntime(enemy.id, enemy.type, {
+        positionalLoopSound: enemy.positionalLoopSound,
+        loopSoundPauseIntervalMs: enemy.loopSoundPauseIntervalMs,
+        stopLoopSoundWhileStationary: enemy.stopLoopSoundWhileStationary
+      })
       const hasSightLine = losEnemyCandidates.some((entry) => entry.enemyId === enemy.id)
       const shouldEmitLosTick = primaryLosEnemyId === enemy.id
       // Always call updateAudio so positional loops keep playing even when the
@@ -2708,20 +2802,27 @@ export function createAudioController(): AudioController {
     return categoryNavigation
   } // end function getCategoryEnabled
 
-  const getOrCreateEnemyRuntime = (enemyId: string, enemyType: string): EnemyAudioRuntime => {
+  const getOrCreateEnemyRuntime = (enemyId: string, enemyType: string, overrides?: EnemySoundOverrides): EnemyAudioRuntime => {
     const existing = enemyRuntimes.get(enemyId)
     if (existing) {
-      if (existing.profile.type !== enemyType) {
+      const typeChanged = existing.profile.type !== enemyType
+      const pauseChanged = overrides?.loopSoundPauseIntervalMs !== undefined &&
+        existing.profile.params.loopSoundPauseIntervalMs !== overrides.loopSoundPauseIntervalMs
+      const stationaryChanged = overrides?.stopLoopSoundWhileStationary !== undefined &&
+        existing.profile.params.stopLoopSoundWhileStationary !== overrides.stopLoopSoundWhileStationary
+      const loopPathChanged = overrides?.positionalLoopSound !== undefined &&
+        existing.profile.loopSoundPath !== overrides.positionalLoopSound
+      if (typeChanged || pauseChanged || stationaryChanged || loopPathChanged) {
         existing.dispose()
         enemyRuntimes.delete(enemyId)
       } else {
         return existing
-      } // end if runtime already matches enemy type
+      } // end if runtime params match
     } // end if runtime already exists
 
     let profile: EnemyAudioProfile
     try {
-      profile = createEnemyProfile(enemyId, enemyType)
+      profile = createEnemyProfile(enemyId, enemyType, overrides)
     } catch (error) {
       // Keep frame-audio updates alive when a late-loaded enemy clip fails to fetch.
       console.warn('Enemy audio asset load failed, using silent fallback runtime.', { enemyId, enemyType, error })

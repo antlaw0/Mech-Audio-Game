@@ -33,7 +33,9 @@ export class StrikerEnemyDefinition extends EnemyDefinitionBase {
         startupSound: 'assets/sounds/weapons/reload.ogg',
         hurtSound: 'assets/sounds/explosions/explosion_1B.ogg',
         deathSound: 'assets/sounds/explosions/explosion_2a.ogg',
-        positionalLoopSound: 'assets/sounds/footstep2.ogg'
+        positionalLoopSound: 'assets/sounds/footstep2.ogg',
+        loopSoundPauseIntervalMs: 0,
+        stopLoopSoundWhileStationary: true
       }
     })
   } // end constructor StrikerEnemyDefinition

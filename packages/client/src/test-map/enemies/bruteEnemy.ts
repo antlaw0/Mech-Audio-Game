@@ -32,7 +32,8 @@ export class BruteEnemyDefinition extends EnemyDefinitionBase {
         attackSound: 'assets/sounds/weapons/swing_heavy1.ogg',
         hurtSound: 'assets/sounds/explosions/explosion_1B.ogg',
         deathSound: 'assets/sounds/explosions/explosion_2a.ogg',
-        positionalLoopSound: 'assets/sounds/tankMoving.ogg'
+        positionalLoopSound: 'assets/sounds/tankMoving.ogg',
+        loopSoundPauseIntervalMs: 0
       }
     })
   } // end constructor BruteEnemyDefinition

@@ -85,6 +85,9 @@ export interface EnemyAudioState {
   isMoving: boolean
   isAlive: boolean
   height: number
+  positionalLoopSound?: string
+  loopSoundPauseIntervalMs?: number
+  stopLoopSoundWhileStationary?: boolean
 } // end interface EnemyAudioState
 
 export interface ObstructionAwareness {
@@ -193,6 +196,9 @@ export interface TankRender {
   maxHealth: number
   alive: boolean
   explosionIntensity: number
+  positionalLoopSound?: string
+  loopSoundPauseIntervalMs?: number
+  stopLoopSoundWhileStationary?: boolean
 } // end interface TankRender
 
 export interface IncomingProjectileAudioState {
