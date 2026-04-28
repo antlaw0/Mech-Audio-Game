@@ -214,7 +214,7 @@ export type SpriteType = 'tree' | 'rock' | 'pillar'
 
 export type AudioCategory = 'proximity' | 'objects' | 'enemies' | 'navigation'
 
-export type AudioVolumeChannel = AudioCategory | 'master' | 'ambience' | 'servo' | 'footsteps' | 'flightLoop'
+export type AudioVolumeChannel = AudioCategory | 'master' | 'ambience' | 'music' | 'servo' | 'footsteps' | 'flightLoop'
 
 export interface SpriteObject {
   x: number

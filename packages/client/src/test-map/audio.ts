@@ -613,6 +613,8 @@ export function createAudioController(): AudioController {
   let footstepTimeBeforePause = 0
   let ambienceWasPlayingBeforePause = false
   let ambienceTimeBeforePause = 0
+  let musicWasPlayingBeforePause = false
+  let musicTimeBeforePause = 0
   let cityAmbienceWasPlayingBeforePause = false
   let cityAmbienceTimeBeforePause = 0
   let cityAmbienceMix = 0
@@ -651,6 +653,7 @@ export function createAudioController(): AudioController {
   let destinationToneOscStarted = false
   let masterVolume = 1
   let ambienceVolume = 1
+  let musicVolume = 1
   let servoVolume = 1
   let footstepsVolume = 1
   let flightLoopVolume = 0.5
@@ -727,6 +730,7 @@ export function createAudioController(): AudioController {
     const ambienceBaseVolume = AUDIO_CONFIG.player.ambienceVolume * masterVolume * ambienceVolume
     ambienceAudio.volume = ambienceBaseVolume * (1 - cityAmbienceMix)
     cityAmbienceAudio.volume = ambienceBaseVolume * cityAmbienceMix
+    musicAudio.volume = AUDIO_CONFIG.player.musicVolume * masterVolume * musicVolume
     servoAudio.volume = AUDIO_CONFIG.player.servoVolume * masterVolume * servoVolume
     footstepAudio.volume = 0.25 * masterVolume * footstepsVolume
     allTerrainStepAudios.forEach((audio) => {
@@ -771,6 +775,11 @@ export function createAudioController(): AudioController {
       applyHtmlAudioVolumes()
       return ambienceVolume
     } // end if ambience volume
+    if (name === 'music') {
+      musicVolume = nextValue
+      applyHtmlAudioVolumes()
+      return musicVolume
+    } // end if music volume
     if (name === 'servo') {
       servoVolume = nextValue
       applyHtmlAudioVolumes()
@@ -805,6 +814,7 @@ export function createAudioController(): AudioController {
   const getVolumeChannel = (name: AudioVolumeChannel): number => {
     if (name === 'master') return masterVolume
     if (name === 'ambience') return ambienceVolume
+    if (name === 'music') return musicVolume
     if (name === 'servo') return servoVolume
     if (name === 'footsteps') return footstepsVolume
     if (name === 'flightLoop') return flightLoopVolume
@@ -888,6 +898,11 @@ export function createAudioController(): AudioController {
   cityAmbienceAudio.preload = 'auto'
   cityAmbienceAudio.loop = true
   cityAmbienceAudio.volume = 0
+
+  const musicAudio = new Audio('assets/music/slowDrone.ogg')
+  musicAudio.preload = 'auto'
+  musicAudio.loop = true
+  musicAudio.volume = AUDIO_CONFIG.player.musicVolume
 
   const servoAudio = new Audio('assets/sounds/servomotor.ogg')
   servoAudio.preload = 'auto'
@@ -1360,6 +1375,7 @@ export function createAudioController(): AudioController {
         footstepAudio.muted = true
         servoAudio.muted = true
         ambienceAudio.muted = true
+        musicAudio.muted = true
         cityAmbienceAudio.muted = true
         allTerrainStepAudios.forEach((audio) => {
           audio.muted = true
@@ -1373,6 +1389,9 @@ export function createAudioController(): AudioController {
         await ambienceAudio.play().catch(() => undefined)
         ambienceAudio.pause()
         ambienceAudio.currentTime = 0
+        await musicAudio.play().catch(() => undefined)
+        musicAudio.pause()
+        musicAudio.currentTime = 0
         await cityAmbienceAudio.play().catch(() => undefined)
         cityAmbienceAudio.pause()
         cityAmbienceAudio.currentTime = 0
@@ -1412,12 +1431,14 @@ export function createAudioController(): AudioController {
         footstepAudio.muted = false
         servoAudio.muted = false
         ambienceAudio.muted = false
+        musicAudio.muted = false
         cityAmbienceAudio.muted = false
         allTerrainStepAudios.forEach((audio) => {
           audio.muted = false
         })
         applyHtmlAudioVolumes()
         void ambienceAudio.play().catch(() => undefined)
+        void musicAudio.play().catch(() => undefined)
         void cityAmbienceAudio.play().catch(() => undefined)
         audioStarted = true
         prewarmEnemyAudioAssets()
@@ -1595,6 +1616,12 @@ export function createAudioController(): AudioController {
       ambienceAudio.pause()
     } // end if ambience was playing
 
+    musicWasPlayingBeforePause = !musicAudio.paused
+    musicTimeBeforePause = musicAudio.currentTime
+    if (musicWasPlayingBeforePause) {
+      musicAudio.pause()
+    } // end if music was playing
+
     cityAmbienceWasPlayingBeforePause = !cityAmbienceAudio.paused
     cityAmbienceTimeBeforePause = cityAmbienceAudio.currentTime
     if (cityAmbienceWasPlayingBeforePause) {
@@ -1644,6 +1671,11 @@ export function createAudioController(): AudioController {
       void ambienceAudio.play().catch(() => undefined)
     } // end if ambience should resume
 
+    if (musicWasPlayingBeforePause) {
+      musicAudio.currentTime = musicTimeBeforePause
+      void musicAudio.play().catch(() => undefined)
+    } // end if music should resume
+
     if (cityAmbienceWasPlayingBeforePause) {
       cityAmbienceAudio.currentTime = cityAmbienceTimeBeforePause
       void cityAmbienceAudio.play().catch(() => undefined)
@@ -1656,6 +1688,7 @@ export function createAudioController(): AudioController {
     servoWasPlayingBeforePause = false
     footstepWasPlayingBeforePause = false
     ambienceWasPlayingBeforePause = false
+    musicWasPlayingBeforePause = false
     cityAmbienceWasPlayingBeforePause = false
     flightLoopWasPlayingBeforePause = false
     contextWasRunningBeforePause = false

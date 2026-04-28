@@ -1148,7 +1148,7 @@ function startTestMap(): void {
       `player = mapX:${player.x.toFixed(2)} mapY:${player.y.toFixed(2)} centeredX:${centered.x.toFixed(2)} centeredY:${centered.y.toFixed(2)} z:${(player.z ?? 0).toFixed(2)} angle:${((player.angle * 180) / Math.PI).toFixed(1)} pitch:${((player.pitch * 180) / Math.PI).toFixed(1)}`,
       `player.flight = state:${player.flightState ?? 'grounded'} flying:${player.isFlying ? 'true' : 'false'} sharedHeight:${getSharedFlightHeight().toFixed(2)}`,
       `weapon = type:${playerWeapon.weaponType} accuracy:${playerWeapon.accuracy.toFixed(2)} pellets:${playerWeapon.projectileCount} spread:${playerWeapon.spreadDegrees.toFixed(1)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fullAuto:${playerWeapon.isFullAuto} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)}`,
-      `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)}`,
+      `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} music:${audio.getVolumeChannel('music').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)}`,
       `audio categories = proximity:${audio.getCategoryEnabled('proximity')}@${audio.getVolumeChannel('proximity').toFixed(2)} objects:${audio.getCategoryEnabled('objects')}@${audio.getVolumeChannel('objects').toFixed(2)} enemies:${audio.getCategoryEnabled('enemies')}@${audio.getVolumeChannel('enemies').toFixed(2)} navigation:${audio.getCategoryEnabled('navigation')}@${audio.getVolumeChannel('navigation').toFixed(2)}`
     ]
   } // end function getStateLines
@@ -1423,6 +1423,12 @@ function startTestMap(): void {
       helpPath: ['Audio', 'Mix'],
       get: () => audio.getVolumeChannel('ambience'),
       set: (rawValue) => audio.setVolumeChannel('ambience', parseFiniteNumber(rawValue, 'audio.ambience.volume'))
+    },
+    'audio.music.volume': {
+      description: 'Background music volume scalar from 0 to 2.',
+      helpPath: ['Audio', 'Mix'],
+      get: () => audio.getVolumeChannel('music'),
+      set: (rawValue) => audio.setVolumeChannel('music', parseFiniteNumber(rawValue, 'audio.music.volume'))
     },
     'audio.footsteps.volume': {
       description: 'Footstep volume scalar from 0 to 2.',
@@ -2076,6 +2082,7 @@ function startTestMap(): void {
     help: () => [
       'window.mechDev.getState()',
       'window.mechDev.execute("set audio.enemies.volume 0.4")',
+      'window.mechDev.execute("set audio.music.volume 0.2")',
       'window.mechDev.setSharedFlightHeight(4)',
       'window.mechDev.setPlayerAltitude(1.5)',
       "window.mechDev.spawnEnemy('helicopter')",

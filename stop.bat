@@ -4,7 +4,12 @@ title Mech Audio Game - Stop Playtest
 cd /d "%~dp0"
 
 set "LOCK_FILE=.mech-audio\.dev-playtest.lock.json"
+set "LEGACY_LOCK_FILE=%TEMP%\mech_audio_dev.lock"
 set "LOCK_PID="
+
+if exist "%LEGACY_LOCK_FILE%" (
+    del /f /q "%LEGACY_LOCK_FILE%" >nul 2>&1
+)
 
 if not exist "%LOCK_FILE%" (
     echo [INFO] No active playtest lock found. Nothing to stop.

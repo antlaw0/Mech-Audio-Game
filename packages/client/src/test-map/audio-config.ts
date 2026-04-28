@@ -9,6 +9,7 @@ export const AUDIO_CONFIG = {
     cityStepVariantCount: 10,
     townStepVariantCount: 10,
     ambienceVolume: 0.28,
+    musicVolume: 0.22,
     terrainType: 'field',
     ambienceTrack: 'day',
     cityAmbienceTrack: 'Street-Ambience.ogg',

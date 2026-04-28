@@ -2,23 +2,7 @@
 setlocal EnableExtensions
 title Mech Audio Game - Dev Server
 
-set LOCKFILE=%TEMP%\mech_audio_dev.lock
 set EXIT_CODE=0
-
-REM =========================
-REM Prevent duplicate runs
-REM =========================
-if exist "%LOCKFILE%" (
-    echo.
-    echo [WARNING] Dev server already running!
-    echo If it's not, delete this file:
-    echo %LOCKFILE%
-    echo.
-    pause
-    exit /b 1
-)
-
-echo running > "%LOCKFILE%"
 
 echo [MECH AUDIO GAME] Starting local playtest services...
 echo.
@@ -56,10 +40,6 @@ REM =========================
 :cleanup
 echo.
 echo Cleaning up...
-del "%LOCKFILE%" >nul 2>&1
-if errorlevel 1 (
-    echo [WARNING] Could not delete lock file: %LOCKFILE%
-)
 
 echo.
 if not "%EXIT_CODE%"=="0" (
