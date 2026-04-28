@@ -302,6 +302,7 @@ function startTestMap(): void {
     input.spawnStrikerPending = false
     input.spawnBrutePending = false
     input.spawnHelicopterPending = false
+    input.spawnBruiserPending = false
     input.spawnTestDummyPending = false
     input.refillEpPending = false
     input.refillHpPending = false
@@ -872,6 +873,9 @@ function startTestMap(): void {
     } else if (event.code === 'Numpad4') {
       event.preventDefault()
       openEnemyEditorModal('helicopter')
+    } else if (event.code === 'Numpad5') {
+      event.preventDefault()
+      openEnemyEditorModal('bruiser')
     } else if (event.code === 'NumpadDecimal') {
       event.preventDefault()
       openEnemyEditorModal('test-dummy')
@@ -1130,7 +1134,7 @@ function startTestMap(): void {
   } // end function parseTeleportArguments
 
   const audioCategories: AudioCategory[] = ['proximity', 'objects', 'enemies', 'navigation']
-  const enemyIds: EnemyId[] = ['tank', 'striker', 'brute', 'helicopter']
+  const enemyIds: EnemyId[] = ['tank', 'striker', 'brute', 'helicopter', 'bruiser', 'test-dummy']
 
   const getStateLines = (): string[] => {
     const centered = mapToCenteredCoordinates(player.x, player.y)
@@ -2226,6 +2230,11 @@ function startTestMap(): void {
       input.spawnHelicopterPending = false
       spawnRandomEnemy(combatWorld, collisionWorld, player, 'helicopter')
     } // end if spawn helicopter pending
+
+    if (input.spawnBruiserPending) {
+      input.spawnBruiserPending = false
+      spawnRandomEnemy(combatWorld, collisionWorld, player, 'bruiser')
+    } // end if spawn bruiser pending
 
     if (input.spawnTestDummyPending) {
       input.spawnTestDummyPending = false

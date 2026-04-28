@@ -175,6 +175,10 @@ export function bindInput(
         input.spawnHelicopterPending = true
       } // end if Numpad4
 
+      if (event.code === 'Numpad5') {
+        input.spawnBruiserPending = true
+      } // end if Numpad5
+
       if (event.code === 'NumpadDecimal') {
         input.spawnTestDummyPending = true
       } // end if NumpadDecimal
@@ -339,6 +343,10 @@ export function bindInput(
     if (event.code === 'Numpad4') {
       input.spawnHelicopterPending = false
     } // end if Numpad4
+
+    if (event.code === 'Numpad5') {
+      input.spawnBruiserPending = false
+    } // end if Numpad5
 
     if (event.code === 'NumpadDecimal') {
       input.spawnTestDummyPending = false

@@ -1,4 +1,4 @@
-export type EnemyId = 'tank' | 'striker' | 'brute' | 'helicopter' | 'test-dummy'
+export type EnemyId = 'tank' | 'striker' | 'brute' | 'helicopter' | 'bruiser' | 'test-dummy'
 
 export type EnemyMovementPattern = 'wander' | 'aggressive-wander' | 'hold-and-pivot'
 

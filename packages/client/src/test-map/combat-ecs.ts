@@ -991,11 +991,35 @@ export function stepCombatEcsWorld(
     } // end if LOD simulation gating
 
     // --- Tank movement ---
-    const targetMovementAngle = meleeDefinition
-      ? Math.atan2(player.y - tankY, player.x - tankX)
+    const directionToPlayer = Math.atan2(player.y - tankY, player.x - tankX)
+    let targetMovementAngle = meleeDefinition
+      ? directionToPlayer
       : movementAngle
+    const meleeCooldownRemaining = meleeDefinition
+      ? Math.max(0, cannonCooldown - simulationStepSeconds)
+      : 0
+    const meleeCanReposition = meleeDefinition !== undefined && meleeCooldownRemaining > 0
+    let meleeRepositionAngle = movementAngle
+    let meleeRepositionTimer = movementTimer
+    const meleeRepositionDistance = meleeDefinition
+      ? meleeDefinition.range * 1.35
+      : 0
+    const shouldMeleeReposition = meleeCanReposition && distanceToPlayer <= meleeRepositionDistance
+
+    if (shouldMeleeReposition) {
+      meleeRepositionTimer = Math.max(0, movementTimer - simulationStepSeconds)
+      if (meleeRepositionTimer <= 0) {
+        const strafeSide = Math.random() < 0.5 ? -1 : 1
+        const jitter = (Math.random() - 0.5) * 0.35
+        meleeRepositionAngle = directionToPlayer + (strafeSide * Math.PI / 2) + jitter
+        meleeRepositionTimer = 0.22 + (Math.random() * 0.34)
+      } // end if choosing a new reposition vector
+      targetMovementAngle = meleeRepositionAngle
+    } // end if melee enemy should reposition this frame
+
     const isStationary = enemyDefinition.behavior.stationary
-    const moveStep = isStationary ? 0 : enemyDefinition.movementSpeed * simulationStepSeconds
+    const movementScale = shouldMeleeReposition ? 0.62 : 1
+    const moveStep = isStationary ? 0 : enemyDefinition.movementSpeed * simulationStepSeconds * movementScale
     const nextX = tankX + Math.cos(targetMovementAngle) * moveStep
     const nextY = tankY + Math.sin(targetMovementAngle) * moveStep
 
@@ -1015,10 +1039,13 @@ export function stepCombatEcsWorld(
       Facing.angle[tank] = meleeDefinition ? Math.atan2(player.y - tankY, player.x - tankX) : movementAngle
       Behavior.isMoving[tank] = 0
       Behavior.movementTimer[tank] = 0
+      if (meleeDefinition) {
+        Behavior.movementAngle[tank] = directionToPlayer
+      } // end if stationary melee should still keep facing update
     } else if (!canMove) {
       Behavior.isMoving[tank] = 0
-      Behavior.movementAngle[tank] = meleeDefinition ? targetMovementAngle : (Math.random() * Math.PI * 2)
-      Behavior.movementTimer[tank] = 0
+      Behavior.movementAngle[tank] = meleeDefinition ? directionToPlayer : (Math.random() * Math.PI * 2)
+      Behavior.movementTimer[tank] = meleeDefinition ? movementTimer : 0
     } else {
       Position.x[tank] = nextX
       Position.y[tank] = nextY
@@ -1032,7 +1059,8 @@ export function stepCombatEcsWorld(
       } // end if time to change direction
 
       if (meleeDefinition) {
-        Behavior.movementAngle[tank] = targetMovementAngle
+        Behavior.movementAngle[tank] = shouldMeleeReposition ? meleeRepositionAngle : directionToPlayer
+        Behavior.movementTimer[tank] = shouldMeleeReposition ? meleeRepositionTimer : 0
       } // end if melee enemy should continue closing distance
 
       Behavior.isMoving[tank] = 1
@@ -1052,7 +1080,7 @@ export function stepCombatEcsWorld(
     const threatDelaySeconds = enemyDefinition.threatDelaySeconds
 
     if (meleeDefinition) {
-      const newCooldown = Math.max(0, cannonCooldown - simulationStepSeconds)
+      const newCooldown = meleeCooldownRemaining
       Behavior.cannonFireCooldown[tank] = newCooldown
       Behavior.attackWindupSeconds[tank] = 0
       Behavior.burstShotsRemaining[tank] = 0
@@ -1074,6 +1102,9 @@ export function stepCombatEcsWorld(
         )
       ) {
         Behavior.cannonFireCooldown[tank] = Math.max(0.05, meleeDefinition.cooldownSeconds)
+        const postAttackStrafeSide = Math.random() < 0.5 ? -1 : 1
+        Behavior.movementAngle[tank] = Facing.angle[tank] + (postAttackStrafeSide * Math.PI / 2)
+        Behavior.movementTimer[tank] = 0.26 + (Math.random() * 0.34)
         audio.playEnemyAttack(`tank-${tank}`, enemyDefinition.id)
         player.hp = Math.max(0, player.hp - Math.max(1, Math.round(meleeDefinition.damage)))
         audio.playPlayerMechHit()

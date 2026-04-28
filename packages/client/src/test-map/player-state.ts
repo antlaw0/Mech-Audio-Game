@@ -45,6 +45,7 @@ export function createInputState(): InputState {
     spawnStrikerPending: false,
     spawnBrutePending: false,
     spawnHelicopterPending: false,
+    spawnBruiserPending: false,
     spawnTestDummyPending: false,
     refillEpPending: false,
     refillHpPending: false,

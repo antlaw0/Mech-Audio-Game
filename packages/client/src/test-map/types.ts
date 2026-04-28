@@ -44,6 +44,7 @@ export interface InputState {
   spawnStrikerPending: boolean
   spawnBrutePending: boolean
   spawnHelicopterPending: boolean
+  spawnBruiserPending: boolean
   spawnTestDummyPending: boolean
   refillEpPending: boolean
   refillHpPending: boolean

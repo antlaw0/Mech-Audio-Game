@@ -351,7 +351,7 @@ class EnemyAudioRuntime {
 } // end class EnemyAudioRuntime
 
 function isEnemyId(enemyType: string): enemyType is EnemyId {
-  return enemyType === 'tank' || enemyType === 'striker' || enemyType === 'brute' || enemyType === 'helicopter' || enemyType === 'test-dummy'
+  return enemyType === 'tank' || enemyType === 'striker' || enemyType === 'brute' || enemyType === 'helicopter' || enemyType === 'bruiser' || enemyType === 'test-dummy'
 } // end function isEnemyId
 
 function createAttackVariantPlayers(automaticFire?: EnemyAutomaticFireDefinition): Map<number, Tone.Player> {

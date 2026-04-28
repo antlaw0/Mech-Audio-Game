@@ -1,3 +1,4 @@
+import { BruiserEnemyDefinition } from './bruiserEnemy.js'
 import { BruteEnemyDefinition } from './bruteEnemy.js'
 import type { EnemyDefinitionBase } from './enemyBase.js'
 import { HelicopterEnemyDefinition } from './helicopterEnemy.js'
@@ -11,6 +12,7 @@ const ENEMY_DEFINITIONS: Record<EnemyId, EnemyDefinitionBase> = {
   striker: new StrikerEnemyDefinition(),
   brute: new BruteEnemyDefinition(),
   helicopter: new HelicopterEnemyDefinition(),
+  bruiser: new BruiserEnemyDefinition(),
   'test-dummy': new TestDummyEnemyDefinition()
 } // end object ENEMY_DEFINITIONS
 
@@ -19,7 +21,8 @@ export const ENEMY_NUMERIC_ID = {
   striker: 2,
   brute: 3,
   helicopter: 4,
-  'test-dummy': 5
+  bruiser: 5,
+  'test-dummy': 6
 } as const
 
 export function getEnemyDefinition(id: EnemyId): EnemyDefinitionBase {
@@ -38,6 +41,10 @@ export function getEnemyDefinitionFromNumericId(numericId: number): EnemyDefinit
   if (numericId === ENEMY_NUMERIC_ID.helicopter) {
     return ENEMY_DEFINITIONS.helicopter
   } // end if helicopter id
+
+  if (numericId === ENEMY_NUMERIC_ID.bruiser) {
+    return ENEMY_DEFINITIONS.bruiser
+  } // end if bruiser id
 
   if (numericId === ENEMY_NUMERIC_ID['test-dummy']) {
     return ENEMY_DEFINITIONS['test-dummy']
