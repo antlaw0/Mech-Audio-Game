@@ -19,7 +19,8 @@ export class TankEnemyDefinition extends EnemyDefinitionBase {
         movementPattern: 'wander',
         retargetIntervalSeconds: 5,
         preferredEngageRange: 20,
-        lineOfSightRequiredToShoot: true
+        lineOfSightRequiredToShoot: true,
+        stationary: false
       },
       sounds: {
         attackSound: 'assets/sounds/weapons/tankCannon.ogg',

@@ -18,7 +18,8 @@ export class HelicopterEnemyDefinition extends EnemyDefinitionBase {
         movementPattern: 'wander',
         retargetIntervalSeconds: 4,
         preferredEngageRange: 24,
-        lineOfSightRequiredToShoot: true
+        lineOfSightRequiredToShoot: true,
+        stationary: false
       },
       sounds: {
         attackSound: 'assets/sounds/weapons/pistol_fire.ogg',

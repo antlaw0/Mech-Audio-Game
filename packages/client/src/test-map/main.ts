@@ -6,6 +6,7 @@ import {
   MAP_WIDTH,
   MUZZLE_FLASH_DURATION,
   MAX_LOOK_PITCH,
+  PLAYER_HEIGHT,
   PLAYER_FLIGHT_SPEED,
   PLAYER_RADIUS,
   PLAYER_SPEED,
@@ -16,9 +17,13 @@ import { AUDIO_NAVIGATION_CONFIG } from './audio-config.js'
 import {
   createCombatEcsWorld,
   getCombatRenderState,
+  performPlayerMeleeAttack,
+  spawnEnemyCloseInFront,
+  spawnEnemyConfigCloseInFront,
   spawnRandomEnemy,
   spawnRandomTankFromConfig,
   spawnEnemyAtPosition,
+  spawnEnemyFromConfigAtPosition,
   spawnPlayerBullet,
   spawnPlayerBulletToward,
   spawnPlayerMissile,
@@ -31,7 +36,7 @@ import type { EnemyDefinitionConfig, EnemyMovementPattern } from './enemies/enem
 import type { EnemyId } from './enemies/enemyTypes.js'
 import { getSharedFlightHeight, setSharedFlightHeight } from './runtime-config.js'
 import type { WeaponStats } from './types.js'
-import { PLAYER_WEAPON_DEFINITIONS, type PlayerWeaponDefinition } from './weapons.js'
+import { PLAYER_MELEE_WEAPON_DEFINITIONS, PLAYER_WEAPON_DEFINITIONS, type PlayerMeleeWeaponDefinition, type PlayerWeaponDefinition } from './weapons.js'
 import { bindInput } from './input.js'
 import { createDeveloperConsole } from './dev-console.js'
 import { createMapData } from './map-data.js'
@@ -148,6 +153,7 @@ function startTestMap(): void {
   const awarenessWeaponRangeElement = document.getElementById('awarenessWeaponRange')
   const awarenessWeaponProjectilesElement = document.getElementById('awarenessWeaponProjectiles')
   const awarenessWeaponSpreadElement = document.getElementById('awarenessWeaponSpread')
+  const awarenessWeaponAccuracyElement = document.getElementById('awarenessWeaponAccuracy')
   const sonarCoordinatesElement = document.getElementById('sonarCoordinates')
   const sonarRadarRangeElement = document.getElementById('sonarRadarRange')
   const sonarDestinationElement = document.getElementById('sonarDestination')
@@ -155,6 +161,7 @@ function startTestMap(): void {
   const epBarLabelElement = document.getElementById('epBarLabel')
   const hpBarFillElement = document.getElementById('hpBarFill')
   const epBarFillElement = document.getElementById('epBarFill')
+  const playerNameElement = document.getElementById('playerName')
   const pauseOverlayElement = document.getElementById('pauseOverlay')
   const resumeButtonElement = document.getElementById('pauseResumeButton')
   const exitButtonElement = document.getElementById('pauseExitButton')
@@ -199,6 +206,7 @@ function startTestMap(): void {
   const editorCollisionRadiusInput = getInput('editorCollisionRadius')
   const editorMovementSpeedInput = getInput('editorMovementSpeed')
   const editorAirborneInput = getInput('editorAirborne')
+  const editorStationaryInput = getInput('editorStationary')
   const editorFlightHeightInput = getInput('editorFlightHeight')
   const editorProjectileSpeedInput = getInput('editorProjectileSpeed')
   const editorShotDamageInput = getInput('editorShotDamage')
@@ -239,13 +247,19 @@ function startTestMap(): void {
   let editorCurrentEnemyId: EnemyId = 'tank'
   let isWeaponEditorOpen = false
   let playerFireCooldownSeconds = 0
+  let playerMeleeCooldownSeconds = 0
 
   const weaponLoadout: PlayerWeaponDefinition[] = PLAYER_WEAPON_DEFINITIONS.map((weapon) => ({
     ...weapon,
     explosionSounds: [...weapon.explosionSounds]
   }))
+  const meleeLoadout: PlayerMeleeWeaponDefinition[] = PLAYER_MELEE_WEAPON_DEFINITIONS.map((weapon) => ({
+    ...weapon,
+    swingSoundPaths: [...weapon.swingSoundPaths]
+  }))
   let activeWeaponIndex = 0
   let playerWeapon = weaponLoadout[activeWeaponIndex]!
+  let equippedMeleeWeapon = meleeLoadout[0] ?? null
   let missileLockProgressMs = 0
   let missileLockTargetId: number | null = null
   let missileLockConfirmed = false
@@ -274,6 +288,7 @@ function startTestMap(): void {
     input.pitchResetPending = false
     input.fireHeld = false
     input.firePending = false
+    input.meleePending = false
     input.flightTogglePending = false
     input.sonarPingPending = false
     input.snapNorthPending = false
@@ -282,12 +297,12 @@ function startTestMap(): void {
     input.snapWestPending = false
     input.snapLeftPending = false
     input.snapRightPending = false
-    input.cycleWeaponPending = false
     input.selectedWeaponSlot = null
     input.spawnTankPending = false
     input.spawnStrikerPending = false
     input.spawnBrutePending = false
     input.spawnHelicopterPending = false
+    input.spawnTestDummyPending = false
     input.refillEpPending = false
     input.refillHpPending = false
     input.speakHpPending = false
@@ -311,6 +326,13 @@ function startTestMap(): void {
     missileLockConfirmed = false
     missileLockToneTimerSeconds = 0
     audio.playLockLostChirp()
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(playerWeapon.name)
+      utterance.rate = 1
+      utterance.pitch = 1
+      window.speechSynthesis.cancel()
+      window.speechSynthesis.speak(utterance)
+    } // end if speech synthesis available
 
   } // end function equipWeaponAtIndex
 
@@ -572,6 +594,7 @@ function startTestMap(): void {
     if (editorMaxHpInput) editorMaxHpInput.value = String(config.maxHp)
     if (editorCollisionRadiusInput) editorCollisionRadiusInput.value = String(config.collisionRadius)
     if (editorAirborneInput) editorAirborneInput.checked = config.airborne
+    if (editorStationaryInput) editorStationaryInput.checked = config.behavior.stationary
     if (editorFlightHeightInput) editorFlightHeightInput.value = String(config.flightHeight)
     if (editorMovementSpeedInput) editorMovementSpeedInput.value = String(config.movementSpeed)
     if (editorProjectileSpeedInput) editorProjectileSpeedInput.value = String(config.projectileSpeed)
@@ -613,7 +636,8 @@ function startTestMap(): void {
         movementPattern: (editorMovementPatternSelect?.value as EnemyMovementPattern) || def.behavior.movementPattern,
         retargetIntervalSeconds: Math.max(0.5, parseNum(editorRetargetIntervalInput, def.behavior.retargetIntervalSeconds)),
         preferredEngageRange: Math.max(1, parseNum(editorEngageRangeInput, def.behavior.preferredEngageRange)),
-        lineOfSightRequiredToShoot: editorLineOfSightInput?.checked ?? def.behavior.lineOfSightRequiredToShoot
+        lineOfSightRequiredToShoot: editorLineOfSightInput?.checked ?? def.behavior.lineOfSightRequiredToShoot,
+        stationary: editorStationaryInput?.checked ?? def.behavior.stationary
       },
       sounds: {
         attackSound: editorAttackSoundInput?.value.trim() || def.sounds.attackSound,
@@ -688,7 +712,11 @@ function startTestMap(): void {
     lastTimeMs = performance.now()
 
     if (pendingSpawnConfig !== null) {
-      spawnRandomTankFromConfig(combatWorld, collisionWorld, player, pendingSpawnConfig)
+      if (pendingSpawnConfig.id === 'test-dummy') {
+        spawnEnemyConfigCloseInFront(combatWorld, collisionWorld, player, pendingSpawnConfig)
+      } else {
+        spawnRandomTankFromConfig(combatWorld, collisionWorld, player, pendingSpawnConfig)
+      } // end if queued spawn should use close or random placement
     } // end if pending custom enemy spawn
   } // end function resumeGame
 
@@ -844,6 +872,9 @@ function startTestMap(): void {
     } else if (event.code === 'Numpad4') {
       event.preventDefault()
       openEnemyEditorModal('helicopter')
+    } else if (event.code === 'NumpadDecimal') {
+      event.preventDefault()
+      openEnemyEditorModal('test-dummy')
     } // end if numpad enemy editor keys
   })
 
@@ -2083,6 +2114,7 @@ function startTestMap(): void {
     } // end if game paused
 
     playerFireCooldownSeconds = Math.max(0, playerFireCooldownSeconds - deltaSeconds)
+    playerMeleeCooldownSeconds = Math.max(0, playerMeleeCooldownSeconds - deltaSeconds)
 
     if (input.selectedWeaponSlot !== null) {
       const selectedIndex = input.selectedWeaponSlot - 1
@@ -2091,12 +2123,6 @@ function startTestMap(): void {
         equipWeaponAtIndex(selectedIndex)
       } // end if selected weapon changed
     } // end if selected weapon slot pending
-
-    if (input.cycleWeaponPending) {
-      input.cycleWeaponPending = false
-      const nextIndex = (activeWeaponIndex + 1) % weaponLoadout.length
-      equipWeaponAtIndex(nextIndex)
-    } // end if weapon cycled
 
     const snapWasRequested = input.snapNorthPending
       || input.snapEastPending
@@ -2200,6 +2226,11 @@ function startTestMap(): void {
       input.spawnHelicopterPending = false
       spawnRandomEnemy(combatWorld, collisionWorld, player, 'helicopter')
     } // end if spawn helicopter pending
+
+    if (input.spawnTestDummyPending) {
+      input.spawnTestDummyPending = false
+      spawnEnemyCloseInFront(combatWorld, collisionWorld, player, 'test-dummy')
+    } // end if spawn test dummy pending
 
     stepCombatEcsWorld(combatWorld, collisionWorld, audio, player, deltaSeconds)
     if (player.hp < hpBeforeCombat) {
@@ -2332,7 +2363,7 @@ function startTestMap(): void {
             player,
             lockUpdate.lockedTank.x,
             lockUpdate.lockedTank.y,
-            lockUpdate.lockedTank.height + 0.5,
+            lockUpdate.lockedTank.height + PLAYER_HEIGHT,
             playerWeapon.accuracy,
             speedFraction,
             playerWeapon.damagePerShot,
@@ -2358,6 +2389,26 @@ function startTestMap(): void {
         } // end if locked target for accuracy cone
       } // end if missile or ballistic firing mode
     } // end if fire input and cooldown allow
+
+    if (input.meleePending) {
+      input.meleePending = false
+      if (equippedMeleeWeapon && playerMeleeCooldownSeconds <= 0) {
+        const soundPath = equippedMeleeWeapon.swingSoundPaths[Math.floor(Math.random() * equippedMeleeWeapon.swingSoundPaths.length)]
+          ?? equippedMeleeWeapon.swingSoundPaths[0]
+        if (soundPath) {
+          audio.fireGunshot(soundPath)
+        } // end if melee swing sound available
+        playerMeleeCooldownSeconds = equippedMeleeWeapon.meleeCooldownSeconds
+        performPlayerMeleeAttack(
+          combatWorld,
+          audio,
+          player,
+          equippedMeleeWeapon.damagePerSwing,
+          equippedMeleeWeapon.reach,
+          equippedMeleeWeapon.coneAngleDegrees
+        )
+      } // end if melee weapon is equipped and ready
+    } // end if melee input was pressed
 
     const playerAudioState = {
       position: { x: player.x, y: player.y, z: player.z ?? 0 },
@@ -2401,13 +2452,18 @@ function startTestMap(): void {
       const rateOfFireLabel = playerWeapon.fireRateCooldownSeconds > 0
         ? `${(1 / playerWeapon.fireRateCooldownSeconds).toFixed(2)}/s`
         : 'Unlimited'
-      if (awarenessWeaponNameElement) awarenessWeaponNameElement.textContent = playerWeapon.name
-      if (awarenessWeaponTypeElement) awarenessWeaponTypeElement.textContent = playerWeapon.weaponType
-      if (awarenessWeaponDamageElement) awarenessWeaponDamageElement.textContent = String(playerWeapon.damagePerShot)
-      if (awarenessWeaponRateElement) awarenessWeaponRateElement.textContent = rateOfFireLabel
-      if (awarenessWeaponRangeElement) awarenessWeaponRangeElement.textContent = playerWeapon.maxRange.toFixed(1)
+      const meleeName = equippedMeleeWeapon?.name ?? 'None'
+      const meleeDamage = equippedMeleeWeapon?.damagePerSwing ?? 0
+      const meleeRate = equippedMeleeWeapon?.meleeCooldownSeconds
+      const meleeRange = equippedMeleeWeapon?.reach ?? 0
+      if (awarenessWeaponNameElement) awarenessWeaponNameElement.textContent = `${playerWeapon.name} | R: ${meleeName}`
+      if (awarenessWeaponTypeElement) awarenessWeaponTypeElement.textContent = `${playerWeapon.weaponType} | melee`
+      if (awarenessWeaponDamageElement) awarenessWeaponDamageElement.textContent = `${playerWeapon.damagePerShot} | ${meleeDamage}`
+      if (awarenessWeaponRateElement) awarenessWeaponRateElement.textContent = `${rateOfFireLabel} | ${meleeRate?.toFixed(2) ?? '0.00'}s`
+      if (awarenessWeaponRangeElement) awarenessWeaponRangeElement.textContent = `${playerWeapon.maxRange.toFixed(1)} | ${meleeRange.toFixed(1)}`
       if (awarenessWeaponProjectilesElement) awarenessWeaponProjectilesElement.textContent = String(playerWeapon.projectileCount)
       if (awarenessWeaponSpreadElement) awarenessWeaponSpreadElement.textContent = `${playerWeapon.spreadDegrees.toFixed(1)}°`
+      if (awarenessWeaponAccuracyElement) awarenessWeaponAccuracyElement.textContent = `${(playerWeapon.accuracy * 100).toFixed(1)}%`
     } // end if weapon info element exists
 
     if (sonarStatusElement) {
@@ -2422,6 +2478,9 @@ function startTestMap(): void {
 
     const hpPercent = Math.max(0, Math.min(100, Math.round((player.hp / Math.max(1, player.maxHp)) * 100)))
     const epPercent = Math.max(0, Math.min(100, Math.round((player.ep / Math.max(1, player.maxEp)) * 100)))
+    if (playerNameElement) {
+      playerNameElement.textContent = player.name
+    } // end if player name element exists
     if (hpBarLabelElement) {
       hpBarLabelElement.textContent = `${Math.round(player.hp)} / ${Math.round(player.maxHp)}`
     } // end if HP label element exists

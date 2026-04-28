@@ -44,6 +44,12 @@ export interface WorldCollisionWorld {
   wallSet: Set<number>
 } // end interface WorldCollisionWorld
 
+export interface SurfaceEdgeContact {
+  distance: number
+  worldX: number
+  worldY: number
+} // end interface SurfaceEdgeContact
+
 function toRoundObstacle(sprite: SpriteObject): RoundCollider {
   if (sprite.type === 'tree') {
     return {
@@ -225,6 +231,50 @@ export function getTopSurfaceHeight(world: WorldCollisionWorld, x: number, y: nu
 
   return topSurfaceHeight
 } // end function getTopSurfaceHeight
+
+export function findNearestDropEdgeContact(
+  world: WorldCollisionWorld,
+  x: number,
+  y: number,
+  surfaceHeight: number,
+  maxDistance: number,
+  rayCount = 24,
+  sampleStep = 0.2,
+  sampleRadius = 0.12
+): SurfaceEdgeContact | null {
+  const safeRayCount = Math.max(8, Math.floor(rayCount))
+  const safeStep = Math.max(0.05, sampleStep)
+  const requiredSurfaceHeight = Math.max(0.1, surfaceHeight - 0.2)
+  let nearest: SurfaceEdgeContact | null = null
+
+  for (let rayIndex = 0; rayIndex < safeRayCount; rayIndex += 1) {
+    const angle = (rayIndex / safeRayCount) * Math.PI * 2
+    const dirX = Math.cos(angle)
+    const dirY = Math.sin(angle)
+
+    for (let distance = safeStep; distance <= maxDistance; distance += safeStep) {
+      const sampleX = x + dirX * distance
+      const sampleY = y + dirY * distance
+      const outsideWorld = sampleX < 0 || sampleY < 0 || sampleX >= MAP_WIDTH || sampleY >= MAP_HEIGHT
+      if (outsideWorld) {
+        if (nearest === null || distance < nearest.distance) {
+          nearest = { distance, worldX: sampleX, worldY: sampleY }
+        } // end if outside-world drop edge is nearest so far
+        break
+      } // end if sample left world bounds
+
+      const sampleSurfaceHeight = getTopSurfaceHeight(world, sampleX, sampleY, sampleRadius)
+      if (sampleSurfaceHeight < requiredSurfaceHeight) {
+        if (nearest === null || distance < nearest.distance) {
+          nearest = { distance, worldX: sampleX, worldY: sampleY }
+        } // end if drop edge is nearest so far
+        break
+      } // end if sampled point dropped below current elevated surface
+    } // end for each distance sample along ray
+  } // end for each sampled ray
+
+  return nearest
+} // end function findNearestDropEdgeContact
 
 export function traceWorldHit3D(world: WorldCollisionWorld, from: Point3D, to: Point3D, radius = 0.02): WorldTraceHit | null {
   const dx = to.x - from.x

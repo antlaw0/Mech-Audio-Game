@@ -3,6 +3,7 @@ import { type WorldCollisionWorld } from './world-collision.js'
 
 
 export interface Player {
+  name: string
   x: number
   y: number
   angle: number
@@ -29,6 +30,7 @@ export interface InputState {
   pitchResetPending: boolean
   fireHeld: boolean
   firePending: boolean
+  meleePending: boolean
   flightTogglePending: boolean
   sonarPingPending: boolean
   snapNorthPending: boolean
@@ -37,12 +39,12 @@ export interface InputState {
   snapWestPending: boolean
   snapLeftPending: boolean
   snapRightPending: boolean
-  cycleWeaponPending: boolean
   selectedWeaponSlot: number | null
   spawnTankPending: boolean
   spawnStrikerPending: boolean
   spawnBrutePending: boolean
   spawnHelicopterPending: boolean
+  spawnTestDummyPending: boolean
   refillEpPending: boolean
   refillHpPending: boolean
   speakHpPending: boolean
@@ -141,6 +143,13 @@ export interface WeaponStats {
   /** Explosion sound candidates. One is picked per explosion. */
   explosionSounds: string[]
 } // end interface WeaponStats
+
+export interface MeleeWeaponStats {
+  damagePerSwing: number
+  meleeCooldownSeconds: number
+  reach: number
+  coneAngleDegrees: number
+} // end interface MeleeWeaponStats
 
 export interface TrailPoint {
   x: number

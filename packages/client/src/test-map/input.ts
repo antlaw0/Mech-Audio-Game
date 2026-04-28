@@ -107,6 +107,10 @@ export function bindInput(
         input.firePending = true
       } // end if Space
 
+      if (event.code === 'KeyR') {
+        input.meleePending = true
+      } // end if KeyR
+
       if (event.code === 'KeyF') {
         input.flightTogglePending = true
       } // end if KeyF
@@ -131,10 +135,6 @@ export function bindInput(
         input.snapWestPending = true
       } // end if KeyJ
 
-      if (event.code === 'KeyR') {
-        input.cycleWeaponPending = true
-      } // end if KeyR
-
       if (event.code === 'Digit1') {
         input.selectedWeaponSlot = 1
       } // end if Digit1
@@ -155,6 +155,10 @@ export function bindInput(
         input.selectedWeaponSlot = 5
       } // end if Digit5
 
+      if (event.code === 'Digit6') {
+        input.selectedWeaponSlot = 6
+      } // end if Digit6
+
       if (event.code === 'Numpad1') {
         input.spawnTankPending = true
       } // end if Numpad1
@@ -170,6 +174,10 @@ export function bindInput(
       if (event.code === 'Numpad4') {
         input.spawnHelicopterPending = true
       } // end if Numpad4
+
+      if (event.code === 'NumpadDecimal') {
+        input.spawnTestDummyPending = true
+      } // end if NumpadDecimal
 
       if (event.code === 'NumpadDivide') {
         input.refillEpPending = true
@@ -276,6 +284,10 @@ export function bindInput(
       input.fireHeld = false
     } // end if Space
 
+    if (event.code === 'KeyR') {
+      input.meleePending = false
+    } // end if KeyR
+
     if (event.code === 'KeyF') {
       input.flightTogglePending = false
     } // end if KeyF
@@ -308,11 +320,7 @@ export function bindInput(
       input.snapRightPending = false
     } // end if ArrowRight directional snap
 
-    if (event.code === 'KeyR') {
-      input.cycleWeaponPending = false
-    } // end if KeyR
-
-    if (event.code === 'Digit1' || event.code === 'Digit2' || event.code === 'Digit3' || event.code === 'Digit4' || event.code === 'Digit5') {
+    if (event.code === 'Digit1' || event.code === 'Digit2' || event.code === 'Digit3' || event.code === 'Digit4' || event.code === 'Digit5' || event.code === 'Digit6') {
       input.selectedWeaponSlot = null
     } // end if Digit key released
 
@@ -331,6 +339,10 @@ export function bindInput(
     if (event.code === 'Numpad4') {
       input.spawnHelicopterPending = false
     } // end if Numpad4
+
+    if (event.code === 'NumpadDecimal') {
+      input.spawnTestDummyPending = false
+    } // end if NumpadDecimal
 
     if (event.code === 'NumpadDivide') {
       input.refillEpPending = false

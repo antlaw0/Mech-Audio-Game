@@ -20,7 +20,7 @@ import {
 import { getEnemyDefinition } from './enemies/index.js'
 import type { EnemyAutomaticFireDefinition, EnemyId } from './enemies/enemyTypes.js'
 import type { AudioCategory, AudioController, AudioVolumeChannel, EnemyAudioState, FootstepTerrainLayer, IncomingProjectileAudioState, ObstructionAwareness, PlayerAudioState, SonarEcho, SpriteObject, WorldPosition } from './types.js'
-import { type WorldCollisionWorld } from './world-collision.js'
+import { findNearestDropEdgeContact, getTopSurfaceHeight, type WorldCollisionWorld } from './world-collision.js'
 
 interface EnemySoundSet {
   idleLoop: Tone.Player
@@ -351,7 +351,7 @@ class EnemyAudioRuntime {
 } // end class EnemyAudioRuntime
 
 function isEnemyId(enemyType: string): enemyType is EnemyId {
-  return enemyType === 'tank' || enemyType === 'striker' || enemyType === 'brute' || enemyType === 'helicopter'
+  return enemyType === 'tank' || enemyType === 'striker' || enemyType === 'brute' || enemyType === 'helicopter' || enemyType === 'test-dummy'
 } // end function isEnemyId
 
 function createAttackVariantPlayers(automaticFire?: EnemyAutomaticFireDefinition): Map<number, Tone.Player> {
@@ -551,6 +551,7 @@ export function createAudioController(): AudioController {
   let energyPulseTimerSeconds = 0
   let lastImpactTimeSeconds = -1
   let lastTankHitConfirmTimeSeconds = -1
+  let suppressObjectNavigationIndicators = false
 
   let categoryProximity = true
   let categoryObjects = true
@@ -576,11 +577,30 @@ export function createAudioController(): AudioController {
   const clampVolumeScalar = (value: number): number => clamp(value, 0, 2)
 
   const gainToDbSafe = (value: number): number => value <= 0.0001 ? -80 : Tone.gainToDb(value)
+  const elevatedSurfaceMinHeight = 0.2
+  const elevatedSurfaceTolerance = 0.25
 
   const smoothstep01 = (value: number): number => {
     const t = clamp(value, 0, 1)
     return (t * t) * (3 - (2 * t))
   } // end function smoothstep01
+
+  const resolveElevatedSurfaceHeight = (player: PlayerAudioState, collisionWorld: WorldCollisionWorld): number | null => {
+    if (player.isFlying || player.position.z <= elevatedSurfaceMinHeight) {
+      return null
+    } // end if player cannot be standing on an elevated object
+
+    const supportHeight = getTopSurfaceHeight(collisionWorld, player.position.x, player.position.y, 0.35)
+    if (supportHeight <= elevatedSurfaceMinHeight) {
+      return null
+    } // end if no elevated support under player footprint
+
+    if (player.position.z + elevatedSurfaceTolerance < supportHeight) {
+      return null
+    } // end if player's feet are below the supporting surface sample
+
+    return supportHeight
+  } // end function resolveElevatedSurfaceHeight
 
   const getDistanceToRect = (
     x: number,
@@ -814,7 +834,13 @@ export function createAudioController(): AudioController {
     'assets/sounds/weapons/reloadCannon.ogg',
     'assets/sounds/weapons/reload.ogg',
     'assets/sounds/weapons/pistol_fire.ogg',
+    'assets/sounds/weapons/sniper_fire.ogg',
     'assets/sounds/weapons/rocket_fire.OGG',
+    'assets/sounds/weapons/swing_heavy1.ogg',
+    'assets/sounds/weapons/swing_heavy2.ogg',
+    'assets/sounds/weapons/swing_medium.ogg',
+    'assets/sounds/weapons/swing_medium1.ogg',
+    'assets/sounds/weapons/swing_medium2.ogg',
     'assets/sounds/weapons/arBurst3.ogg',
     'assets/sounds/weapons/arBurst4.ogg',
     'assets/sounds/weapons/arBurst5.ogg',
@@ -1380,8 +1406,8 @@ export function createAudioController(): AudioController {
     const secondStart = strictlyIncreasingStartTime(firstStart + 0.12, firstStart)
     missileLockToneLastStartSeconds = secondStart
     missileLockToneSynth.volume.value = Tone.gainToDb(0.2)
-    missileLockToneSynth.triggerAttackRelease('A4', '32n', firstStart)
-    missileLockToneSynth.triggerAttackRelease('C5', '32n', secondStart)
+    missileLockToneSynth.triggerAttackRelease('B5', '32n', firstStart)
+    missileLockToneSynth.triggerAttackRelease('D6', '32n', secondStart)
   } // end function playMissileLockTone
 
   const playMissileLockConfirmTone = (): void => {
@@ -1651,11 +1677,37 @@ export function createAudioController(): AudioController {
     } // end if enemy runtime should react to ping
   } // end function playEnemyContact
 
-  const updateNearFieldNavigation = (player: PlayerAudioState, collisionWorld: WorldCollisionWorld, sprites: SpriteObject[]): void => {
+  const updateNearFieldNavigation = (
+    player: PlayerAudioState,
+    collisionWorld: WorldCollisionWorld,
+    sprites: SpriteObject[],
+    elevatedSurfaceHeight: number | null
+  ): void => {
     if (!categoryProximity) {
       silenceWallProximityCue()
       return
     } // end if proximity category disabled
+
+    if (elevatedSurfaceHeight !== null) {
+      const nearestEdge = findNearestDropEdgeContact(
+        collisionWorld,
+        player.position.x,
+        player.position.y,
+        elevatedSurfaceHeight,
+        AUDIO_NAVIGATION_CONFIG.nearFieldRadius
+      )
+
+      if (!nearestEdge || nearestEdge.distance > AUDIO_NAVIGATION_CONFIG.nearFieldRadius) {
+        silenceWallProximityCue()
+        return
+      } // end if no nearby drop edge detected
+
+      const edgeWorldAngle = Math.atan2(nearestEdge.worldY - player.position.y, nearestEdge.worldX - player.position.x)
+      const edgeBearing = getBearing(player.angle, edgeWorldAngle)
+      const edgeIntensity = clamp(1 - nearestEdge.distance / AUDIO_NAVIGATION_CONFIG.nearFieldRadius, 0, 1)
+      playWallProximityCue(edgeBearing, edgeIntensity, proximityVolume)
+      return
+    } // end if elevated near-field mode
 
     const nearest = findNearestObstacleContact(
       collisionWorld,
@@ -1717,7 +1769,13 @@ export function createAudioController(): AudioController {
     } // end try/catch passive sweep schedule
   } // end function triggerPassiveSweepTone
 
-  const runPassiveSweepTick = (player: PlayerAudioState, enemies: EnemyAudioState[], collisionWorld: WorldCollisionWorld, sprites: SpriteObject[]): void => {
+  const runPassiveSweepTick = (
+    player: PlayerAudioState,
+    enemies: EnemyAudioState[],
+    collisionWorld: WorldCollisionWorld,
+    sprites: SpriteObject[],
+    suppressObstacleContacts: boolean
+  ): void => {
     const stepAngle = (Math.PI * 2) / (AUDIO_NAVIGATION_CONFIG.passiveSweepRotationSeconds * AUDIO_NAVIGATION_CONFIG.passiveSweepTickRateHz)
     const currentAngle = passiveSweepAngle
     const contact = scanSonarContact(
@@ -1736,7 +1794,7 @@ export function createAudioController(): AudioController {
       const sweepFrequency = AUDIO_NAVIGATION_CONFIG.sweepBaseFrequency + (normalizedSweep / (Math.PI * 2)) * AUDIO_NAVIGATION_CONFIG.sweepPitchSpan
       triggerPassiveSweepTone(sweepFrequency, 0.04)
       playEnemyContact(contact.distance, contact.bearing, contact.enemyId, contact.enemyType, true)
-    } else if (contact && contact.kind !== 'enemy' && categoryObjects) {
+    } else if (!suppressObstacleContacts && contact && contact.kind !== 'enemy' && categoryObjects) {
       const normalizedSweep = ((currentAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
       const sweepFrequency = AUDIO_NAVIGATION_CONFIG.sweepBaseFrequency + (normalizedSweep / (Math.PI * 2)) * AUDIO_NAVIGATION_CONFIG.sweepPitchSpan
       triggerPassiveSweepTone(sweepFrequency, 0.035)
@@ -1762,6 +1820,10 @@ export function createAudioController(): AudioController {
       return
     } // end if audio not started
 
+    const elevatedSurfaceHeight = resolveElevatedSurfaceHeight(player, collisionWorld)
+    const isOnElevatedSurface = elevatedSurfaceHeight !== null
+    suppressObjectNavigationIndicators = isOnElevatedSurface
+
     const nearestEnemyDistance = enemies
       .filter((enemy) => enemy.isAlive)
       .map((enemy) => Math.hypot(
@@ -1770,17 +1832,31 @@ export function createAudioController(): AudioController {
         enemy.position.z - player.position.z
       ))
       .sort((a, b) => a - b)[0] ?? Number.POSITIVE_INFINITY
-    const nearestObstacleContact = findNearestObstacleContact(
-      collisionWorld,
-      { x: player.position.x, y: player.position.y },
-      player.angle,
-      sprites,
-      AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance,
-      32
-    )
+    const nearestObstacleContact = isOnElevatedSurface
+      ? null
+      : findNearestObstacleContact(
+          collisionWorld,
+          { x: player.position.x, y: player.position.y },
+          player.angle,
+          sprites,
+          AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance,
+          32
+        )
+    const nearestDropEdgeContact = isOnElevatedSurface
+      ? findNearestDropEdgeContact(
+          collisionWorld,
+          player.position.x,
+          player.position.y,
+          elevatedSurfaceHeight,
+          AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance,
+          24,
+          0.25
+        )
+      : null
     const hasNearbySonarContact = (
       nearestEnemyDistance <= AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance ||
-      (nearestObstacleContact !== null && nearestObstacleContact.distance <= AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance)
+      (nearestObstacleContact !== null && nearestObstacleContact.distance <= AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance) ||
+      (nearestDropEdgeContact !== null && nearestDropEdgeContact.distance <= AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance)
     )
 
     const losEnemyCandidates = enemies
@@ -1836,13 +1912,13 @@ export function createAudioController(): AudioController {
       silenceWallProximityCue()
       passiveSweepAccumulatorSeconds = 0
     } else {
-      updateNearFieldNavigation(player, collisionWorld, sprites)
+      updateNearFieldNavigation(player, collisionWorld, sprites, elevatedSurfaceHeight)
 
       passiveSweepAccumulatorSeconds += dt
       const sweepTickSeconds = 1 / AUDIO_NAVIGATION_CONFIG.passiveSweepTickRateHz
       while (passiveSweepAccumulatorSeconds >= sweepTickSeconds) {
         passiveSweepAccumulatorSeconds -= sweepTickSeconds
-        runPassiveSweepTick(player, enemies, collisionWorld, sprites)
+        runPassiveSweepTick(player, enemies, collisionWorld, sprites, isOnElevatedSurface)
       } // end while passive sweep ticks are due
     } // end if sonar should be active
 
@@ -1869,6 +1945,9 @@ export function createAudioController(): AudioController {
       return
     } // end if active sonar disabled while flying
 
+    const elevatedSurfaceHeight = resolveElevatedSurfaceHeight(player, collisionWorld)
+    const isOnElevatedSurface = elevatedSurfaceHeight !== null
+
     playCardinalHeadingCue(player.angle)
 
     const nearestEnemyDistance = enemies
@@ -1879,17 +1958,31 @@ export function createAudioController(): AudioController {
         enemy.position.z - player.position.z
       ))
       .sort((a, b) => a - b)[0] ?? Number.POSITIVE_INFINITY
-    const nearestObstacleContact = findNearestObstacleContact(
-      collisionWorld,
-      { x: player.position.x, y: player.position.y },
-      player.angle,
-      sprites,
-      AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance,
-      32
-    )
+    const nearestObstacleContact = isOnElevatedSurface
+      ? null
+      : findNearestObstacleContact(
+          collisionWorld,
+          { x: player.position.x, y: player.position.y },
+          player.angle,
+          sprites,
+          AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance,
+          32
+        )
+    const nearestDropEdgeContact = isOnElevatedSurface
+      ? findNearestDropEdgeContact(
+          collisionWorld,
+          player.position.x,
+          player.position.y,
+          elevatedSurfaceHeight,
+          AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance,
+          24,
+          0.25
+        )
+      : null
     const hasNearbySonarContact = (
       nearestEnemyDistance <= AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance ||
-      (nearestObstacleContact !== null && nearestObstacleContact.distance <= AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance)
+      (nearestObstacleContact !== null && nearestObstacleContact.distance <= AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance) ||
+      (nearestDropEdgeContact !== null && nearestDropEdgeContact.distance <= AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance)
     )
     if (!hasNearbySonarContact) {
       return
@@ -1934,7 +2027,7 @@ export function createAudioController(): AudioController {
         continue
       } // end if contact is not an obstacle tone
 
-      if (categoryObjects) {
+      if (categoryObjects && !isOnElevatedSurface) {
         playObstacleContact(contact.distance, contact.bearing, contact.kind)
       } // end if objects category enabled
     } // end for each filtered obstacle contact
@@ -1947,7 +2040,7 @@ export function createAudioController(): AudioController {
   } // end function triggerActiveSonar
 
   const emitEnvironmentalSonar = (echoes: SonarEcho[]): void => {
-    if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryObjects) {
+    if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryObjects || suppressObjectNavigationIndicators) {
       return
     } // end if audio not started or objects category disabled
 

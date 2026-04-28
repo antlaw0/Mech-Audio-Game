@@ -9,14 +9,20 @@ import {
   WEAPON_DEFAULT_ACCURACY,
   WEAPON_LOCK_ON_RANGE
 } from './constants.js'
-import type { WeaponStats } from './types.js'
+import type { MeleeWeaponStats, WeaponStats } from './types.js'
 
 export interface PlayerWeaponDefinition extends WeaponStats {
-  id: 'pistol' | 'shotgun' | 'assault-rifle' | 'missile-launcher' | 'rocket-launcher'
+  id: 'pistol' | 'shotgun' | 'assault-rifle' | 'missile-launcher' | 'rocket-launcher' | 'sniper-rifle'
   name: string
-  selectionKey: '1' | '2' | '3' | '4' | '5'
+  selectionKey: '1' | '2' | '3' | '4' | '5' | '6'
   fireSoundPath: string
 } // end interface PlayerWeaponDefinition
+
+export interface PlayerMeleeWeaponDefinition extends MeleeWeaponStats {
+  id: 'sword'
+  name: string
+  swingSoundPaths: string[]
+} // end interface PlayerMeleeWeaponDefinition
 
 export const PLAYER_WEAPON_DEFINITIONS: readonly PlayerWeaponDefinition[] = [
   {
@@ -146,5 +152,45 @@ export const PLAYER_WEAPON_DEFINITIONS: readonly PlayerWeaponDefinition[] = [
       'assets/sounds/explosions/explosion_2a.ogg',
       'assets/sounds/explosions/explosion3.ogg'
     ]
+  },
+  {
+    id: 'sniper-rifle',
+    name: 'Sniper Rifle',
+    selectionKey: '6',
+    fireSoundPath: 'assets/sounds/weapons/sniper_fire.ogg',
+    weaponType: 'ballistic',
+    accuracy: 0.995,
+    lockOnRange: WEAPON_LOCK_ON_RANGE * 1.45,
+    damagePerShot: 52,
+    projectileCount: 1,
+    spreadDegrees: 0.2,
+    bulletSpeed: BULLET_SPEED * 1.5,
+    maxRange: BULLET_MAX_DIST * 1.8,
+    isFullAuto: false,
+    fireRateCooldownSeconds: 1.35,
+    projectileSize: 0.16,
+    lockOnWindowWidthPercent: 35,
+    lockOnWindowHeightPercent: 30,
+    lockOnTimeMs: 0,
+    trackingRating: 0,
+    explosionRadius: 0,
+    explosionDamage: 0,
+    explosionSounds: []
+  }
+]
+
+export const PLAYER_MELEE_WEAPON_DEFINITIONS: readonly PlayerMeleeWeaponDefinition[] = [
+  {
+    id: 'sword',
+    name: 'Sword',
+    swingSoundPaths: [
+      'assets/sounds/weapons/swing_medium.ogg',
+      'assets/sounds/weapons/swing_medium1.ogg',
+      'assets/sounds/weapons/swing_medium2.ogg'
+    ],
+    damagePerSwing: 26,
+    meleeCooldownSeconds: 0.8,
+    reach: 2.5,
+    coneAngleDegrees: 78
   }
 ]

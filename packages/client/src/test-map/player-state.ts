@@ -2,6 +2,7 @@ import type { InputState, Player } from './types.js'
 
 export function createPlayer(): Player {
   return {
+    name: 'Mecha Lecka High',
     x: 200,
     y: 500,
     angle: 0,
@@ -30,6 +31,7 @@ export function createInputState(): InputState {
     pitchResetPending: false,
     fireHeld: false,
     firePending: false,
+    meleePending: false,
     flightTogglePending: false,
     sonarPingPending: false,
     snapNorthPending: false,
@@ -38,12 +40,12 @@ export function createInputState(): InputState {
     snapWestPending: false,
     snapLeftPending: false,
     snapRightPending: false,
-    cycleWeaponPending: false,
     selectedWeaponSlot: null,
     spawnTankPending: false,
     spawnStrikerPending: false,
     spawnBrutePending: false,
     spawnHelicopterPending: false,
+    spawnTestDummyPending: false,
     refillEpPending: false,
     refillHpPending: false,
     speakHpPending: false,

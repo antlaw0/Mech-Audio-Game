@@ -19,7 +19,8 @@ export class StrikerEnemyDefinition extends EnemyDefinitionBase {
         movementPattern: 'aggressive-wander',
         retargetIntervalSeconds: 2.4,
         preferredEngageRange: 16,
-        lineOfSightRequiredToShoot: true
+        lineOfSightRequiredToShoot: true,
+        stationary: false
       },
       automaticFire: {
         enabled: true,

@@ -16,13 +16,20 @@ export class BruteEnemyDefinition extends EnemyDefinitionBase {
       threatDelaySeconds: 0.45,
       projectileMaxDistance: 60,
       behavior: {
-        movementPattern: 'hold-and-pivot',
+        movementPattern: 'aggressive-wander',
         retargetIntervalSeconds: 7,
-        preferredEngageRange: 24,
-        lineOfSightRequiredToShoot: true
+        preferredEngageRange: 4,
+        lineOfSightRequiredToShoot: true,
+        stationary: false
+      },
+      melee: {
+        damage: 34,
+        cooldownSeconds: 1.35,
+        range: 2.6,
+        coneAngleDegrees: 85
       },
       sounds: {
-        attackSound: 'assets/sounds/explosions/explosion_1A.ogg',
+        attackSound: 'assets/sounds/weapons/swing_heavy1.ogg',
         hurtSound: 'assets/sounds/explosions/explosion_1B.ogg',
         deathSound: 'assets/sounds/explosions/explosion_2a.ogg',
         positionalLoopSound: 'assets/sounds/tankMoving.ogg'

@@ -248,7 +248,15 @@ export function createCombatEcsWorld(): CombatEcsWorld {
   return world
 } // end function createCombatEcsWorld
 
-function canSpawnTankAt(world: CombatEcsWorld, collisionWorld: WorldCollisionWorld, x: number, y: number, player: Player, collisionRadius?: number): boolean {
+function canSpawnTankAt(
+  world: CombatEcsWorld,
+  collisionWorld: WorldCollisionWorld,
+  x: number,
+  y: number,
+  player: Player,
+  collisionRadius?: number,
+  allowCloseToPlayer = false
+): boolean {
   const tankRadius = collisionRadius ?? getEnemyDefinition('tank').collisionRadius
   const collisionPadding = 0.18
 
@@ -265,12 +273,12 @@ function canSpawnTankAt(world: CombatEcsWorld, collisionWorld: WorldCollisionWor
     return false
   } // end if spawn intersects world collision
 
-  if (Math.hypot(x - player.x, y - player.y) < 4.5) {
+  const distanceToPlayer = Math.hypot(x - player.x, y - player.y)
+  if (!allowCloseToPlayer && distanceToPlayer < 4.5) {
     return false
   } // end if too close to player spawn area
 
-  const distanceToPlayer = Math.hypot(x - player.x, y - player.y)
-  if (distanceToPlayer < SPAWN_MIN_PLAYER_DISTANCE || distanceToPlayer > SPAWN_MAX_PLAYER_DISTANCE) {
+  if (!allowCloseToPlayer && (distanceToPlayer < SPAWN_MIN_PLAYER_DISTANCE || distanceToPlayer > SPAWN_MAX_PLAYER_DISTANCE)) {
     return false
   } // end if outside organic spawn distance band
 
@@ -394,6 +402,55 @@ export function spawnRandomTank(world: CombatEcsWorld, collisionWorld: WorldColl
 export function spawnEnemyAtPosition(world: CombatEcsWorld, x: number, y: number, enemyId: EnemyId = 'tank'): void {
   addTank(world, x, y, enemyId)
 } // end function spawnEnemyAtPosition
+
+export function spawnEnemyFromConfigAtPosition(world: CombatEcsWorld, x: number, y: number, config: EnemyDefinitionConfig): void {
+  addTankFromConfig(world, x, y, config)
+} // end function spawnEnemyFromConfigAtPosition
+
+function chooseCloseSpawnCandidateInFront(player: Player, distance: number): { x: number; y: number } {
+  const candidateX = Math.max(1.25, Math.min(MAP_WIDTH - 1.25, player.x + Math.cos(player.angle) * distance))
+  const candidateY = Math.max(1.25, Math.min(MAP_HEIGHT - 1.25, player.y + Math.sin(player.angle) * distance))
+  return { x: candidateX, y: candidateY }
+} // end function chooseCloseSpawnCandidateInFront
+
+export function spawnEnemyCloseInFront(world: CombatEcsWorld, collisionWorld: WorldCollisionWorld, player: Player, enemyId: EnemyId): boolean {
+  if (!canSpawnEnemyByBudget(world, enemyId)) {
+    return false
+  } // end if enemy budget does not allow spawning this enemy type
+
+  const definition = getEnemyDefinition(enemyId)
+  const candidateDistances = [3.2, 4.2, 5.2, 6.4]
+  for (const distance of candidateDistances) {
+    const { x, y } = chooseCloseSpawnCandidateInFront(player, distance)
+    if (!canSpawnTankAt(world, collisionWorld, x, y, player, definition.collisionRadius, true)) {
+      continue
+    } // end if candidate is blocked
+    addTank(world, x, y, enemyId)
+    Facing.angle[TankQuery(world)[TankQuery(world).length - 1] ?? 0] = player.angle + Math.PI
+    return true
+  } // end for each close spawn candidate
+
+  return false
+} // end function spawnEnemyCloseInFront
+
+export function spawnEnemyConfigCloseInFront(world: CombatEcsWorld, collisionWorld: WorldCollisionWorld, player: Player, config: EnemyDefinitionConfig): boolean {
+  if (!canSpawnEnemyByBudget(world, config.id)) {
+    return false
+  } // end if enemy budget does not allow spawning this config
+
+  const candidateDistances = [3.2, 4.2, 5.2, 6.4]
+  for (const distance of candidateDistances) {
+    const { x, y } = chooseCloseSpawnCandidateInFront(player, distance)
+    if (!canSpawnTankAt(world, collisionWorld, x, y, player, config.collisionRadius, true)) {
+      continue
+    } // end if candidate is blocked
+    addTankFromConfig(world, x, y, config)
+    Facing.angle[TankQuery(world)[TankQuery(world).length - 1] ?? 0] = player.angle + Math.PI
+    return true
+  } // end for each close spawn candidate
+
+  return false
+} // end function spawnEnemyConfigCloseInFront
 
 function addTankFromConfig(world: CombatEcsWorld, x: number, y: number, config: EnemyDefinitionConfig): void {
   const tank = addEntity(world)
@@ -619,8 +676,8 @@ export function spawnPlayerBulletToward(
   spreadDegrees = 0
 ): void {
   const baseAngle = Math.atan2(targetY - player.y, targetX - player.x)
-  // Player-fired projectiles should follow the current look pitch, even with lock-on enabled.
-  const basePitch = player.pitch
+  const originHeight = (player.z ?? 0) + PLAYER_HEIGHT
+  const basePitch = getPitchToTarget(player.x, player.y, originHeight, targetX, targetY, targetZ)
   spawnPlayerProjectileBurst(
     world,
     player,
@@ -776,6 +833,80 @@ function getNumber(store: ArrayLike<number>, entity: number): number | null {
   return value
 } // end function getNumber
 
+function normalizeAngleDelta(angle: number): number {
+  let wrapped = angle
+  while (wrapped > Math.PI) {
+    wrapped -= Math.PI * 2
+  } // end while angle above positive wrap
+  while (wrapped < -Math.PI) {
+    wrapped += Math.PI * 2
+  } // end while angle below negative wrap
+  return wrapped
+} // end function normalizeAngleDelta
+
+function isTargetInsideMeleeCone(
+  attackerX: number,
+  attackerY: number,
+  attackerAngle: number,
+  targetX: number,
+  targetY: number,
+  targetRadius: number,
+  range: number,
+  coneAngleDegrees: number
+): boolean {
+  const dx = targetX - attackerX
+  const dy = targetY - attackerY
+  const targetDistance = Math.max(0, Math.hypot(dx, dy) - Math.max(0, targetRadius))
+  if (targetDistance > range) {
+    return false
+  } // end if target is outside melee reach
+
+  const targetAngle = Math.atan2(dy, dx)
+  const halfAngleRadians = Math.max(0, coneAngleDegrees) * (Math.PI / 360)
+  return Math.abs(normalizeAngleDelta(targetAngle - attackerAngle)) <= halfAngleRadians
+} // end function isTargetInsideMeleeCone
+
+export function performPlayerMeleeAttack(
+  world: CombatEcsWorld,
+  audio: AudioController,
+  player: Player,
+  damage: number,
+  range: number,
+  coneAngleDegrees: number
+): number {
+  let hits = 0
+
+  for (const tank of TankQuery(world)) {
+    if ((Meta.alive[tank] ?? 0) !== 1) {
+      continue
+    } // end if tank already dead
+
+    const tankX = getNumber(Position.x, tank)
+    const tankY = getNumber(Position.y, tank)
+    const tankRadius = getNumber(Meta.radius, tank)
+    if (tankX === null || tankY === null || tankRadius === null) {
+      continue
+    } // end if tank is missing collision data
+
+    if (!isTargetInsideMeleeCone(player.x, player.y, player.angle, tankX, tankY, tankRadius, range, coneAngleDegrees)) {
+      continue
+    } // end if tank is outside player melee cone
+
+    hits += 1
+    Health.hp[tank] = (Health.hp[tank] ?? 0) - Math.max(1, Math.round(damage))
+    audio.playTankHitConfirm(tankX, tankY, player.x, player.y, player.angle)
+
+    if ((Health.hp[tank] ?? 0) <= 0) {
+      Meta.alive[tank] = 0
+      TankExplosion.maxDuration[tank] = 0.7
+      TankExplosion.timeRemaining[tank] = 0.7
+      audio.playTankDeathConfirm(tankX, tankY, player.x, player.y, player.angle)
+    } // end if tank died from melee attack
+  } // end for each tank
+
+  return hits
+} // end function performPlayerMeleeAttack
+
 export function stepCombatEcsWorld(
   world: CombatEcsWorld,
   collisionWorld: WorldCollisionWorld,
@@ -833,6 +964,7 @@ export function stepCombatEcsWorld(
     } // end if behavior missing
 
     const distanceToPlayer = Math.hypot(tankX - player.x, tankY - player.y)
+    const meleeDefinition = enemyDefinition.melee
     let simulationStepSeconds = deltaSeconds
     let accumulatedLodSeconds = lodAccumulator + deltaSeconds
 
@@ -859,9 +991,13 @@ export function stepCombatEcsWorld(
     } // end if LOD simulation gating
 
     // --- Tank movement ---
-    const moveStep = enemyDefinition.movementSpeed * simulationStepSeconds
-    const nextX = tankX + Math.cos(movementAngle) * moveStep
-    const nextY = tankY + Math.sin(movementAngle) * moveStep
+    const targetMovementAngle = meleeDefinition
+      ? Math.atan2(player.y - tankY, player.x - tankX)
+      : movementAngle
+    const isStationary = enemyDefinition.behavior.stationary
+    const moveStep = isStationary ? 0 : enemyDefinition.movementSpeed * simulationStepSeconds
+    const nextX = tankX + Math.cos(targetMovementAngle) * moveStep
+    const nextY = tankY + Math.sin(targetMovementAngle) * moveStep
 
     const tankRadius = Math.max(0.15, enemyDefinition.collisionRadius)
     const canMove = !isPlayerBlocked(
@@ -873,21 +1009,31 @@ export function stepCombatEcsWorld(
       1.2
     )
 
-    if (!canMove) {
+    if (isStationary) {
+      Position.x[tank] = tankX
+      Position.y[tank] = tankY
+      Facing.angle[tank] = meleeDefinition ? Math.atan2(player.y - tankY, player.x - tankX) : movementAngle
       Behavior.isMoving[tank] = 0
-      Behavior.movementAngle[tank] = Math.random() * Math.PI * 2
+      Behavior.movementTimer[tank] = 0
+    } else if (!canMove) {
+      Behavior.isMoving[tank] = 0
+      Behavior.movementAngle[tank] = meleeDefinition ? targetMovementAngle : (Math.random() * Math.PI * 2)
       Behavior.movementTimer[tank] = 0
     } else {
       Position.x[tank] = nextX
       Position.y[tank] = nextY
-      Facing.angle[tank] = movementAngle
+      Facing.angle[tank] = targetMovementAngle
       Behavior.movementTimer[tank] = movementTimer + simulationStepSeconds
 
       // Retarget movement heading using enemy behavior settings.
-      if (movementTimer > enemyDefinition.behavior.retargetIntervalSeconds) {
+      if (!meleeDefinition && movementTimer > enemyDefinition.behavior.retargetIntervalSeconds) {
         Behavior.movementAngle[tank] = Math.random() * Math.PI * 2
         Behavior.movementTimer[tank] = 0
       } // end if time to change direction
+
+      if (meleeDefinition) {
+        Behavior.movementAngle[tank] = targetMovementAngle
+      } // end if melee enemy should continue closing distance
 
       Behavior.isMoving[tank] = 1
     } // end if can move
@@ -904,6 +1050,37 @@ export function stepCombatEcsWorld(
       : false
     const canShootByLos = enemyDefinition.behavior.lineOfSightRequiredToShoot ? hasLos : true
     const threatDelaySeconds = enemyDefinition.threatDelaySeconds
+
+    if (meleeDefinition) {
+      const newCooldown = Math.max(0, cannonCooldown - simulationStepSeconds)
+      Behavior.cannonFireCooldown[tank] = newCooldown
+      Behavior.attackWindupSeconds[tank] = 0
+      Behavior.burstShotsRemaining[tank] = 0
+      Behavior.burstShotTimerSeconds[tank] = 0
+      Facing.angle[tank] = Math.atan2(player.y - nextY, player.x - nextX)
+
+      if (
+        canShootByLos &&
+        newCooldown <= 0 &&
+        isTargetInsideMeleeCone(
+          nextX,
+          nextY,
+          Facing.angle[tank] ?? 0,
+          player.x,
+          player.y,
+          PLAYER_RADIUS,
+          meleeDefinition.range,
+          meleeDefinition.coneAngleDegrees
+        )
+      ) {
+        Behavior.cannonFireCooldown[tank] = Math.max(0.05, meleeDefinition.cooldownSeconds)
+        audio.playEnemyAttack(`tank-${tank}`, enemyDefinition.id)
+        player.hp = Math.max(0, player.hp - Math.max(1, Math.round(meleeDefinition.damage)))
+        audio.playPlayerMechHit()
+      } // end if melee strike landed this frame
+
+      continue
+    } // end if enemy uses melee combat
 
     if (attackWindup > 0) {
       const newWindup = Math.max(0, attackWindup - simulationStepSeconds)

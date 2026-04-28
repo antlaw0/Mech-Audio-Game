@@ -1,4 +1,4 @@
-export type EnemyId = 'tank' | 'striker' | 'brute' | 'helicopter'
+export type EnemyId = 'tank' | 'striker' | 'brute' | 'helicopter' | 'test-dummy'
 
 export type EnemyMovementPattern = 'wander' | 'aggressive-wander' | 'hold-and-pivot'
 
@@ -7,6 +7,7 @@ export interface EnemyBehaviorDefinition {
   retargetIntervalSeconds: number
   preferredEngageRange: number
   lineOfSightRequiredToShoot: boolean
+  stationary: boolean
 } // end interface EnemyBehaviorDefinition
 
 export interface EnemyAutomaticFireDefinition {
@@ -15,6 +16,13 @@ export interface EnemyAutomaticFireDefinition {
   burstIntervalSeconds: number
   burstAudioPrefix: string
 } // end interface EnemyAutomaticFireDefinition
+
+export interface EnemyMeleeDefinition {
+  damage: number
+  cooldownSeconds: number
+  range: number
+  coneAngleDegrees: number
+} // end interface EnemyMeleeDefinition
 
 export interface EnemySoundDefinition {
   startupSound?: string
@@ -39,5 +47,6 @@ export interface EnemyDefinitionConfig {
   projectileMaxDistance: number
   behavior: EnemyBehaviorDefinition
   automaticFire?: EnemyAutomaticFireDefinition
+  melee?: EnemyMeleeDefinition
   sounds: EnemySoundDefinition
 } // end interface EnemyDefinitionConfig
