@@ -1147,6 +1147,7 @@ function startTestMap(): void {
       `console.open = ${isConsoleOpen}`,
       `player = mapX:${player.x.toFixed(2)} mapY:${player.y.toFixed(2)} centeredX:${centered.x.toFixed(2)} centeredY:${centered.y.toFixed(2)} z:${(player.z ?? 0).toFixed(2)} angle:${((player.angle * 180) / Math.PI).toFixed(1)} pitch:${((player.pitch * 180) / Math.PI).toFixed(1)}`,
       `player.flight = state:${player.flightState ?? 'grounded'} flying:${player.isFlying ? 'true' : 'false'} sharedHeight:${getSharedFlightHeight().toFixed(2)}`,
+      `music.track = ${audio.getMusicTrack()}`,
       `weapon = type:${playerWeapon.weaponType} accuracy:${playerWeapon.accuracy.toFixed(2)} pellets:${playerWeapon.projectileCount} spread:${playerWeapon.spreadDegrees.toFixed(1)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fullAuto:${playerWeapon.isFullAuto} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)}`,
       `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} music:${audio.getVolumeChannel('music').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)}`,
       `audio categories = proximity:${audio.getCategoryEnabled('proximity')}@${audio.getVolumeChannel('proximity').toFixed(2)} objects:${audio.getCategoryEnabled('objects')}@${audio.getVolumeChannel('objects').toFixed(2)} enemies:${audio.getCategoryEnabled('enemies')}@${audio.getVolumeChannel('enemies').toFixed(2)} navigation:${audio.getCategoryEnabled('navigation')}@${audio.getVolumeChannel('navigation').toFixed(2)}`
@@ -1430,6 +1431,12 @@ function startTestMap(): void {
       get: () => audio.getVolumeChannel('music'),
       set: (rawValue) => audio.setVolumeChannel('music', parseFiniteNumber(rawValue, 'audio.music.volume'))
     },
+    'audio.music.track': {
+      description: 'Currently playing background music track by name.',
+      helpPath: ['Audio', 'Mix'],
+      get: () => audio.getMusicTrack(),
+      set: (rawValue) => audio.setMusicTrack(rawValue)
+    },
     'audio.footsteps.volume': {
       description: 'Footstep volume scalar from 0 to 2.',
       helpPath: ['Audio', 'Mix'],
@@ -1535,6 +1542,13 @@ function startTestMap(): void {
       description: 'Invert a boolean path such as audio.enemies.enabled.',
       helpPath: ['Console', 'Editing'],
       examples: ['toggle audio.navigation.enabled', 'toggle weapon.fullAuto']
+    },
+    {
+      syntax: 'music [trackName]',
+      description: 'Show or set the current background music track by name.',
+      helpPath: ['Audio', 'Mix'],
+      aliases: ['track'],
+      examples: ['music', 'music slowDrone', 'music scary', 'set audio.music.track suspense']
     },
     {
       syntax: 'spawn <enemyId>',
@@ -1980,6 +1994,19 @@ function startTestMap(): void {
       return [spawned ? `${enemyId} spawned.` : `No valid spawn location for ${enemyId}.`]
     } // end if spawn command
 
+    if (command === 'music' || command === 'track') {
+      if (args.length === 0) {
+        return [
+          `music = ${audio.getMusicTrack()}`,
+          `available = ${audio.getMusicTracks().join(', ')}`
+        ]
+      } // end if reporting current music track
+
+      const requestedTrack = args.join(' ')
+      const track = audio.setMusicTrack(requestedTrack)
+      return [`music = ${track}`]
+    } // end if music command
+
     if (command === 'tp' || command === 'teleport') {
       const destination = parseTeleportArguments(commandLine, args)
       const mapDestination = centeredToMapCoordinates(destination.x, destination.y)
@@ -2052,6 +2079,13 @@ function startTestMap(): void {
         .map((enemyId) => `spawn ${enemyId}`)
     } // end if completing spawn target
 
+    if (currentCommand === 'music' || currentCommand === 'track') {
+      const currentTrack = hasTrailingWhitespace ? '' : ((tokens[1] ?? '').toLowerCase())
+      return audio.getMusicTracks()
+        .filter((trackName) => trackName.toLowerCase().startsWith(currentTrack))
+        .map((trackName) => `music ${trackName}`)
+    } // end if completing music track
+
     return []
   } // end function getDeveloperConsoleSuggestions
 
@@ -2083,6 +2117,7 @@ function startTestMap(): void {
       'window.mechDev.getState()',
       'window.mechDev.execute("set audio.enemies.volume 0.4")',
       'window.mechDev.execute("set audio.music.volume 0.2")',
+      'window.mechDev.execute("music suspense")',
       'window.mechDev.setSharedFlightHeight(4)',
       'window.mechDev.setPlayerAltitude(1.5)',
       "window.mechDev.spawnEnemy('helicopter')",

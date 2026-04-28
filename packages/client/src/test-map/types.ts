@@ -295,6 +295,9 @@ export interface AudioController {
   getCategoryEnabled: (name: AudioCategory) => boolean
   setVolumeChannel: (name: AudioVolumeChannel, value: number) => number
   getVolumeChannel: (name: AudioVolumeChannel) => number
+  setMusicTrack: (name: string) => string
+  getMusicTrack: () => string
+  getMusicTracks: () => string[]
   playLockOnChirp: () => void
   playLockLostChirp: () => void
   playMissileLockTone: () => void

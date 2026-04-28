@@ -613,8 +613,6 @@ export function createAudioController(): AudioController {
   let footstepTimeBeforePause = 0
   let ambienceWasPlayingBeforePause = false
   let ambienceTimeBeforePause = 0
-  let musicWasPlayingBeforePause = false
-  let musicTimeBeforePause = 0
   let cityAmbienceWasPlayingBeforePause = false
   let cityAmbienceTimeBeforePause = 0
   let cityAmbienceMix = 0
@@ -899,10 +897,77 @@ export function createAudioController(): AudioController {
   cityAmbienceAudio.loop = true
   cityAmbienceAudio.volume = 0
 
-  const musicAudio = new Audio('assets/music/slowDrone.ogg')
+  const musicTrackPaths = {
+    slowDrone: 'assets/music/slowDrone.ogg',
+    scary: 'assets/music/scary.ogg',
+    suspense: 'assets/music/suspense.ogg',
+    dark: 'assets/music/dark.ogg',
+    hunting: 'assets/music/hunting.ogg',
+    alleyWay: 'assets/music/alleyWay.ogg',
+    futuristicCity: 'assets/music/CfuturisticCity.ogg'
+  } as const
+
+  const musicTrackAliases = new Map<string, keyof typeof musicTrackPaths>([
+    ['slowdrone', 'slowDrone'],
+    ['scary', 'scary'],
+    ['suspense', 'suspense'],
+    ['dark', 'dark'],
+    ['hunting', 'hunting'],
+    ['alleyway', 'alleyWay'],
+    ['alleyway.ogg', 'alleyWay'],
+    ['futuristiccity', 'futuristicCity'],
+    ['cfuturisticcity', 'futuristicCity']
+  ])
+  let currentMusicTrackName: keyof typeof musicTrackPaths = 'slowDrone'
+
+  const musicAudio = new Audio(musicTrackPaths[currentMusicTrackName])
   musicAudio.preload = 'auto'
   musicAudio.loop = true
   musicAudio.volume = AUDIO_CONFIG.player.musicVolume
+
+  const getMusicTracks = (): string[] => Object.keys(musicTrackPaths)
+
+  const resolveMusicTrackName = (input: string): keyof typeof musicTrackPaths | null => {
+    const trimmed = input.trim()
+    if (trimmed.length === 0) {
+      return null
+    } // end if input is empty
+
+    const directMatch = getMusicTracks().find((name) => name.toLowerCase() === trimmed.toLowerCase())
+    if (directMatch) {
+      return directMatch as keyof typeof musicTrackPaths
+    } // end if track name matches exactly
+
+    const normalized = trimmed.replace(/\.ogg$/i, '').replace(/[^a-z0-9]/gi, '').toLowerCase()
+    return musicTrackAliases.get(normalized) ?? null
+  } // end function resolveMusicTrackName
+
+  const setMusicTrack = (trackName: string): string => {
+    const resolvedTrackName = resolveMusicTrackName(trackName)
+    if (!resolvedTrackName) {
+      const available = getMusicTracks().join(', ')
+      throw new Error(`Unknown music track: ${trackName}. Available tracks: ${available}`)
+    } // end if track name is unknown
+
+    if (resolvedTrackName === currentMusicTrackName) {
+      return currentMusicTrackName
+    } // end if track is unchanged
+
+    const shouldResumePlayback = !musicAudio.paused
+    musicAudio.pause()
+    musicAudio.src = musicTrackPaths[resolvedTrackName]
+    musicAudio.currentTime = 0
+    currentMusicTrackName = resolvedTrackName
+    applyHtmlAudioVolumes()
+
+    if (shouldResumePlayback) {
+      void musicAudio.play().catch(() => undefined)
+    } // end if music should continue after track switch
+
+    return currentMusicTrackName
+  } // end function setMusicTrack
+
+  const getMusicTrack = (): string => currentMusicTrackName
 
   const servoAudio = new Audio('assets/sounds/servomotor.ogg')
   servoAudio.preload = 'auto'
@@ -1616,12 +1681,6 @@ export function createAudioController(): AudioController {
       ambienceAudio.pause()
     } // end if ambience was playing
 
-    musicWasPlayingBeforePause = !musicAudio.paused
-    musicTimeBeforePause = musicAudio.currentTime
-    if (musicWasPlayingBeforePause) {
-      musicAudio.pause()
-    } // end if music was playing
-
     cityAmbienceWasPlayingBeforePause = !cityAmbienceAudio.paused
     cityAmbienceTimeBeforePause = cityAmbienceAudio.currentTime
     if (cityAmbienceWasPlayingBeforePause) {
@@ -1671,11 +1730,6 @@ export function createAudioController(): AudioController {
       void ambienceAudio.play().catch(() => undefined)
     } // end if ambience should resume
 
-    if (musicWasPlayingBeforePause) {
-      musicAudio.currentTime = musicTimeBeforePause
-      void musicAudio.play().catch(() => undefined)
-    } // end if music should resume
-
     if (cityAmbienceWasPlayingBeforePause) {
       cityAmbienceAudio.currentTime = cityAmbienceTimeBeforePause
       void cityAmbienceAudio.play().catch(() => undefined)
@@ -1688,7 +1742,6 @@ export function createAudioController(): AudioController {
     servoWasPlayingBeforePause = false
     footstepWasPlayingBeforePause = false
     ambienceWasPlayingBeforePause = false
-    musicWasPlayingBeforePause = false
     cityAmbienceWasPlayingBeforePause = false
     flightLoopWasPlayingBeforePause = false
     contextWasRunningBeforePause = false
@@ -2937,6 +2990,9 @@ export function createAudioController(): AudioController {
     getCategoryEnabled,
     setVolumeChannel,
     getVolumeChannel,
+    setMusicTrack,
+    getMusicTrack,
+    getMusicTracks,
     playLockOnChirp,
     playLockLostChirp,
     playMissileLockTone,
