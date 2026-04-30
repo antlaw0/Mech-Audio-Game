@@ -638,7 +638,8 @@ export function createAudioController(): AudioController {
   let projectileNearMissVoiceCursor = 0
   let playerMechHitBaseVoiceCursor = 0
   let playerMechHitDetailVoiceCursor = 0
-  let energyPulseTimerSeconds = 0
+  let energyStatusLoopStarted = false
+  let energyStatusCrackleStarted = false
   let lastImpactTimeSeconds = -1
   let lastTankHitConfirmTimeSeconds = -1
   let suppressObjectNavigationIndicators = false
@@ -655,6 +656,7 @@ export function createAudioController(): AudioController {
   let servoVolume = 1
   let footstepsVolume = 1
   let flightLoopVolume = 0.5
+  let energyStatusVolume = 1.35
   let proximityVolume = 1
   let objectsVolume = 1
   let enemiesVolume = 1
@@ -793,6 +795,10 @@ export function createAudioController(): AudioController {
       applyFlightLoopVolume()
       return flightLoopVolume
     } // end if flight-loop volume
+    if (name === 'energyStatus') {
+      energyStatusVolume = nextValue
+      return energyStatusVolume
+    } // end if energy-status volume
     if (name === 'proximity') {
       proximityVolume = nextValue
       return proximityVolume
@@ -816,6 +822,7 @@ export function createAudioController(): AudioController {
     if (name === 'servo') return servoVolume
     if (name === 'footsteps') return footstepsVolume
     if (name === 'flightLoop') return flightLoopVolume
+    if (name === 'energyStatus') return energyStatusVolume
     return getCategoryVolume(name)
   } // end function getVolumeChannel
 
@@ -1014,6 +1021,7 @@ export function createAudioController(): AudioController {
     'assets/sounds/weapons/arBurst3.ogg',
     'assets/sounds/weapons/arBurst4.ogg',
     'assets/sounds/weapons/arBurst5.ogg',
+    'assets/sounds/energy.ogg',
     'assets/sounds/tankHit.ogg',
     'assets/sounds/explosions/explosion_1A.ogg',
     'assets/sounds/explosions/explosion_1B.ogg',
@@ -1044,6 +1052,18 @@ export function createAudioController(): AudioController {
   const flightLoopSound = new Tone.Player('assets/sounds/jetLoop.ogg').connect(flightBoostDistortion)
   flightLoopSound.loop = true
   applyFlightLoopVolume()
+
+  const energyStatusGain = new Tone.Gain(0.17).toDestination()
+  const energyStatusTremolo = new Tone.Tremolo({ frequency: 0.45, depth: 0, type: 'sine', spread: 0 }).connect(energyStatusGain)
+  const energyStatusFilter = new Tone.Filter({ type: 'lowpass', frequency: 12000, Q: 0.7 }).connect(energyStatusTremolo)
+  const energyStatusDistortion = new Tone.Distortion({ distortion: 0.12, wet: 0 }).connect(energyStatusFilter)
+  const energyStatusLoop = new Tone.Player('assets/sounds/energy.ogg').connect(energyStatusDistortion)
+  energyStatusLoop.loop = true
+
+  const energyStatusCrackleFilter = new Tone.Filter({ type: 'highpass', frequency: 2200, Q: 0.9 }).connect(energyStatusGain)
+  const energyStatusCrackleGain = new Tone.Gain(0.001).connect(energyStatusCrackleFilter)
+  const energyStatusCrackleNoise = new Tone.Noise('pink').connect(energyStatusCrackleGain)
+
   const boostEngageGain = new Tone.Gain(0.9).toDestination()
   const boostEngageSound = new Tone.Player('assets/sounds/boostEngage.ogg').connect(boostEngageGain)
   const hardLandingGain = new Tone.Gain(0.92).toDestination()
@@ -1187,12 +1207,6 @@ export function createAudioController(): AudioController {
   const lowHealthAlarmSynth = new Tone.Synth({
     oscillator: { type: 'square' },
     envelope: { attack: 0.001, decay: 0.09, sustain: 0, release: 0.05 }
-  }).toDestination()
-
-  const energyPulseSynth = new Tone.FMSynth({
-    harmonicity: 0.75,
-    modulationIndex: 3.2,
-    envelope: { attack: 0.004, decay: 0.2, sustain: 0, release: 0.12 }
   }).toDestination()
 
   const sonarSweepSynth = new Tone.FMSynth({
@@ -1384,6 +1398,30 @@ export function createAudioController(): AudioController {
     } // end try/catch playbackRate set
   } // end function setPlaybackRateSafely
 
+  const ensureEnergyStatusLoopStarted = (): void => {
+    if (energyStatusLoopStarted || !audioStarted || audioPaused || !isAudioContextRunning()) {
+      return
+    } // end if loop is already running or audio graph not ready
+
+    if (energyStatusLoop.loaded) {
+      energyStatusLoop.start()
+      energyStatusLoopStarted = true
+      return
+    } // end if loop player is already loaded
+
+    void energyStatusLoop.load('assets/sounds/energy.ogg')
+      .then(() => {
+        if (energyStatusLoopStarted || !audioStarted || audioPaused || !isAudioContextRunning()) {
+          return
+        } // end if energy loop should not start after async load
+        energyStatusLoop.start()
+        energyStatusLoopStarted = true
+      })
+      .catch((error) => {
+        console.warn('Failed to load player energy status loop.', { error })
+      })
+  } // end function ensureEnergyStatusLoopStarted
+
   const playFromVoicePool = (voices: Tone.Player[], cursor: number): number => {
     if (voices.length === 0) {
       return cursor
@@ -1493,6 +1531,10 @@ export function createAudioController(): AudioController {
           destinationToneOsc.start()
           destinationToneOscStarted = true
         } // end if destination oscillator not started
+        if (!energyStatusCrackleStarted) {
+          energyStatusCrackleNoise.start()
+          energyStatusCrackleStarted = true
+        } // end if energy crackle noise source not started
         footstepAudio.muted = false
         servoAudio.muted = false
         ambienceAudio.muted = false
@@ -1506,6 +1548,8 @@ export function createAudioController(): AudioController {
         void musicAudio.play().catch(() => undefined)
         void cityAmbienceAudio.play().catch(() => undefined)
         audioStarted = true
+        energyStatusTremolo.start()
+        ensureEnergyStatusLoopStarted()
         prewarmEnemyAudioAssets()
       } // end if audio graph not initialized
     } catch {
@@ -2505,29 +2549,37 @@ export function createAudioController(): AudioController {
     } // end if critical double-pulse should play
   } // end function updatePlayerHealthStatusAudio
 
-  const updatePlayerEnergyStatusAudio = (dt: number, epPercent: number): void => {
+  const updatePlayerEnergyStatusAudio = (_dt: number, epPercent: number): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
-      energyPulseTimerSeconds = 0
+      energyStatusGain.gain.rampTo(0.001, 0.08)
+      energyStatusCrackleGain.gain.rampTo(0.001, 0.08)
       return
     } // end if audio not started
 
+    ensureEnergyStatusLoopStarted()
+
     const normalized = clamp(epPercent, 0, 1)
-    if (normalized >= 0.999) {
-      energyPulseTimerSeconds = 0
-      return
-    } // end if energy full
+    const lowEnergyFactor = clamp((0.65 - normalized) / 0.65, 0, 1)
+    const criticalFactor = clamp((0.15 - normalized) / 0.15, 0, 1)
 
-    energyPulseTimerSeconds += dt
-    const intervalSeconds = 0.24 + normalized * 1.66
-    if (energyPulseTimerSeconds < intervalSeconds) {
-      return
-    } // end if pulse interval not reached
-    energyPulseTimerSeconds -= intervalSeconds
+    // Keep pitch change within +/-15% so energy state is noticeable without sounding detached.
+    const playbackRate = 0.85 + (normalized * 0.30)
+    setPlaybackRateSafely(energyStatusLoop, playbackRate)
 
-    const frequency = 85 + normalized * 110
-    const gain = (0.34 + (1 - normalized) * 0.96) * masterVolume
-    energyPulseSynth.volume.value = gainToDbSafe(gain)
-    energyPulseSynth.triggerAttackRelease(frequency, '8n')
+    const tremoloRateHz = 0.45 + (lowEnergyFactor * 5.35)
+    const tremoloDepth = 0.03 + (lowEnergyFactor * 0.86)
+    energyStatusTremolo.frequency.rampTo(tremoloRateHz, 0.08)
+    energyStatusTremolo.depth.rampTo(tremoloDepth, 0.08)
+
+    energyStatusDistortion.distortion = 0.1 + (criticalFactor * 0.2)
+    energyStatusDistortion.wet.rampTo(criticalFactor * 0.3, 0.08)
+
+    const lowpassFrequencyHz = 12000 - (criticalFactor * 10800)
+    energyStatusFilter.frequency.rampTo(lowpassFrequencyHz, 0.1)
+
+    const baseGain = (0.17 + ((1 - normalized) * 0.05)) * energyStatusVolume
+    energyStatusGain.gain.rampTo(baseGain, 0.08)
+    energyStatusCrackleGain.gain.rampTo((0.001 + (criticalFactor * 0.045)) * energyStatusVolume, 0.08)
   } // end function updatePlayerEnergyStatusAudio
 
   const playPitchCenterConfirm = (): void => {

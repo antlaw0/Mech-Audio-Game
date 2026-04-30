@@ -1146,10 +1146,11 @@ function startTestMap(): void {
       `paused = ${isPaused}`,
       `console.open = ${isConsoleOpen}`,
       `player = mapX:${player.x.toFixed(2)} mapY:${player.y.toFixed(2)} centeredX:${centered.x.toFixed(2)} centeredY:${centered.y.toFixed(2)} z:${(player.z ?? 0).toFixed(2)} angle:${((player.angle * 180) / Math.PI).toFixed(1)} pitch:${((player.pitch * 180) / Math.PI).toFixed(1)}`,
+      `player vitals = hp:${player.hp.toFixed(1)}/${player.maxHp.toFixed(1)} ep:${player.ep.toFixed(1)}/${player.maxEp.toFixed(1)}`,
       `player.flight = state:${player.flightState ?? 'grounded'} flying:${player.isFlying ? 'true' : 'false'} sharedHeight:${getSharedFlightHeight().toFixed(2)}`,
       `music.track = ${audio.getMusicTrack()}`,
       `weapon = type:${playerWeapon.weaponType} accuracy:${playerWeapon.accuracy.toFixed(2)} pellets:${playerWeapon.projectileCount} spread:${playerWeapon.spreadDegrees.toFixed(1)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fullAuto:${playerWeapon.isFullAuto} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)}`,
-      `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} music:${audio.getVolumeChannel('music').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)}`,
+      `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} music:${audio.getVolumeChannel('music').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)} energy:${audio.getVolumeChannel('energyStatus').toFixed(2)}`,
       `audio categories = proximity:${audio.getCategoryEnabled('proximity')}@${audio.getVolumeChannel('proximity').toFixed(2)} objects:${audio.getCategoryEnabled('objects')}@${audio.getVolumeChannel('objects').toFixed(2)} enemies:${audio.getCategoryEnabled('enemies')}@${audio.getVolumeChannel('enemies').toFixed(2)} navigation:${audio.getCategoryEnabled('navigation')}@${audio.getVolumeChannel('navigation').toFixed(2)}`
     ]
   } // end function getStateLines
@@ -1180,6 +1181,24 @@ function startTestMap(): void {
       set: (rawValue) => {
         placePlayer(player.x, player.y, parseFiniteNumber(rawValue, 'player.z'))
         return player.z ?? 0
+      }
+    },
+    'player.hp': {
+      description: 'Player health points from 0 to player.maxHp.',
+      helpPath: ['Player', 'Vitals'],
+      get: () => player.hp,
+      set: (rawValue) => {
+        player.hp = Math.max(0, Math.min(player.maxHp, parseFiniteNumber(rawValue, 'player.hp')))
+        return player.hp
+      }
+    },
+    'player.ep': {
+      description: 'Player energy points from 0 to player.maxEp.',
+      helpPath: ['Player', 'Vitals'],
+      get: () => player.ep,
+      set: (rawValue) => {
+        player.ep = Math.max(0, Math.min(player.maxEp, parseFiniteNumber(rawValue, 'player.ep')))
+        return player.ep
       }
     },
     'player.angle': {
@@ -1454,6 +1473,12 @@ function startTestMap(): void {
       helpPath: ['Audio', 'Mix'],
       get: () => audio.getVolumeChannel('flightLoop'),
       set: (rawValue) => audio.setVolumeChannel('flightLoop', parseFiniteNumber(rawValue, 'audio.flightLoop.volume'))
+    },
+    'audio.energy.volume': {
+      description: 'Player energy status loop volume scalar from 0 to 2.',
+      helpPath: ['Audio', 'Mix'],
+      get: () => audio.getVolumeChannel('energyStatus'),
+      set: (rawValue) => audio.setVolumeChannel('energyStatus', parseFiniteNumber(rawValue, 'audio.energy.volume'))
     },
     'audio.proximity.enabled': {
       description: 'Enable or disable the proximity audio category.',
@@ -2116,7 +2141,10 @@ function startTestMap(): void {
     help: () => [
       'window.mechDev.getState()',
       'window.mechDev.execute("set audio.enemies.volume 0.4")',
+      'window.mechDev.execute("set audio.energy.volume 1.6")',
       'window.mechDev.execute("set audio.music.volume 0.2")',
+      'window.mechDev.execute("set player.hp 150")',
+      'window.mechDev.execute("set player.ep 75")',
       'window.mechDev.execute("music suspense")',
       'window.mechDev.setSharedFlightHeight(4)',
       'window.mechDev.setPlayerAltitude(1.5)',
