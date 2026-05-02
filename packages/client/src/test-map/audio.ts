@@ -98,7 +98,7 @@ class EnemyAudioRuntime {
   private readonly oneshotGain: Tone.Gain
   private readonly turnCueSynth: Tone.Synth
   private readonly radarEchoSynth: Tone.FMSynth
-  private lastFacingAngle = 0
+  private lastFacingAngle: number | null = null
   private passivePingTimerSeconds = 0
   private turnCueCooldownSeconds = 0
   private attackDuckingTimerSeconds = 0
@@ -153,7 +153,9 @@ class EnemyAudioRuntime {
     })
     this.radarEchoSynth.connect(this.oneshotGain)
 
-    this.lastFacingAngle = 0
+    // lastFacingAngle stays null until the first updateAudio call to prevent
+    // a spurious first-frame turn cue caused by comparing a real facing angle
+    // against the default zero, which would fire at full volume via Tone.js lookahead.
     this.passivePingTimerSeconds = this.randomPassiveIntervalSeconds()
   } // end constructor
 
@@ -200,11 +202,13 @@ class EnemyAudioRuntime {
     this.idleGain.gain.rampTo(0, AUDIO_CONFIG.enemy.idleFadeSeconds)
     this.movementGain.gain.rampTo(enemy.isAlive ? 1 : 0, AUDIO_CONFIG.enemy.movementFadeSeconds)
 
+    if (this.lastFacingAngle !== null) {
     const facingDelta = Math.abs(normalizeAngle(enemy.facingAngle - this.lastFacingAngle))
     if (facingDelta > AUDIO_CONFIG.enemy.turnCueThresholdRadians && this.turnCueCooldownSeconds <= 0 && enemy.isAlive) {
       this.triggerTurnCue('G5', '32n')
       this.turnCueCooldownSeconds = AUDIO_CONFIG.enemy.turnCueCooldownSeconds
-    } // end if turn cue should play
+    } // end if turn delta exceeds threshold
+    } // end if lastFacingAngle is initialized
 
     this.turnCueCooldownSeconds = Math.max(0, this.turnCueCooldownSeconds - dt)
     this.attackDuckingTimerSeconds = Math.max(0, this.attackDuckingTimerSeconds - dt)

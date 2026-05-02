@@ -1,7 +1,7 @@
 import type { AudioController, InputState } from './types.js'
 
 function shouldPreventDefault(code: string): boolean {
-  return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(code)
+  return ['Space'].includes(code)
 } // end function shouldPreventDefault
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -23,7 +23,7 @@ export function bindInput(
 ): void {
   const keys: Record<string, boolean> = {}
   const shouldHandleDirectionalSnap = (event: KeyboardEvent): boolean => {
-    return event.ctrlKey && (event.code === 'ArrowLeft' || event.code === 'ArrowRight')
+    return false
   } // end function shouldHandleDirectionalSnap
 
   const resumeAudioOnInteraction = (): void => {
@@ -76,31 +76,31 @@ export function bindInput(
         input.strafeRight = true
       } // end if KeyD
 
-      if (event.code === 'ArrowLeft') {
+      if (event.code === 'KeyJ') {
         input.turnLeft = true
-      } // end if ArrowLeft
+      } // end if KeyJ
 
-      if (event.code === 'ArrowRight') {
+      if (event.code === 'KeyL') {
         input.turnRight = true
-      } // end if ArrowRight
+      } // end if KeyL
 
-      if (event.code === 'ArrowUp') {
+      if (event.code === 'KeyI') {
         input.lookUp = true
         if (input.lookDown) {
           input.lookUp = false
           input.lookDown = false
           input.pitchResetPending = true
         } // end if pitch reset key combo detected
-      } // end if ArrowUp
+      } // end if KeyI
 
-      if (event.code === 'ArrowDown') {
+      if (event.code === 'KeyK') {
         input.lookDown = true
         if (input.lookUp) {
           input.lookUp = false
           input.lookDown = false
           input.pitchResetPending = true
         } // end if pitch reset key combo detected
-      } // end if ArrowDown
+      } // end if KeyK
 
       if (event.code === 'Space') {
         input.fireHeld = true
@@ -119,21 +119,7 @@ export function bindInput(
         input.sonarPingPending = true
       } // end if KeyE
 
-      if (event.code === 'KeyI') {
-        input.snapNorthPending = true
-      } // end if KeyI
 
-      if (event.code === 'KeyL') {
-        input.snapEastPending = true
-      } // end if KeyL
-
-      if (event.code === 'KeyK') {
-        input.snapSouthPending = true
-      } // end if KeyK
-
-      if (event.code === 'KeyJ') {
-        input.snapWestPending = true
-      } // end if KeyJ
 
       if (event.code === 'Digit1') {
         input.selectedWeaponSlot = 1
@@ -235,7 +221,7 @@ export function bindInput(
         window.speechSynthesis.speak(new SpeechSynthesisUtterance(`navigation ${enabled ? 'on' : 'off'}`))
       } // end if KeyV toggle navigation category
 
-      if ((event.code === 'ArrowLeft' || event.code === 'ArrowRight') && audio.isAudioStarted()) {
+      if ((event.code === 'KeyJ' || event.code === 'KeyL') && audio.isAudioStarted()) {
         audio.startServo()
       } // end if turn key and audio started
     } // end if key was not held
@@ -268,21 +254,21 @@ export function bindInput(
       input.strafeRight = false
     } // end if KeyD
 
-    if (event.code === 'ArrowLeft') {
+    if (event.code === 'KeyJ') {
       input.turnLeft = false
-    } // end if ArrowLeft
+    } // end if KeyJ
 
-    if (event.code === 'ArrowRight') {
+    if (event.code === 'KeyL') {
       input.turnRight = false
-    } // end if ArrowRight
+    } // end if KeyL
 
-    if (event.code === 'ArrowUp') {
+    if (event.code === 'KeyI') {
       input.lookUp = false
-    } // end if ArrowUp
+    } // end if KeyI
 
-    if (event.code === 'ArrowDown') {
+    if (event.code === 'KeyK') {
       input.lookDown = false
-    } // end if ArrowDown
+    } // end if KeyK
 
     if (event.code === 'Space') {
       input.fireHeld = false
@@ -300,29 +286,7 @@ export function bindInput(
       input.sonarPingPending = false
     } // end if KeyE
 
-    if (event.code === 'KeyI') {
-      input.snapNorthPending = false
-    } // end if KeyI
 
-    if (event.code === 'KeyL') {
-      input.snapEastPending = false
-    } // end if KeyL
-
-    if (event.code === 'KeyK') {
-      input.snapSouthPending = false
-    } // end if KeyK
-
-    if (event.code === 'KeyJ') {
-      input.snapWestPending = false
-    } // end if KeyJ
-
-    if (event.code === 'ArrowLeft') {
-      input.snapLeftPending = false
-    } // end if ArrowLeft directional snap
-
-    if (event.code === 'ArrowRight') {
-      input.snapRightPending = false
-    } // end if ArrowRight directional snap
 
     if (event.code === 'Digit1' || event.code === 'Digit2' || event.code === 'Digit3' || event.code === 'Digit4' || event.code === 'Digit5' || event.code === 'Digit6') {
       input.selectedWeaponSlot = null
@@ -377,7 +341,7 @@ export function bindInput(
     } // end if KeyN
 
     if (
-      (event.code === 'ArrowLeft' || event.code === 'ArrowRight' || event.code === 'ArrowUp' || event.code === 'ArrowDown') &&
+      (event.code === 'KeyJ' || event.code === 'KeyL' || event.code === 'KeyI' || event.code === 'KeyK') &&
       !input.turnLeft &&
       !input.turnRight &&
       !input.lookUp &&
