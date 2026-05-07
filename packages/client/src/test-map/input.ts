@@ -107,6 +107,11 @@ export function bindInput(
         input.firePending = true
       } // end if Space
 
+      if (event.code === 'Tab') {
+        event.preventDefault()
+        input.reloadPending = true
+      } // end if Tab
+
       if (event.code === 'KeyR') {
         input.meleePending = true
       } // end if KeyR

@@ -1,0 +1,35 @@
+ Volume in drive C is OS
+ Volume Serial Number is B62F-0CE0
+
+ Directory of C:\Users\alawl\Desktop\Game Dev Projects\MechAudio\Mech-Audio-Game
+
+05/04/2026  07:43 AM    <DIR>          .
+04/08/2026  11:42 AM    <DIR>          ..
+04/22/2026  01:55 PM                69 .gitignore
+05/02/2026  11:31 AM    <DIR>          .mech-audio
+04/26/2026  07:50 PM    <DIR>          .vscode
+04/26/2026  07:58 PM            11,112 AI_CONTEXT.md
+04/28/2026  04:06 PM    <DIR>          assets
+01/03/2026  08:36 PM               151 favicon.ico
+04/09/2026  09:45 AM               313 favicon.svg
+04/19/2026  07:05 PM                29 Index
+04/20/2026  04:48 PM               490 index.html
+04/26/2026  07:55 PM             1,431 Mech-Audio-Game.dev.code-workspace
+04/20/2026  03:01 PM             6,242 missile-sim.mjs
+04/21/2026  05:25 PM    <DIR>          node_modules
+05/04/2026  07:43 AM                 0 output.txt
+04/21/2026  05:25 PM           150,419 package-lock.json
+04/26/2026  04:59 PM             1,450 package.json
+04/08/2026  05:13 PM    <DIR>          packages
+04/22/2026  01:55 PM             1,715 README.md
+04/28/2026  04:22 PM             1,298 run.bat
+04/26/2026  07:55 PM    <DIR>          scripts
+04/28/2026  04:22 PM             1,181 stop.bat
+04/19/2026  07:05 PM                45 Test
+04/28/2026  10:12 AM            26,003 test-map.html
+04/08/2026  07:08 PM               390 tsconfig.base.json
+04/08/2026  07:08 PM               159 tsconfig.json
+04/23/2026  03:49 PM             3,950 typecheck_output.txt
+04/26/2026  07:56 PM             6,385 VSCode-Freeze-Investigation-2026-04-26.txt
+              20 File(s)        212,832 bytes
+               8 Dir(s)  37,189,185,536 bytes free

@@ -133,6 +133,7 @@ function setupCanvas(): {
 } // end function setupCanvas
 
 function startTestMap(): void {
+  const EMPTY_CLIP_SOUND_PATH = 'assets/sounds/weapons/emptyClip.ogg'
   const { canvas, width, height } = setupCanvas()
 
   const getInput = (id: string): HTMLInputElement | null => {
@@ -159,6 +160,7 @@ function startTestMap(): void {
   const sonarDestinationElement = document.getElementById('sonarDestination')
   const hpBarLabelElement = document.getElementById('hpBarLabel')
   const epBarLabelElement = document.getElementById('epBarLabel')
+  const ammoResourceLabelElement = document.getElementById('ammoResourceLabel')
   const hpBarFillElement = document.getElementById('hpBarFill')
   const epBarFillElement = document.getElementById('epBarFill')
   const playerNameElement = document.getElementById('playerName')
@@ -249,6 +251,9 @@ function startTestMap(): void {
   let isWeaponEditorOpen = false
   let playerFireCooldownSeconds = 0
   let playerMeleeCooldownSeconds = 0
+  let universalAmmoResource = 1200
+  let isReloading = false
+  let hasPlayedEmptyClipForCurrentTriggerPull = false
 
   const weaponLoadout: PlayerWeaponDefinition[] = PLAYER_WEAPON_DEFINITIONS.map((weapon) => ({
     ...weapon,
@@ -289,6 +294,7 @@ function startTestMap(): void {
     input.pitchResetPending = false
     input.fireHeld = false
     input.firePending = false
+    input.reloadPending = false
     input.meleePending = false
     input.flightTogglePending = false
     input.sonarPingPending = false
@@ -311,7 +317,48 @@ function startTestMap(): void {
     input.speakEpPending = false
     input.speakCoordsPending = false
     input.speakDestinationPending = false
+    hasPlayedEmptyClipForCurrentTriggerPull = false
   } // end function clearGameplayInputs
+
+  const getWeaponReloadCost = (weapon: PlayerWeaponDefinition): number => {
+    return Math.ceil(Math.max(0, weapon.clipSize) * Math.max(0, weapon.ammoResourcePerRound))
+  } // end function getWeaponReloadCost
+
+  const canAffordWeaponReload = (weapon: PlayerWeaponDefinition): boolean => {
+    return universalAmmoResource >= getWeaponReloadCost(weapon)
+  } // end function canAffordWeaponReload
+
+  const tryStartWeaponReload = (): void => {
+    if (isReloading) {
+      return
+    } // end if already reloading
+
+    if (playerWeapon.ammoInClip >= playerWeapon.clipSize) {
+      return
+    } // end if clip already full
+
+    const reloadCost = getWeaponReloadCost(playerWeapon)
+    if (reloadCost <= 0 || !canAffordWeaponReload(playerWeapon)) {
+      audio.playNegativeActionTone()
+      return
+    } // end if not enough universal ammo for reload
+
+    isReloading = true
+    const reloadWeapon = playerWeapon
+    const reloadWeaponId = playerWeapon.id
+
+    void audio.playWeaponReloadSequence(reloadWeapon.reloadDefinition)
+      .catch(() => undefined)
+      .finally(() => {
+        if (playerWeapon.id === reloadWeaponId) {
+          if (universalAmmoResource >= reloadCost) {
+            universalAmmoResource -= reloadCost
+            reloadWeapon.ammoInClip = reloadWeapon.clipSize
+          } // end if ammo still sufficient after reload delay
+        }
+        isReloading = false
+      })
+  } // end function tryStartWeaponReload
 
   const equipWeaponAtIndex = (requestedIndex: number): void => {
     if (weaponLoadout.length === 0) {
@@ -575,7 +622,15 @@ function startTestMap(): void {
       trackingRating: playerWeapon.trackingRating,
       explosionRadius: playerWeapon.explosionRadius,
       explosionDamage: playerWeapon.explosionDamage,
-      explosionSounds: [...playerWeapon.explosionSounds]
+      explosionSounds: [...playerWeapon.explosionSounds],
+      clipSize: playerWeapon.clipSize,
+      ammoInClip: playerWeapon.ammoInClip,
+      ammoResourcePerRound: playerWeapon.ammoResourcePerRound,
+      reloadDefinition: {
+        timeline: playerWeapon.reloadDefinition.timeline.map((segment) => ({ ...segment })),
+        servoLoopSoundPath: playerWeapon.reloadDefinition.servoLoopSoundPath,
+        servoEffects: playerWeapon.reloadDefinition.servoEffects.map((effect) => ({ ...effect }))
+      }
     } // end object weapon stats
   } // end function readWeaponEditorForm
 
@@ -1149,7 +1204,8 @@ function startTestMap(): void {
       `player vitals = hp:${player.hp.toFixed(1)}/${player.maxHp.toFixed(1)} ep:${player.ep.toFixed(1)}/${player.maxEp.toFixed(1)}`,
       `player.flight = state:${player.flightState ?? 'grounded'} flying:${player.isFlying ? 'true' : 'false'} sharedHeight:${getSharedFlightHeight().toFixed(2)}`,
       `music.track = ${audio.getMusicTrack()}`,
-      `weapon = type:${playerWeapon.weaponType} accuracy:${playerWeapon.accuracy.toFixed(2)} pellets:${playerWeapon.projectileCount} spread:${playerWeapon.spreadDegrees.toFixed(1)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fullAuto:${playerWeapon.isFullAuto} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)}`,
+      `weapon = type:${playerWeapon.weaponType} accuracy:${playerWeapon.accuracy.toFixed(2)} pellets:${playerWeapon.projectileCount} spread:${playerWeapon.spreadDegrees.toFixed(1)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fullAuto:${playerWeapon.isFullAuto} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)} clip:${playerWeapon.ammoInClip}/${playerWeapon.clipSize} reloadCost:${getWeaponReloadCost(playerWeapon)}`,
+      `ammo.universal = ${Math.round(universalAmmoResource)} reloading:${isReloading}`,
       `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} music:${audio.getVolumeChannel('music').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)} energy:${audio.getVolumeChannel('energyStatus').toFixed(2)}`,
       `audio categories = proximity:${audio.getCategoryEnabled('proximity')}@${audio.getVolumeChannel('proximity').toFixed(2)} objects:${audio.getCategoryEnabled('objects')}@${audio.getVolumeChannel('objects').toFixed(2)} enemies:${audio.getCategoryEnabled('enemies')}@${audio.getVolumeChannel('enemies').toFixed(2)} navigation:${audio.getCategoryEnabled('navigation')}@${audio.getVolumeChannel('navigation').toFixed(2)}`
     ]
@@ -2196,10 +2252,15 @@ function startTestMap(): void {
     if (input.selectedWeaponSlot !== null) {
       const selectedIndex = input.selectedWeaponSlot - 1
       input.selectedWeaponSlot = null
-      if (selectedIndex !== activeWeaponIndex && selectedIndex >= 0 && selectedIndex < weaponLoadout.length) {
+      if (!isReloading && selectedIndex !== activeWeaponIndex && selectedIndex >= 0 && selectedIndex < weaponLoadout.length) {
         equipWeaponAtIndex(selectedIndex)
       } // end if selected weapon changed
     } // end if selected weapon slot pending
+
+    if (input.reloadPending) {
+      input.reloadPending = false
+      tryStartWeaponReload()
+    } // end if manual reload requested
 
     const snapWasRequested = input.snapNorthPending
       || input.snapEastPending
@@ -2398,7 +2459,17 @@ function startTestMap(): void {
       input.firePending = false
     } // end if consume edge-trigger press
 
-    if (shouldAttemptShot && playerFireCooldownSeconds <= 0) {
+    if (!input.fireHeld) {
+      hasPlayedEmptyClipForCurrentTriggerPull = false
+    } // end if trigger is released
+
+    if (shouldAttemptShot && !isReloading && playerFireCooldownSeconds <= 0) {
+      if (playerWeapon.ammoInClip <= 0) {
+        if (!hasPlayedEmptyClipForCurrentTriggerPull) {
+          audio.fireGunshot(EMPTY_CLIP_SOUND_PATH)
+          hasPlayedEmptyClipForCurrentTriggerPull = true
+        } // end if empty clip sound has not played for this trigger pull
+      } else {
       const playerSpeed = Math.hypot(player.x - previousPlayerX, player.y - previousPlayerY) / Math.max(deltaSeconds, 0.0001)
       const maxMoveSpeed = player.isFlying ? PLAYER_FLIGHT_SPEED : PLAYER_SPEED
       const speedFraction = Math.min(1, playerSpeed / maxMoveSpeed)
@@ -2432,6 +2503,7 @@ function startTestMap(): void {
               speedFraction
             )
           } // end for each missile in shot
+          playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
         } // end if missile shot blocked or fired
       } else {
         audio.fireGunshot(playerWeapon.fireSoundPath)
@@ -2469,12 +2541,14 @@ function startTestMap(): void {
             playerWeapon.spreadDegrees
           )
         } // end if locked target for accuracy cone
+        playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
       } // end if missile or ballistic firing mode
+      } // end if weapon has ammo in clip
     } // end if fire input and cooldown allow
 
     if (input.meleePending) {
       input.meleePending = false
-      if (equippedMeleeWeapon && playerMeleeCooldownSeconds <= 0) {
+      if (!isReloading && equippedMeleeWeapon && playerMeleeCooldownSeconds <= 0) {
         const soundPath = equippedMeleeWeapon.swingSoundPaths[Math.floor(Math.random() * equippedMeleeWeapon.swingSoundPaths.length)]
           ?? equippedMeleeWeapon.swingSoundPaths[0]
         if (soundPath) {
@@ -2542,11 +2616,11 @@ function startTestMap(): void {
       const meleeRate = equippedMeleeWeapon?.meleeCooldownSeconds
       const meleeRange = equippedMeleeWeapon?.reach ?? 0
       if (awarenessWeaponNameElement) awarenessWeaponNameElement.textContent = `${playerWeapon.name} | R: ${meleeName}`
-      if (awarenessWeaponTypeElement) awarenessWeaponTypeElement.textContent = `${playerWeapon.weaponType} | melee`
+      if (awarenessWeaponTypeElement) awarenessWeaponTypeElement.textContent = `${playerWeapon.weaponType} | clip ${playerWeapon.ammoInClip}/${playerWeapon.clipSize}`
       if (awarenessWeaponDamageElement) awarenessWeaponDamageElement.textContent = `${playerWeapon.damagePerShot} | ${meleeDamage}`
-      if (awarenessWeaponRateElement) awarenessWeaponRateElement.textContent = `${rateOfFireLabel} | ${meleeRate?.toFixed(2) ?? '0.00'}s`
+      if (awarenessWeaponRateElement) awarenessWeaponRateElement.textContent = `${rateOfFireLabel} | ${isReloading ? 'Reloading...' : `${meleeRate?.toFixed(2) ?? '0.00'}s`}`
       if (awarenessWeaponRangeElement) awarenessWeaponRangeElement.textContent = `${playerWeapon.maxRange.toFixed(1)} | ${meleeRange.toFixed(1)}`
-      if (awarenessWeaponProjectilesElement) awarenessWeaponProjectilesElement.textContent = String(playerWeapon.projectileCount)
+      if (awarenessWeaponProjectilesElement) awarenessWeaponProjectilesElement.textContent = `${playerWeapon.projectileCount} | reload ${getWeaponReloadCost(playerWeapon)}`
       if (awarenessWeaponSpreadElement) awarenessWeaponSpreadElement.textContent = `${playerWeapon.spreadDegrees.toFixed(1)}°`
       if (awarenessWeaponAccuracyElement) awarenessWeaponAccuracyElement.textContent = `${(playerWeapon.accuracy * 100).toFixed(1)}%`
     } // end if weapon info element exists
@@ -2572,6 +2646,9 @@ function startTestMap(): void {
     if (epBarLabelElement) {
       epBarLabelElement.textContent = `${Math.round(player.ep)} / ${Math.round(player.maxEp)}`
     } // end if EP label element exists
+    if (ammoResourceLabelElement) {
+      ammoResourceLabelElement.textContent = `${Math.round(universalAmmoResource)} | clip ${playerWeapon.ammoInClip}/${playerWeapon.clipSize}${isReloading ? ' | RELOADING' : ''}`
+    } // end if universal ammo label exists
     if (hpBarFillElement instanceof HTMLElement) {
       hpBarFillElement.style.width = `${hpPercent}%`
     } // end if HP fill element exists

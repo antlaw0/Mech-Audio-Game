@@ -1,45 +1,92 @@
 {
   "files.watcherExclude": {
-    "**/.git/objects/**": true,
-    "**/.git/subtree-cache/**": true,
+    "**/.git/**": true,
+
     "**/node_modules/**": true,
-    "**/assets/**": true,
-    "**/assets/sounds/**": true,
-    "**/assets/audio/**": true,
     "**/packages/*/dist/**": true,
+
     "**/.mech-audio/**": true,
     "**/.next/**": true,
-    "**/.turbo/**": true
+    "**/.turbo/**": true,
+
+    "**/assets/sounds/**": true,
+    "**/assets/audio/**": true,
+
+    "**/*.tsbuildinfo": true
   },
+
   "files.exclude": {
     "**/node_modules": true,
+    "**/packages/*/dist": true,
+
     "**/assets/sounds": true,
     "**/assets/audio": true,
-    "**/packages/*/dist": true
+
+    "**/*.tsbuildinfo": true,
+    "**/*.d.ts.map": true,
+
+    "**/output.txt": true,
+    "**/typecheck_output.txt": true,
+    "**/*Freeze-Investigation*.txt": true
   },
+
   "search.exclude": {
+    "**/.git": true,
+
     "**/node_modules": true,
-    "**/assets": true,
+    "**/packages/*/dist": true,
+
+    "**/.mech-audio": true,
+
     "**/assets/sounds": true,
     "**/assets/audio": true,
-    "**/packages/*/dist": true
+
+    "**/*.tsbuildinfo": true,
+    "**/*.d.ts": true,
+    "**/*.d.ts.map": true,
+
+    "**/output.txt": true,
+    "**/typecheck_output.txt": true,
+    "**/*Freeze-Investigation*.txt": true
   },
+
   "typescript.tsserver.watchOptions": {
     "watchFile": "useFsEventsOnParentDirectory",
     "watchDirectory": "useFsEvents",
     "fallbackPolling": "dynamicPriority",
     "synchronousWatchDirectory": false,
+
     "excludeDirectories": [
       "**/node_modules",
-      "**/assets",
+      "**/packages/*/dist",
+
+      "**/.mech-audio",
+
       "**/assets/sounds",
-      "**/assets/audio",
-      "**/packages/*/dist"
+      "**/assets/audio"
     ]
   },
-  "typescript.tsserver.maxTsServerMemory": 4096,
+
+  "typescript.tsserver.maxTsServerMemory": 6144,
   "typescript.disableAutomaticTypeAcquisition": true,
+
   "npm.autoDetect": "off",
   "git.autorefresh": false,
-  "task.allowAutomaticTasks": "off"
+  "task.allowAutomaticTasks": "on",
+
+  "task.autoDetect": "off",
+
+  "terminal.integrated.confirmOnKill": "never",
+  "terminal.integrated.enableMultiLinePasteWarning": "never",
+
+  "security.workspace.trust.enabled": true,
+  "security.workspace.trust.startupPrompt": "never",
+  "security.workspace.trust.untrustedFiles": "open",
+
+  "search.followSymlinks": false,
+
+  "typescript.tsserver.experimental.enableProjectDiagnostics": false,
+
+  "explorer.autoReveal": false,
+  "breadcrumbs.enabled": true
 }

@@ -30,6 +30,7 @@ export interface InputState {
   pitchResetPending: boolean
   fireHeld: boolean
   firePending: boolean
+  reloadPending: boolean
   meleePending: boolean
   flightTogglePending: boolean
   sonarPingPending: boolean
@@ -54,6 +55,31 @@ export interface InputState {
   speakDestinationPending: boolean
   boostTogglePending: boolean
 } // end interface InputState
+
+export type ReloadTimelineSegment =
+  | {
+      type: 'audio'
+      soundPath: string
+    }
+  | {
+      type: 'pause'
+      durationMs: number
+    }
+
+export type ReloadServoEffectType = 'pitch' | 'distortion' | 'gain' | 'volume' | 'lowpass'
+
+export interface ReloadServoEffect {
+  type: ReloadServoEffectType
+  startMs: number
+  endMs: number
+  magnitude: number
+} // end interface ReloadServoEffect
+
+export interface WeaponReloadDefinition {
+  timeline: ReloadTimelineSegment[]
+  servoLoopSoundPath: string
+  servoEffects: ReloadServoEffect[]
+} // end interface WeaponReloadDefinition
 
 export interface WorldPosition {
   x: number
@@ -146,6 +172,14 @@ export interface WeaponStats {
   explosionDamage: number
   /** Explosion sound candidates. One is picked per explosion. */
   explosionSounds: string[]
+  /** Number of shots available in a full clip. */
+  clipSize: number
+  /** Current rounds available in this weapon's clip. */
+  ammoInClip: number
+  /** Universal ammo resource consumed per round loaded into this weapon's clip. */
+  ammoResourcePerRound: number
+  /** Reload timeline that defines clip audio sequencing and synchronized servo automation. */
+  reloadDefinition: WeaponReloadDefinition
 } // end interface WeaponStats
 
 export interface MeleeWeaponStats {
@@ -253,6 +287,7 @@ export interface AudioController {
   playBump: () => void
   playPitchCenterConfirm: () => void
   fireGunshot: (soundPath?: string) => void
+  playWeaponReloadSequence: (definition: WeaponReloadDefinition) => Promise<void>
   startFlightLoop: () => void
   stopFlightLoop: () => void
   startBoostAudio: () => void

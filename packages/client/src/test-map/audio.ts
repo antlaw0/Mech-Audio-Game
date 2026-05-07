@@ -19,7 +19,21 @@ import {
 } from './audio-utils.js'
 import { getEnemyDefinition } from './enemies/index.js'
 import type { EnemyAutomaticFireDefinition, EnemyId } from './enemies/enemyTypes.js'
-import type { AudioCategory, AudioController, AudioVolumeChannel, EnemyAudioState, FootstepTerrainLayer, IncomingProjectileAudioState, ObstructionAwareness, PlayerAudioState, SonarEcho, SpriteObject, WorldPosition } from './types.js'
+import type {
+  AudioCategory,
+  AudioController,
+  AudioVolumeChannel,
+  EnemyAudioState,
+  FootstepTerrainLayer,
+  IncomingProjectileAudioState,
+  ObstructionAwareness,
+  PlayerAudioState,
+  ReloadServoEffect,
+  WeaponReloadDefinition,
+  SonarEcho,
+  SpriteObject,
+  WorldPosition
+} from './types.js'
 import { findNearestDropEdgeContact, getTopSurfaceHeight, type WorldCollisionWorld } from './world-collision.js'
 
 interface EnemySoundSet {
@@ -655,8 +669,8 @@ export function createAudioController(): AudioController {
   let radarDetectionOscStarted = false
   let destinationToneOscStarted = false
   let masterVolume = 1
-  let ambienceVolume = 1
-  let musicVolume = 1
+  let ambienceVolume = 0
+  let musicVolume = 0
   let servoVolume = 1
   let footstepsVolume = 1
   let flightLoopVolume = 0.5
@@ -1045,6 +1059,13 @@ export function createAudioController(): AudioController {
   const defaultPlayerFireSoundPath = 'assets/sounds/weapons/pistol_fire.ogg'
   const playerFireSound = new Tone.Player(defaultPlayerFireSoundPath).toDestination()
   const playerFireSoundCache = new Map<string, Tone.Player>([[defaultPlayerFireSoundPath, playerFireSound]])
+  const reloadClipDurationMsCache = new Map<string, number>()
+  const reloadServoLoopFallbackPath = 'assets/sounds/servomotor.ogg'
+  const reloadServoPlayerCache = new Map<string, Tone.Player>()
+  const reloadServoGain = new Tone.Gain(0.001).toDestination()
+  const reloadServoPitch = new Tone.PitchShift(0).connect(reloadServoGain)
+  const reloadServoDistortion = new Tone.Distortion({ distortion: 0.2, wet: 0 }).connect(reloadServoPitch)
+  const reloadServoLowpass = new Tone.Filter({ type: 'lowpass', frequency: 18000, Q: 0.8 }).connect(reloadServoDistortion)
   const flightLoopGain = new Tone.Gain(0.78).toDestination()
   // Boost effect chain sits between the jet player and the main gain so effects
   // can be ramped without touching the user-configurable volume level.
@@ -1121,6 +1142,88 @@ export function createAudioController(): AudioController {
       panner
     }
   })
+
+  const waitForMs = (durationMs: number): Promise<void> => {
+    return new Promise((resolve) => {
+      window.setTimeout(resolve, Math.max(0, durationMs))
+    })
+  } // end function waitForMs
+
+  const resetReloadServoEffectNodes = (): void => {
+    reloadServoPitch.pitch = 0
+    reloadServoDistortion.wet.value = 0
+    reloadServoDistortion.distortion = 0.2
+    reloadServoGain.gain.value = 0.001
+    reloadServoLowpass.frequency.value = 18000
+  } // end function resetReloadServoEffectNodes
+
+  const getOrCreateWeaponSoundPlayer = async (soundPath: string): Promise<Tone.Player | null> => {
+    const cachedPlayer = playerFireSoundCache.get(soundPath)
+    if (cachedPlayer) {
+      if (!cachedPlayer.loaded) {
+        try {
+          await cachedPlayer.load(soundPath)
+        } catch {
+          return null
+        }
+      } // end if cached player needs loading
+
+      return cachedPlayer
+    } // end if sound player already exists
+
+    const dynamicPlayer = new Tone.Player(soundPath).toDestination()
+    playerFireSoundCache.set(soundPath, dynamicPlayer)
+    try {
+      await dynamicPlayer.load(soundPath)
+      return dynamicPlayer
+    } catch {
+      playerFireSoundCache.delete(soundPath)
+      dynamicPlayer.dispose()
+      return null
+    }
+  } // end function getOrCreateWeaponSoundPlayer
+
+  const getReloadClipDurationMs = async (soundPath: string): Promise<number> => {
+    const cachedDuration = reloadClipDurationMsCache.get(soundPath)
+    if (cachedDuration !== undefined) {
+      return cachedDuration
+    } // end if duration is cached
+
+    const player = await getOrCreateWeaponSoundPlayer(soundPath)
+    if (!player?.buffer.loaded) {
+      return 0
+    } // end if player buffer could not be loaded
+
+    const durationMs = Math.max(0, player.buffer.duration * 1000)
+    reloadClipDurationMsCache.set(soundPath, durationMs)
+    return durationMs
+  } // end function getReloadClipDurationMs
+
+  const getOrCreateReloadServoPlayer = async (soundPath: string): Promise<Tone.Player | null> => {
+    const cachedPlayer = reloadServoPlayerCache.get(soundPath)
+    if (cachedPlayer) {
+      if (!cachedPlayer.loaded) {
+        try {
+          await cachedPlayer.load(soundPath)
+        } catch {
+          return null
+        }
+      } // end if cached servo player needs loading
+      return cachedPlayer
+    } // end if servo player already cached
+
+    const player = new Tone.Player(soundPath).connect(reloadServoLowpass)
+    player.loop = true
+    reloadServoPlayerCache.set(soundPath, player)
+    try {
+      await player.load(soundPath)
+      return player
+    } catch {
+      reloadServoPlayerCache.delete(soundPath)
+      player.dispose()
+      return null
+    }
+  } // end function getOrCreateReloadServoPlayer
 
   const playerMechHitGain = new Tone.Gain(0.9).toDestination()
   const playerMechHitBaseFilter = new Tone.Filter(1200, 'bandpass').connect(playerMechHitGain)
@@ -2346,6 +2449,116 @@ export function createAudioController(): AudioController {
     getOrCreateEnemyRuntime(enemyId, resolveEnemyRuntimeType(enemyId, enemyType)).playDeath()
   } // end function playEnemyDeath
 
+  const applyReloadServoEffect = (effect: ReloadServoEffect): void => {
+    if (effect.type === 'pitch') {
+      const ratio = Math.max(0.05, 1 + effect.magnitude)
+      reloadServoPitch.pitch = 12 * Math.log2(ratio)
+      return
+    } // end if pitch effect
+
+    if (effect.type === 'distortion') {
+      const normalized = clamp(effect.magnitude, 0, 1)
+      reloadServoDistortion.wet.value = normalized
+      reloadServoDistortion.distortion = 0.05 + normalized * 0.9
+      return
+    } // end if distortion effect
+
+    if (effect.type === 'gain' || effect.type === 'volume') {
+      reloadServoGain.gain.value = Math.max(0.001, 0.001 + effect.magnitude)
+      return
+    } // end if gain/volume effect
+
+    if (effect.type === 'lowpass') {
+      reloadServoLowpass.frequency.value = Math.max(120, effect.magnitude)
+    } // end if lowpass effect
+  } // end function applyReloadServoEffect
+
+  const playWeaponReloadSequence = async (definition: WeaponReloadDefinition): Promise<void> => {
+    if (definition.timeline.length <= 0) {
+      return
+    } // end if reload timeline is empty
+
+    const clipEvents: Array<{ soundPath: string; startMs: number }> = []
+    let cursorMs = 0
+    for (const segment of definition.timeline) {
+      if (segment.type === 'pause') {
+        cursorMs += Math.max(0, segment.durationMs)
+        continue
+      } // end if segment is pause
+
+      const durationMs = await getReloadClipDurationMs(segment.soundPath)
+      clipEvents.push({ soundPath: segment.soundPath, startMs: cursorMs })
+      cursorMs += durationMs
+    } // end for each timeline segment
+
+    const totalDurationMs = Math.max(0, cursorMs)
+    if (totalDurationMs <= 0) {
+      return
+    } // end if timeline has no audible duration
+
+    let servoPlayer = await getOrCreateReloadServoPlayer(definition.servoLoopSoundPath)
+    if (!servoPlayer) {
+      servoPlayer = await getOrCreateReloadServoPlayer(reloadServoLoopFallbackPath)
+    } // end if requested servo bed could not be loaded
+
+    resetReloadServoEffectNodes()
+    const servoBaseGain = Math.max(0.001, AUDIO_CONFIG.player.servoVolume * masterVolume * servoVolume)
+    reloadServoGain.gain.value = servoBaseGain
+
+    if (servoPlayer) {
+      try {
+        if (servoPlayer.state === 'started') {
+          servoPlayer.stop()
+        } // end if servo player is already running
+      } catch {
+        // Ignore player stop races caused by overlapping user actions.
+      }
+      servoPlayer.loop = true
+      servoPlayer.start()
+    } // end if reload servo player exists
+
+    const scheduledTimers: number[] = []
+    for (const clipEvent of clipEvents) {
+      const timerId = window.setTimeout(() => {
+        fireGunshot(clipEvent.soundPath)
+      }, Math.max(0, clipEvent.startMs))
+      scheduledTimers.push(timerId)
+    } // end for each reload clip event
+
+    for (const effect of definition.servoEffects) {
+      const effectStartMs = Math.max(0, effect.startMs)
+      const effectEndMs = Math.max(effectStartMs, effect.endMs)
+      const startTimerId = window.setTimeout(() => {
+        applyReloadServoEffect(effect)
+      }, effectStartMs)
+      scheduledTimers.push(startTimerId)
+
+      const endTimerId = window.setTimeout(() => {
+        resetReloadServoEffectNodes()
+        reloadServoGain.gain.value = servoBaseGain
+      }, effectEndMs)
+      scheduledTimers.push(endTimerId)
+    } // end for each servo effect
+
+    await waitForMs(totalDurationMs)
+
+    for (const timerId of scheduledTimers) {
+      window.clearTimeout(timerId)
+    } // end for each scheduled timer
+
+    if (servoPlayer) {
+      try {
+        if (servoPlayer.state === 'started') {
+          servoPlayer.stop()
+        } // end if reload servo is still running
+      } catch {
+        // Ignore stop races when sequence ends during a state transition.
+      }
+    } // end if servo player exists
+
+    resetReloadServoEffectNodes()
+  } // end function playWeaponReloadSequence
+
   const fireGunshot = (soundPath: string = defaultPlayerFireSoundPath): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
@@ -3016,6 +3229,7 @@ export function createAudioController(): AudioController {
     playCollisionThud,
     playPitchCenterConfirm,
     fireGunshot,
+    playWeaponReloadSequence,
     playCardinalOrientationCue,
     setAimAssistEnabled,
     isAimAssistEnabled: () => aimAssistEnabled,

@@ -1,0 +1,1217 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Audio Combo Tester</title>
+  <!-- Tone.js CDN â€“ effect chain support -->
+  <script src="https://cdn.jsdelivr.net/npm/tone@15.0.4/build/Tone.js"></script>
+  <style>
+    :root {
+      --bg-1: #0b1315;
+      --bg-2: #132628;
+      --panel: rgba(9, 20, 21, 0.86);
+      --panel-border: #4dc4a0;
+      --text-main: #ecfff7;
+      --text-muted: #c9f5e6;
+      --accent: #75e3c2;
+      --accent-2: #ffd17d;
+      --danger: #ff8370;
+      --focus: #fff6a4;
+      --shadow: rgba(17, 113, 91, 0.4);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      color: var(--text-main);
+      background:
+        radial-gradient(1800px 900px at 10% 5%, rgba(69, 138, 122, 0.24), transparent 55%),
+        radial-gradient(1400px 800px at 95% 100%, rgba(249, 167, 63, 0.18), transparent 62%),
+        linear-gradient(120deg, var(--bg-1), var(--bg-2));
+      padding: 16px;
+    }
+
+    main {
+      max-width: 1080px;
+      margin: 0 auto;
+      display: grid;
+      gap: 14px;
+    }
+
+    .panel {
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: 0 14px 30px -14px var(--shadow);
+      padding: 14px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.4rem, 4vw, 2rem);
+      letter-spacing: 0.03em;
+    }
+
+    p {
+      margin: 8px 0 0;
+      color: var(--text-muted);
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .group {
+      display: grid;
+      gap: 6px;
+      min-width: 170px;
+      flex: 1;
+    }
+
+    label {
+      font-size: 0.92rem;
+      color: var(--text-muted);
+    }
+
+    input,
+    select,
+    textarea,
+    button {
+      font: inherit;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      border: 1px solid #8dd9be;
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: var(--text-main);
+      background: rgba(17, 41, 41, 0.9);
+    }
+
+    button {
+      border: 1px solid #8fd8be;
+      border-radius: 8px;
+      background: #18443d;
+      color: var(--text-main);
+      padding: 9px 12px;
+      cursor: pointer;
+      transition: transform 120ms ease, background 120ms ease;
+    }
+
+    button:hover {
+      background: #20554d;
+      transform: translateY(-1px);
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    .button-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .accent {
+      background: #27695f;
+      border-color: #96f4d2;
+    }
+
+    .warn {
+      background: #5f3129;
+      border-color: #ff9d8f;
+    }
+
+    .steps {
+      display: grid;
+      gap: 10px;
+    }
+
+    .step {
+      border: 1px solid rgba(156, 232, 207, 0.6);
+      border-radius: 10px;
+      padding: 10px;
+      background: rgba(17, 39, 39, 0.72);
+      display: grid;
+      gap: 10px;
+    }
+
+    .step-top {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .step-title {
+      margin: 0;
+      font-size: 1rem;
+      color: #effff9;
+    }
+
+    .step-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .grid-3,
+    .grid-4 {
+      display: grid;
+      gap: 10px;
+    }
+
+    .grid-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .checkbox-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-muted);
+    }
+
+    .checkbox-line input {
+      width: auto;
+    }
+
+    .status {
+      min-height: 24px;
+      color: #f8ffd6;
+      background: rgba(49, 54, 16, 0.65);
+      border: 1px solid #c9d47b;
+      border-radius: 8px;
+      padding: 8px 10px;
+      line-height: 1.35;
+    }
+
+    .hint {
+      font-size: 0.88rem;
+      color: #d0f2e6;
+    }
+
+    @media (max-width: 880px) {
+      .grid-3,
+      .grid-4 {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 560px) {
+      body {
+        padding: 10px;
+      }
+      .grid-3,
+      .grid-4 {
+        grid-template-columns: 1fr;
+      }
+      .step-top,
+      .controls {
+        flex-direction: column;
+        align-items: stretch;
+      }
+    }
+
+    /* â”€â”€ Preset panel â”€â”€ */
+    .preset-list {
+      list-style: none;
+      margin: 10px 0 0;
+      padding: 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .preset-list li {
+      display: flex;
+      gap: 4px;
+    }
+    .preset-name-tag {
+      padding: 6px 10px;
+      border: 1px solid #5db89c;
+      border-radius: 8px;
+      background: rgba(20,52,47,0.82);
+      color: var(--text-main);
+      font-size: 0.9rem;
+    }
+    .preset-load-btn {
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+    .preset-del-btn {
+      padding: 6px 8px;
+      border-radius: 8px;
+      border-color: #ff9d8f;
+      background: #5f3129;
+      font-size: 0.9rem;
+    }
+
+    /* â”€â”€ Tone effect stack â”€â”€ */
+    .tone-effects {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .tone-effect-row {
+      border: 1px solid rgba(255,210,120,0.5);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: rgba(38,34,14,0.7);
+      display: grid;
+      gap: 8px;
+    }
+    .tone-row-top {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .tone-params {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .tone-param {
+      display: grid;
+      gap: 4px;
+      min-width: 120px;
+      flex: 1;
+    }
+    .tone-param label {
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="panel" aria-labelledby="pageTitle">
+      <h1 id="pageTitle">Audio Combo Tester</h1>
+      <p>
+        Build a chain of audio clips and exact millisecond pauses, then play the full combo to validate reload timing and feel.
+      </p>
+    </section>
+
+    <section class="panel" aria-labelledby="transportHeading">
+      <h2 id="transportHeading">Combo Transport</h2>
+      <div class="controls">
+        <div class="group" style="max-width: 260px;">
+          <label for="comboRepeats">Repeat Full Chain</label>
+          <input id="comboRepeats" type="number" min="1" step="1" value="1" />
+        </div>
+        <div class="button-row" aria-label="Playback controls">
+          <button id="playButton" class="accent" type="button">Play Combo Sound</button>
+          <button id="stopButton" class="warn" type="button">Stop Playback</button>
+          <button id="clearButton" type="button">Clear All Steps</button>
+        </div>
+      </div>
+      <p class="hint">
+        Tip: pauses are exact in milliseconds. A 10% faster reload is usually modeled by reducing pause durations by 10%.
+      </p>
+      <div id="status" class="status" role="status" aria-live="polite">Ready.</div>
+    </section>
+
+    <!-- â”€â”€ Global Timing Scaler â”€â”€ -->
+    <section class="panel" aria-labelledby="scalerHeading">
+      <h2 id="scalerHeading">Global Timing Scaler</h2>
+      <p>Scale all pause durations in the chain by a multiplier. For example, 0.9 = 10% faster reload, 1.1 = 10% slower.</p>
+      <div class="controls" style="margin-top: 10px;">
+        <div class="group" style="max-width: 220px;">
+          <label for="scalerFactor">Multiplier</label>
+          <input id="scalerFactor" type="number" min="0.01" step="0.01" value="0.9" />
+        </div>
+        <button id="applyScalerButton" type="button">Apply to All Pauses</button>
+        <button id="resetScalerButton" type="button">Reset All Pauses to 120 ms</button>
+      </div>
+    </section>
+
+    <!-- â”€â”€ Preset Manager â”€â”€ -->
+    <section class="panel" aria-labelledby="presetHeading">
+      <h2 id="presetHeading">Preset Manager</h2>
+      <p>Save the current chain as a named preset. Presets are stored in this browser (localStorage) and can also be exported/imported as JSON files.</p>
+      <div class="controls" style="margin-top: 10px;">
+        <div class="group" style="max-width: 320px;">
+          <label for="presetName">Preset Name</label>
+          <input id="presetName" type="text" placeholder="Example: Shotgun Reload Fast" />
+        </div>
+        <div class="button-row">
+          <button id="savePresetButton" class="accent" type="button">Save Preset</button>
+          <button id="exportPresetButton" type="button">Export as JSON</button>
+        </div>
+      </div>
+      <div class="controls" style="margin-top: 8px;">
+        <div class="group" style="max-width: 320px;">
+          <label for="importPresetFile">Import Preset from JSON File</label>
+          <input id="importPresetFile" type="file" accept=".json,application/json" />
+        </div>
+      </div>
+      <h3 style="margin: 14px 0 0; font-size: 1rem; color: var(--text-muted);">Saved Presets</h3>
+      <ul id="presetList" class="preset-list" aria-live="polite"></ul>
+    </section>
+
+    <section class="panel" aria-labelledby="builderHeading">
+      <h2 id="builderHeading">Chain Builder</h2>
+      <p class="hint">Each audio step includes a Tone.js Effect Stack. Add effects like Reverb, Chorus, Distortion, Compressor, EQ3, Phaser, Vibrato, Tremolo, and Pitch Shift. Effects are applied in order, top to bottom.</p>
+      <div class="button-row" aria-label="Add step controls" style="margin-top: 10px;">
+        <button id="addAudioButton" class="accent" type="button">Add Audio Step</button>
+        <button id="addPauseButton" type="button">Add Pause Step</button>
+      </div>
+      <div id="steps" class="steps" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      // â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      const PRESET_STORAGE_KEY = "audio-combo-tester-presets";
+
+      const TONE_EFFECT_TYPES = [
+        { type: "Reverb",      label: "Reverb",       params: [{ key: "decay",      label: "Decay (s)",       min: 0.1,  max: 30,   step: 0.1,  default: 1.5  },
+                                                                { key: "preDelay",   label: "Pre-delay (s)",   min: 0,    max: 0.5,  step: 0.01, default: 0.01 }] },
+        { type: "Chorus",      label: "Chorus",       params: [{ key: "frequency",  label: "Frequency (Hz)",  min: 0.1,  max: 20,   step: 0.1,  default: 1.5  },
+                                                                { key: "delayTime",  label: "Delay (ms)",      min: 1,    max: 20,   step: 0.5,  default: 3.5  },
+                                                                { key: "depth",      label: "Depth",           min: 0,    max: 1,    step: 0.01, default: 0.7  }] },
+        { type: "Distortion",  label: "Distortion",   params: [{ key: "distortion", label: "Amount",          min: 0,    max: 1,    step: 0.01, default: 0.4  }] },
+        { type: "Compressor",  label: "Compressor",   params: [{ key: "threshold",  label: "Threshold (dB)",  min: -60,  max: 0,    step: 1,    default: -24  },
+                                                                { key: "ratio",      label: "Ratio",           min: 1,    max: 20,   step: 0.5,  default: 4    },
+                                                                { key: "attack",     label: "Attack (s)",      min: 0,    max: 1,    step: 0.001,default: 0.003},
+                                                                { key: "release",    label: "Release (s)",     min: 0,    max: 1,    step: 0.01, default: 0.25 }] },
+        { type: "EQ3",         label: "EQ3",          params: [{ key: "low",        label: "Low (dB)",        min: -40,  max: 20,   step: 1,    default: 0    },
+                                                                { key: "mid",        label: "Mid (dB)",        min: -40,  max: 20,   step: 1,    default: 0    },
+                                                                { key: "high",       label: "High (dB)",       min: -40,  max: 20,   step: 1,    default: 0    }] },
+        { type: "Phaser",      label: "Phaser",       params: [{ key: "frequency",  label: "Rate (Hz)",       min: 0.1,  max: 10,   step: 0.1,  default: 0.5  },
+                                                                { key: "octaves",    label: "Octaves",         min: 1,    max: 10,   step: 1,    default: 3    },
+                                                                { key: "baseFrequency", label: "Base Freq (Hz)", min: 50, max: 1000, step: 10,   default: 350  }] },
+        { type: "Vibrato",     label: "Vibrato",      params: [{ key: "frequency",  label: "Rate (Hz)",       min: 0.1,  max: 20,   step: 0.1,  default: 5    },
+                                                                { key: "depth",      label: "Depth",           min: 0,    max: 1,    step: 0.01, default: 0.1  }] },
+        { type: "Tremolo",     label: "Tremolo",      params: [{ key: "frequency",  label: "Rate (Hz)",       min: 0.1,  max: 20,   step: 0.1,  default: 10   },
+                                                                { key: "depth",      label: "Depth",           min: 0,    max: 1,    step: 0.01, default: 0.5  }] },
+        { type: "PitchShift",  label: "Pitch Shift",  params: [{ key: "pitch",      label: "Pitch (semitones)", min: -24, max: 24,  step: 0.5,  default: 0    },
+                                                                { key: "windowSize", label: "Window (s)",      min: 0.01, max: 0.5,  step: 0.01, default: 0.1  }] },
+      ];
+
+      // â”€â”€â”€ Web Audio context (raw scheduling) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const bufferCache = new Map();
+      const activeSources = new Set();
+      let playbackTimer = null;
+      let nextStepId = 1;
+      let isPlaying = false;
+      let nextToneEffectId = 1;
+
+      // â”€â”€â”€ App state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      const state = {
+        comboRepeats: 1,
+        steps: []
+      };
+
+      const els = {
+        comboRepeats:       document.getElementById("comboRepeats"),
+        playButton:         document.getElementById("playButton"),
+        stopButton:         document.getElementById("stopButton"),
+        clearButton:        document.getElementById("clearButton"),
+        addAudioButton:     document.getElementById("addAudioButton"),
+        addPauseButton:     document.getElementById("addPauseButton"),
+        steps:              document.getElementById("steps"),
+        status:             document.getElementById("status"),
+        scalerFactor:       document.getElementById("scalerFactor"),
+        applyScalerButton:  document.getElementById("applyScalerButton"),
+        resetScalerButton:  document.getElementById("resetScalerButton"),
+        presetName:         document.getElementById("presetName"),
+        savePresetButton:   document.getElementById("savePresetButton"),
+        exportPresetButton: document.getElementById("exportPresetButton"),
+        importPresetFile:   document.getElementById("importPresetFile"),
+        presetList:         document.getElementById("presetList")
+      };
+
+      // â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      function setStatus(message) {
+        els.status.textContent = message;
+      }
+
+      function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+      }
+
+      // â”€â”€â”€ Step factories â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      function createToneEffect(type) {
+        const def = TONE_EFFECT_TYPES.find((t) => t.type === type);
+        const params = {};
+        (def ? def.params : []).forEach((p) => { params[p.key] = p.default; });
+        return { id: nextToneEffectId++, type, wet: 0.5, params };
+      }
+
+      function createAudioStep() {
+        return {
+          id: nextStepId++,
+          type: "audio",
+          label: "",
+          sourceMode: "path",
+          path: "",
+          file: null,
+          volume: 1,
+          playbackRate: 1,
+          loopCount: 1,
+          lowpassEnabled: false,
+          lowpassHz: 12000,
+          delayEnabled: false,
+          delayMs: 0,
+          feedback: 0.2,
+          use3d: false,
+          x: 0,
+          y: 0,
+          z: -1,
+          refDistance: 1,
+          maxDistance: 30,
+          rolloffFactor: 1,
+          toneEffects: []
+        };
+      }
+
+      function createPauseStep() {
+        return { id: nextStepId++, type: "pause", pauseMs: 120 };
+      }
+
+      // â”€â”€â”€ Serialisation (for presets) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      function stepToSerializable(step) {
+        const s = Object.assign({}, step);
+        s.file = null; // File objects cannot be serialised
+        return s;
+      }
+
+      function stepsToSerializable(steps) {
+        return steps.map(stepToSerializable);
+      }
+
+      // â”€â”€â”€ Preset storage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      function loadPresetsFromStorage() {
+        try {
+          return JSON.parse(localStorage.getItem(PRESET_STORAGE_KEY) || "{}");
+        } catch (_) {
+          return {};
+        }
+      }
+
+      function savePresetsToStorage(presets) {
+        localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(presets));
+      }
+
+      function renderPresetList() {
+        const presets = loadPresetsFromStorage();
+        const names = Object.keys(presets);
+        if (names.length === 0) {
+          els.presetList.innerHTML = "<li><span class=\"hint\">No saved presets yet.</span></li>";
+          return;
+        }
+        els.presetList.innerHTML = names.map((name) => `
+          <li>
+            <span class="preset-name-tag">${escapeHtml(name)}</span>
+            <button class="preset-load-btn" type="button" data-preset-action="load" data-preset-name="${escapeHtml(name)}" aria-label="Load preset ${escapeHtml(name)}">Load</button>
+            <button class="preset-del-btn preset-load-btn" type="button" data-preset-action="delete" data-preset-name="${escapeHtml(name)}" aria-label="Delete preset ${escapeHtml(name)}">Delete</button>
+          </li>
+        `).join("");
+      }
+
+      function saveCurrentPreset() {
+        const name = els.presetName.value.trim();
+        if (!name) { setStatus("Enter a preset name first."); return; }
+        const presets = loadPresetsFromStorage();
+        presets[name] = {
+          comboRepeats: state.comboRepeats,
+          steps: stepsToSerializable(state.steps)
+        };
+        savePresetsToStorage(presets);
+        renderPresetList();
+        setStatus(`Preset "${name}" saved.`);
+      }
+
+      function loadPreset(name) {
+        const presets = loadPresetsFromStorage();
+        const preset = presets[name];
+        if (!preset) { setStatus(`Preset "${name}" not found.`); return; }
+        applyPresetData(preset);
+        setStatus(`Preset "${name}" loaded.`);
+      }
+
+      function deletePreset(name) {
+        const presets = loadPresetsFromStorage();
+        delete presets[name];
+        savePresetsToStorage(presets);
+        renderPresetList();
+        setStatus(`Preset "${name}" deleted.`);
+      }
+
+      function applyPresetData(data) {
+        stopPlayback(true);
+        state.comboRepeats = data.comboRepeats || 1;
+        els.comboRepeats.value = state.comboRepeats;
+
+        // Re-hydrate steps â€“ ensure toneEffects array and ids are unique
+        state.steps = (data.steps || []).map((s) => {
+          const step = Object.assign({}, s);
+          step.id = nextStepId++;
+          step.file = null;
+          if (step.toneEffects) {
+            step.toneEffects = step.toneEffects.map((e) => {
+              const eff = Object.assign({}, e, { params: Object.assign({}, e.params) });
+              eff.id = nextToneEffectId++;
+              return eff;
+            });
+          } else {
+            step.toneEffects = [];
+          }
+          return step;
+        });
+        renderSteps();
+      }
+
+      function exportPreset() {
+        const name = els.presetName.value.trim() || "combo-preset";
+        const data = {
+          name,
+          comboRepeats: state.comboRepeats,
+          steps: stepsToSerializable(state.steps)
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${name.replace(/[^a-z0-9_\-]/gi, "_")}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setStatus(`Exported preset "${name}".`);
+      }
+
+      function importPresetFromFile(file) {
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          try {
+            const data = JSON.parse(evt.target.result);
+            applyPresetData(data);
+            if (data.name) { els.presetName.value = data.name; }
+            setStatus(`Imported preset "${data.name || "(unnamed)"}".`);
+          } catch (_) {
+            setStatus("Import failed: invalid JSON.");
+          }
+        };
+        reader.readAsText(file);
+      }
+
+      // â”€â”€â”€ Timing scaler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      function applyScaler() {
+        const factor = parseFloat(els.scalerFactor.value);
+        if (!isFinite(factor) || factor <= 0) { setStatus("Enter a valid multiplier (e.g. 0.9)."); return; }
+        let count = 0;
+        state.steps.forEach((step) => {
+          if (step.type === "pause") {
+            step.pauseMs = Math.max(0, Math.round(step.pauseMs * factor));
+            count += 1;
+          }
+        });
+        renderSteps();
+        setStatus(`Applied Ã—${factor} to ${count} pause step(s).`);
+      }
+
+      function resetPauses() {
+        state.steps.forEach((step) => {
+          if (step.type === "pause") step.pauseMs = 120;
+        });
+        renderSteps();
+        setStatus("All pauses reset to 120 ms.");
+      }
+
+      // â”€â”€â”€ Rendering â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      function escapeHtml(str) {
+        return String(str)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function renderToneEffects(step) {
+        if (!step.toneEffects || step.toneEffects.length === 0) {
+          return `<p class="hint" style="margin-top:6px;">No Tone.js effects on this step.</p>`;
+        }
+
+        return `<div class="tone-effects">` + step.toneEffects.map((eff) => {
+          const def = TONE_EFFECT_TYPES.find((t) => t.type === eff.type) || { params: [] };
+          const paramsHtml = def.params.map((p) => `
+            <div class="tone-param">
+              <label for="tone-${eff.id}-${p.key}">${escapeHtml(p.label)}</label>
+              <input id="tone-${eff.id}-${p.key}" type="number" min="${p.min}" max="${p.max}" step="${p.step}" value="${eff.params[p.key] !== undefined ? eff.params[p.key] : p.default}"
+                data-tone-id="${eff.id}" data-tone-param="${p.key}" />
+            </div>
+          `).join("");
+          return `
+            <div class="tone-effect-row" data-tone-effect-id="${eff.id}">
+              <div class="tone-row-top">
+                <strong style="color:#ffd17d;">${escapeHtml(def.label || eff.type)}</strong>
+                <div class="tone-params">
+                  <div class="tone-param">
+                    <label for="tone-${eff.id}-wet">Wet</label>
+                    <input id="tone-${eff.id}-wet" type="number" min="0" max="1" step="0.01" value="${eff.wet}" data-tone-id="${eff.id}" data-tone-param="wet" />
+                  </div>
+                  ${paramsHtml}
+                  <button type="button" class="warn" data-action="remove-tone-effect" data-tone-id="${eff.id}" aria-label="Remove ${escapeHtml(eff.type)} effect" style="align-self:flex-end;">Remove</button>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join("") + `</div>`;
+      }
+
+      function renderSteps() {
+        if (state.steps.length === 0) {
+          els.steps.innerHTML = `<p class="hint">No steps yet. Add an audio step or pause step.</p>`;
+          return;
+        }
+
+        const typeOptionsHtml = TONE_EFFECT_TYPES.map((t) => `<option value="${t.type}">${t.label}</option>`).join("");
+
+        const html = state.steps
+          .map((step, index) => {
+            if (step.type === "pause") {
+              return `
+                <article class="step" data-step-id="${step.id}" aria-label="Pause step ${index + 1}">
+                  <div class="step-top">
+                    <h3 class="step-title">Step ${index + 1}: Pause</h3>
+                    <div class="step-actions">
+                      <button type="button" data-action="move-up" aria-label="Move pause step ${index + 1} up">Move Up</button>
+                      <button type="button" data-action="move-down" aria-label="Move pause step ${index + 1} down">Move Down</button>
+                      <button type="button" data-action="remove" class="warn" aria-label="Remove pause step ${index + 1}">Remove</button>
+                    </div>
+                  </div>
+                  <div class="group" style="max-width: 320px;">
+                    <label for="pauseMs-${step.id}">Pause Duration (ms)</label>
+                    <input id="pauseMs-${step.id}" type="number" min="0" step="1" value="${step.pauseMs}" data-field="pauseMs" />
+                  </div>
+                </article>
+              `;
+            }
+
+            const selectedFileName = step.file ? escapeHtml(step.file.name) : "No upload selected";
+            return `
+              <article class="step" data-step-id="${step.id}" aria-label="Audio step ${index + 1}">
+                <div class="step-top">
+                  <h3 class="step-title">Step ${index + 1}: Audio</h3>
+                  <div class="step-actions">
+                    <button type="button" data-action="move-up" aria-label="Move audio step ${index + 1} up">Move Up</button>
+                    <button type="button" data-action="move-down" aria-label="Move audio step ${index + 1} down">Move Down</button>
+                    <button type="button" data-action="remove" class="warn" aria-label="Remove audio step ${index + 1}">Remove</button>
+                  </div>
+                </div>
+
+                <div class="grid-3">
+                  <div class="group">
+                    <label for="label-${step.id}">Step Label</label>
+                    <input id="label-${step.id}" type="text" value="${escapeHtml(step.label)}" data-field="label" placeholder="Example: shotgun shell in" />
+                  </div>
+                  <div class="group">
+                    <label for="sourceMode-${step.id}">Source Type</label>
+                    <select id="sourceMode-${step.id}" data-field="sourceMode">
+                      <option value="path" ${step.sourceMode === "path" ? "selected" : ""}>Relative URL/Path</option>
+                      <option value="upload" ${step.sourceMode === "upload" ? "selected" : ""}>Upload File</option>
+                    </select>
+                  </div>
+                  <div class="group">
+                    <label for="loopCount-${step.id}">Loop Count</label>
+                    <input id="loopCount-${step.id}" type="number" min="1" step="1" value="${step.loopCount}" data-field="loopCount" />
+                  </div>
+                </div>
+
+                <div class="grid-3">
+                  <div class="group" style="grid-column: span 2;">
+                    <label for="path-${step.id}">Audio Path (when using path mode)</label>
+                    <input id="path-${step.id}" type="text" value="${escapeHtml(step.path)}" data-field="path" placeholder="Example: ./assets/sounds/weapons/reload/shotgun-part1.ogg" />
+                  </div>
+                  <div class="group">
+                    <label for="upload-${step.id}">Upload Audio File</label>
+                    <input id="upload-${step.id}" type="file" accept="audio/*" data-field="file" />
+                    <span class="hint" aria-live="polite">${selectedFileName}</span>
+                  </div>
+                </div>
+
+                <div class="grid-4">
+                  <div class="group">
+                    <label for="volume-${step.id}">Volume</label>
+                    <input id="volume-${step.id}" type="number" min="0" step="0.05" value="${step.volume}" data-field="volume" />
+                  </div>
+                  <div class="group">
+                    <label for="playbackRate-${step.id}">Playback Rate</label>
+                    <input id="playbackRate-${step.id}" type="number" min="0.1" step="0.05" value="${step.playbackRate}" data-field="playbackRate" />
+                  </div>
+                  <div class="group">
+                    <label for="delayMs-${step.id}">Delay (ms)</label>
+                    <input id="delayMs-${step.id}" type="number" min="0" step="1" value="${step.delayMs}" data-field="delayMs" />
+                  </div>
+                  <div class="group">
+                    <label for="feedback-${step.id}">Delay Feedback</label>
+                    <input id="feedback-${step.id}" type="number" min="0" max="0.95" step="0.05" value="${step.feedback}" data-field="feedback" />
+                  </div>
+                </div>
+
+                <div class="grid-4">
+                  <label class="checkbox-line"><input type="checkbox" data-field="lowpassEnabled" ${step.lowpassEnabled ? "checked" : ""} />Enable Lowpass Filter</label>
+                  <div class="group">
+                    <label for="lowpassHz-${step.id}">Lowpass Hz</label>
+                    <input id="lowpassHz-${step.id}" type="number" min="30" step="10" value="${step.lowpassHz}" data-field="lowpassHz" />
+                  </div>
+                  <label class="checkbox-line"><input type="checkbox" data-field="delayEnabled" ${step.delayEnabled ? "checked" : ""} />Enable Delay</label>
+                  <label class="checkbox-line"><input type="checkbox" data-field="use3d" ${step.use3d ? "checked" : ""} />Enable 3D Position</label>
+                </div>
+
+                <div class="grid-4">
+                  <div class="group">
+                    <label for="x-${step.id}">X</label>
+                    <input id="x-${step.id}" type="number" step="0.1" value="${step.x}" data-field="x" />
+                  </div>
+                  <div class="group">
+                    <label for="y-${step.id}">Y</label>
+                    <input id="y-${step.id}" type="number" step="0.1" value="${step.y}" data-field="y" />
+                  </div>
+                  <div class="group">
+                    <label for="z-${step.id}">Z</label>
+                    <input id="z-${step.id}" type="number" step="0.1" value="${step.z}" data-field="z" />
+                  </div>
+                  <div class="group">
+                    <label for="refDistance-${step.id}">Ref Distance</label>
+                    <input id="refDistance-${step.id}" type="number" min="0.01" step="0.1" value="${step.refDistance}" data-field="refDistance" />
+                  </div>
+                </div>
+
+                <div class="grid-3">
+                  <div class="group">
+                    <label for="maxDistance-${step.id}">Max Distance</label>
+                    <input id="maxDistance-${step.id}" type="number" min="0.1" step="0.1" value="${step.maxDistance}" data-field="maxDistance" />
+                  </div>
+                  <div class="group">
+                    <label for="rolloffFactor-${step.id}">Rolloff Factor</label>
+                    <input id="rolloffFactor-${step.id}" type="number" min="0" step="0.1" value="${step.rolloffFactor}" data-field="rolloffFactor" />
+                  </div>
+                </div>
+
+                <!-- Tone.js effect stack for this step -->
+                <details>
+                  <summary style="cursor:pointer; color:var(--accent-2); margin-top:4px;">Tone.js Effect Stack (${step.toneEffects.length} effect${step.toneEffects.length !== 1 ? "s" : ""})</summary>
+                  <div style="margin-top:8px;">
+                    <div class="button-row">
+                      <select id="toneEffectType-${step.id}" aria-label="Effect type to add for step ${index + 1}">
+                        ${typeOptionsHtml}
+                      </select>
+                      <button type="button" data-action="add-tone-effect" aria-label="Add effect to step ${index + 1}">Add Effect</button>
+                    </div>
+                    ${renderToneEffects(step)}
+                  </div>
+                </details>
+              </article>
+            `;
+          })
+          .join("");
+
+        els.steps.innerHTML = html;
+      }
+
+      // â”€â”€â”€ Playback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      function stopPlayback(manual = true) {
+        for (const source of activeSources) {
+          try { source.stop(); } catch (_) {}
+        }
+        activeSources.clear();
+        if (playbackTimer) { clearTimeout(playbackTimer); playbackTimer = null; }
+        if (isPlaying || manual) {
+          setStatus(manual ? "Playback stopped." : "Playback finished.");
+        }
+        isPlaying = false;
+      }
+
+      async function decodeFromPath(path) {
+        const key = `path:${path}`;
+        if (bufferCache.has(key)) return bufferCache.get(key);
+        const resolved = new URL(path, window.location.href).toString();
+        const response = await fetch(resolved);
+        if (!response.ok) throw new Error(`Could not fetch ${path}`);
+        const arrayBuffer = await response.arrayBuffer();
+        const decoded = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+        bufferCache.set(key, decoded);
+        return decoded;
+      }
+
+      async function decodeFromFile(file) {
+        const key = `file:${file.name}:${file.size}:${file.lastModified}`;
+        if (bufferCache.has(key)) return bufferCache.get(key);
+        const arrayBuffer = await file.arrayBuffer();
+        const decoded = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+        bufferCache.set(key, decoded);
+        return decoded;
+      }
+
+      async function getBufferForStep(step) {
+        if (step.sourceMode === "upload") {
+          if (!step.file) throw new Error("Upload mode selected but no file chosen");
+          return decodeFromFile(step.file);
+        }
+        if (!step.path.trim()) throw new Error("Path mode selected but no audio path entered");
+        return decodeFromPath(step.path.trim());
+      }
+
+      function connectEffectChain(step, sourceNode) {
+        let tail = sourceNode;
+
+        if (step.lowpassEnabled) {
+          const lowpass = audioCtx.createBiquadFilter();
+          lowpass.type = "lowpass";
+          lowpass.frequency.value = clamp(Number(step.lowpassHz) || 12000, 30, 22050);
+          tail.connect(lowpass);
+          tail = lowpass;
+        }
+
+        if (step.delayEnabled && Number(step.delayMs) > 0) {
+          const inputGain = audioCtx.createGain();
+          const delay = audioCtx.createDelay(4);
+          const feedback = audioCtx.createGain();
+          const mix = audioCtx.createGain();
+          delay.delayTime.value = clamp((Number(step.delayMs) || 0) / 1000, 0, 4);
+          feedback.gain.value = clamp(Number(step.feedback) || 0, 0, 0.95);
+          tail.connect(inputGain);
+          inputGain.connect(mix);
+          inputGain.connect(delay);
+          delay.connect(feedback);
+          feedback.connect(delay);
+          delay.connect(mix);
+          tail = mix;
+        }
+
+        if (step.use3d) {
+          const panner = audioCtx.createPanner();
+          panner.panningModel = "HRTF";
+          panner.distanceModel = "inverse";
+          panner.refDistance = clamp(Number(step.refDistance) || 1, 0.01, 1000);
+          panner.maxDistance = clamp(Number(step.maxDistance) || 30, 0.1, 10000);
+          panner.rolloffFactor = clamp(Number(step.rolloffFactor) || 1, 0, 10);
+          panner.positionX.value = Number(step.x) || 0;
+          panner.positionY.value = Number(step.y) || 0;
+          panner.positionZ.value = Number(step.z) || -1;
+          tail.connect(panner);
+          tail = panner;
+        }
+
+        const gain = audioCtx.createGain();
+        gain.gain.value = clamp(Number(step.volume) || 1, 0, 5);
+        tail.connect(gain);
+        gain.connect(audioCtx.destination);
+        return gain;
+      }
+
+      /**
+       * Build and return a Tone.js effect chain node for the step.
+       * Returns a Tone.Player that plays the buffer through the effects,
+       * resolving when the player has finished.
+       * NOTE: Tone.js uses its own AudioContext â€“ we share the same one via
+       *       Tone.setContext so both APIs operate on the same graph.
+       */
+      async function buildTonePlayer(step, buffer, startTimeSeconds) {
+        // Sync Tone context with ours (Tone 14/15 API)
+        if (typeof Tone !== "undefined" && Tone.getContext().rawContext !== audioCtx) {
+          Tone.setContext(audioCtx);
+        }
+
+        return new Promise((resolve, reject) => {
+          try {
+            const toneEffects = (step.toneEffects || []).filter((e) => e.wet > 0);
+            const nodes = toneEffects.map((e) => {
+              let node;
+              const p = e.params || {};
+              if (e.type === "Reverb") {
+                node = new Tone.Reverb({ decay: p.decay || 1.5, preDelay: p.preDelay || 0.01 });
+              } else if (e.type === "Chorus") {
+                node = new Tone.Chorus(p.frequency || 1.5, p.delayTime || 3.5, p.depth || 0.7).start();
+              } else if (e.type === "Distortion") {
+                node = new Tone.Distortion(p.distortion || 0.4);
+              } else if (e.type === "Compressor") {
+                node = new Tone.Compressor({ threshold: p.threshold || -24, ratio: p.ratio || 4, attack: p.attack || 0.003, release: p.release || 0.25 });
+              } else if (e.type === "EQ3") {
+                node = new Tone.EQ3({ low: p.low || 0, mid: p.mid || 0, high: p.high || 0 });
+              } else if (e.type === "Phaser") {
+                node = new Tone.Phaser({ frequency: p.frequency || 0.5, octaves: p.octaves || 3, baseFrequency: p.baseFrequency || 350 });
+              } else if (e.type === "Vibrato") {
+                node = new Tone.Vibrato({ frequency: p.frequency || 5, depth: p.depth || 0.1 });
+              } else if (e.type === "Tremolo") {
+                node = new Tone.Tremolo({ frequency: p.frequency || 10, depth: p.depth || 0.5 }).start();
+              } else if (e.type === "PitchShift") {
+                node = new Tone.PitchShift({ pitch: p.pitch || 0, windowSize: p.windowSize || 0.1 });
+              }
+              if (node && node.wet) node.wet.value = clamp(Number(e.wet) || 0.5, 0, 1);
+              return node;
+            }).filter(Boolean);
+
+            const gainNode = new Tone.Gain(clamp(Number(step.volume) || 1, 0, 5));
+            const chain = nodes.length ? [gainNode, ...nodes, Tone.getDestination()] : [gainNode, Tone.getDestination()];
+
+            const player = new Tone.Player({ url: buffer, autostart: false });
+            player.playbackRate = clamp(Number(step.playbackRate) || 1, 0.1, 4);
+            player.connect(chain[0]);
+            for (let i = 0; i < chain.length - 1; i++) chain[i].connect(chain[i + 1]);
+
+            const rate = player.playbackRate;
+            const duration = buffer.duration / rate;
+
+            player.start(startTimeSeconds);
+            player.stop(startTimeSeconds + duration);
+
+            // Track source for stop
+            activeSources.add(player);
+
+            const durationMs = duration * 1000;
+            const timerId = setTimeout(() => {
+              try { player.dispose(); } catch (_) {}
+              nodes.forEach((n) => { try { n.dispose(); } catch (_) {} });
+              try { gainNode.dispose(); } catch (_) {}
+              activeSources.delete(player);
+              resolve(durationMs);
+            }, Math.max(0, (startTimeSeconds - audioCtx.currentTime) * 1000 + durationMs + 200));
+
+            resolve({ durationMs, timerId });
+          } catch (err) {
+            reject(err);
+          }
+        });
+      }
+
+      async function playCombo() {
+        if (isPlaying) stopPlayback(true);
+        if (state.steps.length === 0) { setStatus("Add at least one step before playing."); return; }
+
+        const repeats = Math.max(1, Math.floor(Number(state.comboRepeats) || 1));
+
+        try {
+          await audioCtx.resume();
+          if (typeof Tone !== "undefined") {
+            if (Tone.getContext().rawContext !== audioCtx) Tone.setContext(audioCtx);
+            await Tone.start();
+          }
+
+          setStatus("Preparing audio buffersâ€¦");
+
+          const startAt = audioCtx.currentTime + 0.05;
+          let cursor = startAt;
+          let scheduledAudioCount = 0;
+
+          for (let pass = 0; pass < repeats; pass += 1) {
+            for (const step of state.steps) {
+              if (step.type === "pause") {
+                cursor += Math.max(0, Number(step.pauseMs) || 0) / 1000;
+                continue;
+              }
+
+              const buffer = await getBufferForStep(step);
+              const localLoops = Math.max(1, Math.floor(Number(step.loopCount) || 1));
+              const hasToneEffects = step.toneEffects && step.toneEffects.some((e) => e.wet > 0);
+              const rate = clamp(Number(step.playbackRate) || 1, 0.1, 4);
+              const singleDuration = buffer.duration / rate;
+
+              for (let i = 0; i < localLoops; i += 1) {
+                if (hasToneEffects && typeof Tone !== "undefined") {
+                  // Use Tone.js path
+                  const { durationMs } = await buildTonePlayer(step, buffer, cursor);
+                  cursor += durationMs / 1000;
+                } else {
+                  // Use raw Web Audio path
+                  const source = audioCtx.createBufferSource();
+                  source.buffer = buffer;
+                  source.playbackRate.value = rate;
+                  connectEffectChain(step, source);
+                  source.start(cursor);
+                  source.stop(cursor + singleDuration);
+                  activeSources.add(source);
+                  source.addEventListener("ended", () => activeSources.delete(source), { once: true });
+                  cursor += singleDuration;
+                }
+                scheduledAudioCount += 1;
+              }
+            }
+          }
+
+          const totalMs = Math.max(0, Math.round((cursor - startAt) * 1000));
+          if (scheduledAudioCount === 0) { setStatus("No audio clips were scheduled. Check your steps."); return; }
+
+          isPlaying = true;
+          setStatus(`Playing combo: ${scheduledAudioCount} clip event(s), total ${totalMs} ms.`);
+          playbackTimer = setTimeout(() => stopPlayback(false), totalMs + 80);
+
+        } catch (error) {
+          stopPlayback(true);
+          setStatus(`Playback error: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      // â”€â”€â”€ Input binding â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      function updateFieldFromElement(step, field, el) {
+        if (el.type === "checkbox") { step[field] = el.checked; return; }
+        if (field === "file") {
+          step.file = (el.files && el.files[0]) ? el.files[0] : null;
+          return;
+        }
+        if (el.type === "number") { step[field] = Number(el.value); return; }
+        step[field] = el.value;
+      }
+
+      function stepIndexFromButton(button) {
+        const item = button.closest("[data-step-id]");
+        if (!item) return -1;
+        const id = Number(item.getAttribute("data-step-id"));
+        return state.steps.findIndex((s) => s.id === id);
+      }
+
+      function bindEvents() {
+        // Transport
+        els.comboRepeats.addEventListener("input", () => {
+          state.comboRepeats = Math.max(1, Math.floor(Number(els.comboRepeats.value) || 1));
+        });
+        els.addAudioButton.addEventListener("click", () => { state.steps.push(createAudioStep()); renderSteps(); setStatus("Audio step added."); });
+        els.addPauseButton.addEventListener("click", () => { state.steps.push(createPauseStep()); renderSteps(); setStatus("Pause step added."); });
+        els.clearButton.addEventListener("click", () => { stopPlayback(true); state.steps = []; renderSteps(); setStatus("All steps cleared."); });
+        els.playButton.addEventListener("click", playCombo);
+        els.stopButton.addEventListener("click", () => stopPlayback(true));
+
+        // Scaler
+        els.applyScalerButton.addEventListener("click", applyScaler);
+        els.resetScalerButton.addEventListener("click", resetPauses);
+
+        // Preset
+        els.savePresetButton.addEventListener("click", saveCurrentPreset);
+        els.exportPresetButton.addEventListener("click", exportPreset);
+        els.importPresetFile.addEventListener("change", () => {
+          const file = els.importPresetFile.files && els.importPresetFile.files[0];
+          if (file) importPresetFromFile(file);
+        });
+        els.presetList.addEventListener("click", (e) => {
+          const btn = e.target.closest("[data-preset-action]");
+          if (!btn) return;
+          const name = btn.getAttribute("data-preset-name");
+          if (btn.getAttribute("data-preset-action") === "load") loadPreset(name);
+          else if (btn.getAttribute("data-preset-action") === "delete") deletePreset(name);
+        });
+
+        // Step list (click â€“ move/remove/add-tone-effect/remove-tone-effect)
+        els.steps.addEventListener("click", (event) => {
+          const target = event.target;
+          if (!(target instanceof HTMLButtonElement)) return;
+          const action = target.getAttribute("data-action");
+
+          if (action === "add-tone-effect") {
+            const stepIndex = stepIndexFromButton(target);
+            if (stepIndex < 0) return;
+            const step = state.steps[stepIndex];
+            const selectEl = document.getElementById(`toneEffectType-${step.id}`);
+            const type = selectEl ? selectEl.value : "Reverb";
+            step.toneEffects.push(createToneEffect(type));
+            renderSteps();
+            setStatus(`Added ${type} effect to step ${stepIndex + 1}.`);
+            return;
+          }
+
+          if (action === "remove-tone-effect") {
+            const toneId = Number(target.getAttribute("data-tone-id"));
+            const wrapper = target.closest("[data-step-id]");
+            if (!wrapper) return;
+            const step = state.steps.find((s) => s.id === Number(wrapper.getAttribute("data-step-id")));
+            if (!step) return;
+            step.toneEffects = step.toneEffects.filter((e) => e.id !== toneId);
+            renderSteps();
+            setStatus("Effect removed.");
+            return;
+          }
+
+          const stepIndex = stepIndexFromButton(target);
+          if (stepIndex < 0) return;
+
+          if (action === "remove") {
+            state.steps.splice(stepIndex, 1);
+            renderSteps();
+            setStatus("Step removed.");
+          } else if (action === "move-up" && stepIndex > 0) {
+            [state.steps[stepIndex], state.steps[stepIndex - 1]] = [state.steps[stepIndex - 1], state.steps[stepIndex]];
+            renderSteps();
+            setStatus("Step moved up.");
+          } else if (action === "move-down" && stepIndex < state.steps.length - 1) {
+            [state.steps[stepIndex], state.steps[stepIndex + 1]] = [state.steps[stepIndex + 1], state.steps[stepIndex]];
+            renderSteps();
+            setStatus("Step moved down.");
+          }
+        });
+
+        // Step list (input â€“ field changes + Tone param changes)
+        els.steps.addEventListener("input", (event) => {
+          const target = event.target;
+          if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
+
+          // Tone param
+          if (target.hasAttribute("data-tone-id") && target.hasAttribute("data-tone-param")) {
+            const toneId = Number(target.getAttribute("data-tone-id"));
+            const param = target.getAttribute("data-tone-param");
+            const wrapper = target.closest("[data-step-id]");
+            if (!wrapper) return;
+            const step = state.steps.find((s) => s.id === Number(wrapper.getAttribute("data-step-id")));
+            if (!step) return;
+            const eff = step.toneEffects.find((e) => e.id === toneId);
+            if (!eff) return;
+            const val = Number(target.value);
+            if (param === "wet") eff.wet = val;
+            else eff.params[param] = val;
+            return;
+          }
+
+          // Step field
+          if (!target.hasAttribute("data-field")) return;
+          const field = target.getAttribute("data-field");
+          const wrapper = target.closest("[data-step-id]");
+          if (!wrapper) return;
+          const step = state.steps.find((s) => s.id === Number(wrapper.getAttribute("data-step-id")));
+          if (!step) return;
+          updateFieldFromElement(step, field, target);
+
+          if (field === "file") {
+            renderSteps();
+            setStatus(step.file ? `Loaded upload: ${step.file.name}` : "Upload cleared.");
+          }
+        });
+      }
+
+      // â”€â”€â”€ Boot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      bindEvents();
+      renderPresetList();
+
+      // Seed starter chain
+      state.steps.push(createAudioStep());
+      state.steps.push(createPauseStep());
+      state.steps.push(createAudioStep());
+      renderSteps();
+      setStatus("Starter combo loaded: audio > pause > audio.");
+    })();
+  </script>
+</body>
+</html>

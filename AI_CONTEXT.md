@@ -8,6 +8,16 @@
 
 This is an **audio-first first-person mech shooter**, inspired by the feel of the Armored Core series. The game is:
 
+
+## Working Memory System
+
+When SESSION_NOTES.md is open, treat it as highest-priority task context.
+
+- SESSION_NOTES.md = current task + constraints
+- AI_CONTEXT.md = stable architecture reference
+- Source code = implementation truth
+
+When SESSION_NOTES.md conflicts with other context, prefer SESSION_NOTES.md.
 * **Single-player offline by default**
 * With **optional future multiplayer**
 * Built using a **2D hybrid rendering model** with spatial audio providing the 3D experience

@@ -31,6 +31,7 @@ export function createInputState(): InputState {
     pitchResetPending: false,
     fireHeld: false,
     firePending: false,
+    reloadPending: false,
     meleePending: false,
     flightTogglePending: false,
     sonarPingPending: false,
