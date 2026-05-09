@@ -30,7 +30,7 @@ export class StrikerEnemyDefinition extends EnemyDefinitionBase {
       },
       sounds: {
         attackSound: 'assets/sounds/weapons/assault_fire.ogg',
-        startupSound: 'assets/sounds/weapons/reload.ogg',
+        startupSound: 'assets/sounds/weapons/reload/reload.ogg',
         hurtSound: 'assets/sounds/explosions/explosion_1B.ogg',
         deathSound: 'assets/sounds/explosions/explosion_2a.ogg',
         positionalLoopSound: 'assets/sounds/footstep2.ogg',

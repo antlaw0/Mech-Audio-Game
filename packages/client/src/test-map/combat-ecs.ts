@@ -1638,3 +1638,55 @@ export function getCombatRenderState(world: CombatEcsWorld): {
 
   return { bullets, enemies, tanks }
 } // end function getCombatRenderState
+
+export function getCombatEntityCounts(world: CombatEcsWorld): {
+  enemies: number
+  projectiles: number
+  total: number
+} {
+  let enemies = 0
+  let projectiles = 0
+  let total = 0
+
+  const allEntities = CombatQuery(world)
+  for (const entity of allEntities) {
+    if ((Meta.alive[entity] ?? 0) !== 1) {
+      continue
+    } // end if entity is not alive
+
+    total += 1
+    const kind = Meta.kind[entity] ?? 0
+    if (kind === KIND_TANK || kind === KIND_ENEMY) {
+      enemies += 1
+      continue
+    } // end if hostile entity counted
+
+    if (kind === KIND_BULLET || kind === KIND_TANK_PROJECTILE || kind === KIND_MISSILE) {
+      projectiles += 1
+    } // end if projectile entity counted
+  } // end for each entity
+
+  return { enemies, projectiles, total }
+} // end function getCombatEntityCounts
+
+export function clearCombatEntities(world: CombatEcsWorld): number {
+  let removed = 0
+  const allEntities = CombatQuery(world)
+
+  for (const entity of allEntities) {
+    const kind = Meta.kind[entity] ?? 0
+    const isHostile = kind === KIND_TANK || kind === KIND_ENEMY
+    const isProjectile = kind === KIND_BULLET || kind === KIND_TANK_PROJECTILE || kind === KIND_MISSILE
+    if (!isHostile && !isProjectile) {
+      continue
+    } // end if entity is not removable by clear command
+
+    world.customConfigs.delete(entity)
+    world.missileExplosionSounds.delete(entity)
+    world.missileTrails.delete(entity)
+    removeEntity(world, entity)
+    removed += 1
+  } // end for each entity
+
+  return removed
+} // end function clearCombatEntities

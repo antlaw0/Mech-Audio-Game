@@ -15,7 +15,9 @@ import {
 import { createAudioController } from './audio.js'
 import { AUDIO_NAVIGATION_CONFIG } from './audio-config.js'
 import {
+  clearCombatEntities,
   createCombatEcsWorld,
+  getCombatEntityCounts,
   getCombatRenderState,
   performPlayerMeleeAttack,
   spawnEnemyCloseInFront,
@@ -271,6 +273,65 @@ function startTestMap(): void {
   let missileLockConfirmed = false
   let missileLockToneTimerSeconds = 0
   let destinationPoiId: string | null = null
+  let devTimeScale = 1
+  let devAiEnabled = true
+  let devPhysicsDebugEnabled = false
+  let devAudioDebugEnabled = false
+  let devEventsDebugEnabled = false
+  let devCurrentHeat = 0
+  let devMaxHeat = 100
+  let devLastDamageAmount = 0
+  let devLastDamageType = 'none'
+  let devLastEvent = 'none'
+  let devEventCounter = 0
+  const devTimers = new Map<string, number>()
+  let devVelocityX = 0
+  let devVelocityY = 0
+  let devVelocityZ = 0
+  let devPrevX = player.x
+  let devPrevY = player.y
+  let devPrevZ = player.z ?? 0
+
+  const DEV_PART_SLOTS = [
+    'Head',
+    'Computer',
+    'ExoShell',
+    'Arms',
+    'Movement',
+    'Generator',
+    'ThermalRegulator',
+    'ShoulderLeft',
+    'ShoulderRight',
+    'LeftHand',
+    'RightHand',
+    'FlightSystem'
+  ] as const
+  type DevPartSlot = typeof DEV_PART_SLOTS[number]
+  type DevPartState = {
+    partId: string
+    name: string
+    integrity: number
+    maxIntegrity: number
+    online: boolean
+    weight: number
+    PDEF: number
+    EDEF: number
+    energyDrain: number
+  }
+  const devParts = new Map<DevPartSlot, DevPartState>(DEV_PART_SLOTS.map((slot) => [
+    slot,
+    {
+      partId: `placeholder.${slot}`,
+      name: `${slot} Placeholder`,
+      integrity: 100,
+      maxIntegrity: 100,
+      online: true,
+      weight: 0,
+      PDEF: 0,
+      EDEF: 0,
+      energyDrain: 0
+    }
+  ]))
 
   const knownPois: KnownPoi[] = TEST_MAP_NAVIGATION_POIS.map((poi) => ({
     id: poi.id,
@@ -1191,6 +1252,69 @@ function startTestMap(): void {
     return { x, y, z }
   } // end function parseTeleportArguments
 
+  const toDevPartSlot = (rawSlot: string): DevPartSlot => {
+    const matched = DEV_PART_SLOTS.find((slot) => slot.toLowerCase() === rawSlot.trim().toLowerCase())
+    if (!matched) {
+      throw new Error(`Unknown slot: ${rawSlot}.`) 
+    } // end if unknown slot requested
+    return matched
+  } // end function toDevPartSlot
+
+  const getDevTotalWeight = (): number => {
+    let total = 0
+    for (const part of devParts.values()) {
+      if (part.online) {
+        total += part.weight
+      }
+    } // end for each part
+    return total
+  } // end function getDevTotalWeight
+
+  const getDevTotalPdef = (): number => {
+    let total = 0
+    for (const part of devParts.values()) {
+      if (part.online) {
+        total += part.PDEF
+      }
+    } // end for each part
+    return total
+  } // end function getDevTotalPdef
+
+  const getDevTotalEdef = (): number => {
+    let total = 0
+    for (const part of devParts.values()) {
+      if (part.online) {
+        total += part.EDEF
+      }
+    } // end for each part
+    return total
+  } // end function getDevTotalEdef
+
+  const nextEventTag = (label: string): string => {
+    devEventCounter += 1
+    devLastEvent = `${devEventCounter}. ${label}`
+    return devLastEvent
+  } // end function nextEventTag
+
+  const formatDevPart = (slot: DevPartSlot): string => {
+    const part = devParts.get(slot)
+    if (!part) {
+      return `${slot}: <missing>`
+    } // end if part placeholder is unexpectedly missing
+
+    return `${slot}: ${part.name} (${part.partId}) integrity:${part.integrity.toFixed(1)}/${part.maxIntegrity.toFixed(1)} ${part.online ? 'ONLINE' : 'OFFLINE'}`
+  } // end function formatDevPart
+
+  const getPlayerMovementStateLabel = (): string => {
+    if (player.isBoosting) {
+      return 'boosting'
+    } // end if player is boosting
+    if (player.isFlying) {
+      return player.flightState ?? 'airborne'
+    } // end if player is flying
+    return 'grounded'
+  } // end function getPlayerMovementStateLabel
+
   const audioCategories: AudioCategory[] = ['proximity', 'objects', 'enemies', 'navigation']
   const enemyIds: EnemyId[] = ['tank', 'striker', 'brute', 'helicopter', 'bruiser', 'test-dummy']
 
@@ -1638,6 +1762,117 @@ function startTestMap(): void {
       examples: ['spawn tank', 'spawn helicopter']
     },
     {
+      syntax: 'spawn enemy <enemyId>',
+      description: 'Ticket alias for enemy spawning commands.',
+      helpPath: ['Enemies', 'Spawning'],
+      examples: ['spawn enemy tank']
+    },
+    {
+      syntax: 'player.get <view>',
+      description: 'Inspect player values using Ticket views such as all, stats, heat, and target.',
+      helpPath: ['Player', 'Vitals'],
+      examples: ['player.get all', 'player.get heat']
+    },
+    {
+      syntax: 'part.get <slot>',
+      description: 'Inspect placeholder part state by slot, integrity, stats, or state.',
+      helpPath: ['Gameplay', 'Session'],
+      examples: ['part.get all', 'part.get LeftHand integrity']
+    },
+    {
+      syntax: 'player.set <field> <value>',
+      description: 'Set ticket-focused player values: heat, energy, and aggregate placeholder weight.',
+      helpPath: ['Player', 'Vitals'],
+      examples: ['player.set heat 85', 'player.set energy 600']
+    },
+    {
+      syntax: 'part.set <slot> <action>',
+      description: 'Set part integrity or force slot state online/offline.',
+      helpPath: ['Gameplay', 'Session'],
+      examples: ['part.set LeftHand integrity 0', 'part.set Generator offline']
+    },
+    {
+      syntax: 'part.attach <partId> <slot>',
+      description: 'Attach a placeholder part identifier to the specified slot.',
+      helpPath: ['Gameplay', 'Session']
+    },
+    {
+      syntax: 'part.detach <slot>',
+      description: 'Detach the slot and revert it to a placeholder part entry.',
+      helpPath: ['Gameplay', 'Session']
+    },
+    {
+      syntax: 'player.damage <amount> <type>',
+      description: 'Apply direct player damage for combat testing.',
+      helpPath: ['Gameplay', 'Session'],
+      examples: ['player.damage 25 physical', 'player.damage 40 energy']
+    },
+    {
+      syntax: 'player.stagger',
+      description: 'Trigger the stagger test hook (placeholder until stagger pipeline is integrated).',
+      helpPath: ['Gameplay', 'Session']
+    },
+    {
+      syntax: 'player.overheat',
+      description: 'Set the player heat value to max.',
+      helpPath: ['Gameplay', 'Session']
+    },
+    {
+      syntax: 'player.shutdown',
+      description: 'Force player shutdown behavior for testing.',
+      helpPath: ['Gameplay', 'Session']
+    },
+    {
+      syntax: 'kill all',
+      description: 'Remove all hostile entities and active projectiles.',
+      helpPath: ['Enemies', 'Spawning']
+    },
+    {
+      syntax: 'time.scale <value>',
+      description: 'Scale simulation time from 0.00 to 4.00.',
+      helpPath: ['Gameplay', 'Session']
+    },
+    {
+      syntax: 'ai.enable',
+      description: 'Enable AI simulation steps.',
+      helpPath: ['Gameplay', 'Session']
+    },
+    {
+      syntax: 'ai.disable',
+      description: 'Disable AI simulation steps.',
+      helpPath: ['Gameplay', 'Session']
+    },
+    {
+      syntax: 'physics.debug on|off',
+      description: 'Toggle placeholder physics debug flag.',
+      helpPath: ['Gameplay', 'Session']
+    },
+    {
+      syntax: 'audio.debug on|off',
+      description: 'Toggle placeholder audio debug flag.',
+      helpPath: ['Audio', 'Mix']
+    },
+    {
+      syntax: 'events.debug on|off',
+      description: 'Toggle placeholder event debug flag.',
+      helpPath: ['Console', 'Utility']
+    },
+    {
+      syntax: 'save.build <name>',
+      description: 'Save a local build snapshot in browser storage.',
+      helpPath: ['Console', 'Utility']
+    },
+    {
+      syntax: 'load.build <name>',
+      description: 'Load a previously saved local build snapshot.',
+      helpPath: ['Console', 'Utility']
+    },
+    {
+      syntax: 'reset.build',
+      description: 'Reset build snapshot values to placeholder defaults.',
+      helpPath: ['Console', 'Utility']
+    },
+    {
       syntax: 'tp(x, y, z)',
       description: 'Teleport to centered coordinates where +X is east and +Y is north.',
       helpPath: ['Player', 'Position'],
@@ -1997,6 +2232,464 @@ function startTestMap(): void {
         : commandToken
     const args = tokens.slice(1)
     const bindings = getConsoleBindings()
+    const normalizedCommand = commandLine.trim().replace(/\s+/g, ' ').toLowerCase()
+
+    if (normalizedCommand === 'list systems') {
+      return [
+        'systems:',
+        `  ai: ${devAiEnabled ? 'enabled' : 'disabled'}`,
+        `  physicsDebug: ${devPhysicsDebugEnabled ? 'on' : 'off'}`,
+        `  audioDebug: ${devAudioDebugEnabled ? 'on' : 'off'}`,
+        `  eventsDebug: ${devEventsDebugEnabled ? 'on' : 'off'}`,
+        `  timeScale: ${devTimeScale.toFixed(2)}`
+      ]
+    } // end if list systems command
+
+    if (normalizedCommand === 'list parts') {
+      return ['parts:', ...DEV_PART_SLOTS.map((slot) => `  ${formatDevPart(slot)}`)]
+    } // end if list parts command
+
+    if (normalizedCommand === 'list slots') {
+      return ['slots:', ...DEV_PART_SLOTS.map((slot) => `  ${slot}`)]
+    } // end if list slots command
+
+    if (normalizedCommand === 'list weapons') {
+      return [
+        'weapons:',
+        ...weaponLoadout.map((weapon, index) => `  ${weapon.id} (${weapon.weaponType})${index === activeWeaponIndex ? ' [equipped]' : ''}`)
+      ]
+    } // end if list weapons command
+
+    if (normalizedCommand === 'list enemies') {
+      const combatState = getCombatRenderState(combatWorld)
+      const counts = getCombatEntityCounts(combatWorld)
+      return [
+        `enemy count: ${counts.enemies}`,
+        ...combatState.tanks.slice(0, 20).map((tank) => `  id:${tank.id} type:${tank.enemyType} hp:${Math.round(tank.health)}/${Math.round(tank.maxHealth)} alive:${tank.alive}`)
+      ]
+    } // end if list enemies command
+
+    if (normalizedCommand === 'list projectiles') {
+      const counts = getCombatEntityCounts(combatWorld)
+      return [`projectile count: ${counts.projectiles}`]
+    } // end if list projectiles command
+
+    if (normalizedCommand === 'list audio') {
+      return [
+        `audio.debug = ${devAudioDebugEnabled ? 'on' : 'off'}`,
+        `track = ${audio.getMusicTrack()}`,
+        `master = ${audio.getVolumeChannel('master').toFixed(2)}`,
+        ...audioCategories.map((category) => `  ${category}: enabled=${audio.getCategoryEnabled(category)} volume=${audio.getVolumeChannel(category).toFixed(2)}`)
+      ]
+    } // end if list audio command
+
+    if (normalizedCommand === 'list timers') {
+      if (devTimers.size === 0) {
+        return ['timers: none']
+      } // end if no tracked timers
+      return ['timers:', ...Array.from(devTimers.entries()).map(([name, value]) => `  ${name}=${value.toFixed(3)}`)]
+    } // end if list timers command
+
+    if (normalizedCommand === 'list events') {
+      return ['events:', `  ${devLastEvent}`]
+    } // end if list events command
+
+    if (normalizedCommand.startsWith('player.get ')) {
+      const mode = normalizedCommand.slice('player.get '.length)
+      const targetId = targetLockState.lockedTankId
+      const weight = getDevTotalWeight()
+      if (mode === 'all') {
+        return [
+          `position = (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${(player.z ?? 0).toFixed(2)})`,
+          `velocity = (${devVelocityX.toFixed(2)}, ${devVelocityY.toFixed(2)}, ${devVelocityZ.toFixed(2)})`,
+          `stats = hp:${player.hp.toFixed(1)}/${player.maxHp.toFixed(1)} ep:${player.ep.toFixed(1)}/${player.maxEp.toFixed(1)} heat:${devCurrentHeat.toFixed(1)}/${devMaxHeat.toFixed(1)} weight:${weight.toFixed(1)}`,
+          `movement = ${getPlayerMovementStateLabel()}`,
+          `target = ${targetId === null ? 'none' : String(targetId)}`
+        ]
+      } // end if player.get all
+      if (mode === 'stats') {
+        return [
+          `hp = ${player.hp.toFixed(1)}/${player.maxHp.toFixed(1)}`,
+          `ep = ${player.ep.toFixed(1)}/${player.maxEp.toFixed(1)}`,
+          `heat = ${devCurrentHeat.toFixed(1)}/${devMaxHeat.toFixed(1)}`,
+          `weight = ${weight.toFixed(1)}`,
+          `PDEF = ${getDevTotalPdef().toFixed(1)}`,
+          `EDEF = ${getDevTotalEdef().toFixed(1)}`
+        ]
+      } // end if player.get stats
+      if (mode === 'heat') {
+        return [`heat = ${devCurrentHeat.toFixed(1)}/${devMaxHeat.toFixed(1)}`]
+      } // end if player.get heat
+      if (mode === 'energy') {
+        return [`energy = ${player.ep.toFixed(1)}/${player.maxEp.toFixed(1)}`]
+      } // end if player.get energy
+      if (mode === 'weight') {
+        return [`weight = ${weight.toFixed(1)}`]
+      } // end if player.get weight
+      if (mode === 'movement') {
+        return [`movement = ${getPlayerMovementStateLabel()} flightState:${player.flightState ?? 'grounded'} flying:${!!player.isFlying}`]
+      } // end if player.get movement
+      if (mode === 'position') {
+        return [`position = (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${(player.z ?? 0).toFixed(2)})`]
+      } // end if player.get position
+      if (mode === 'velocity') {
+        return [`velocity = (${devVelocityX.toFixed(2)}, ${devVelocityY.toFixed(2)}, ${devVelocityZ.toFixed(2)})`]
+      } // end if player.get velocity
+      if (mode === 'target') {
+        return [`target = ${targetId === null ? 'none' : String(targetId)}`]
+      } // end if player.get target
+      throw new Error('Usage: player.get <all|stats|heat|energy|weight|movement|position|velocity|target>')
+    } // end if player.get command
+
+    if (normalizedCommand.startsWith('part.get ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const requestedSlot = rawArgs[1]
+      if (!requestedSlot) {
+        throw new Error('Usage: part.get <all|slot> [integrity|stats|state]')
+      } // end if part slot missing
+      if (requestedSlot.toLowerCase() === 'all') {
+        return ['part.get all:', ...DEV_PART_SLOTS.map((slot) => `  ${formatDevPart(slot)}`)]
+      } // end if listing all parts
+      const slot = toDevPartSlot(requestedSlot)
+      const part = devParts.get(slot)
+      if (!part) {
+        throw new Error(`Slot has no part data: ${slot}`)
+      } // end if slot missing state
+      const field = (rawArgs[2] ?? '').toLowerCase()
+      if (field === '' || field === 'state') {
+        return [`${slot} state = ${part.online ? 'ONLINE' : 'OFFLINE'}`]
+      } // end if state requested
+      if (field === 'integrity') {
+        return [`${slot} integrity = ${part.integrity.toFixed(1)}/${part.maxIntegrity.toFixed(1)}`]
+      } // end if integrity requested
+      if (field === 'stats') {
+        return [
+          `${slot} stats:`,
+          `  weight=${part.weight.toFixed(1)}`,
+          `  PDEF=${part.PDEF.toFixed(1)}`,
+          `  EDEF=${part.EDEF.toFixed(1)}`,
+          `  energyDrain=${part.energyDrain.toFixed(1)}`
+        ]
+      } // end if part stats requested
+      throw new Error('Usage: part.get <all|slot> [integrity|stats|state]')
+    } // end if part.get command
+
+    if (normalizedCommand.startsWith('player.set ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const field = (rawArgs[1] ?? '').toLowerCase()
+      const value = rawArgs.slice(2).join(' ')
+      if (value.length <= 0) {
+        throw new Error('Usage: player.set <heat|energy|weight> <value>')
+      } // end if value missing
+      if (field === 'heat') {
+        devCurrentHeat = Math.max(0, Math.min(devMaxHeat, parseFiniteNumber(value, 'player.set heat')))
+        nextEventTag(`Heat set to ${devCurrentHeat.toFixed(1)}`)
+        return [`player.heat = ${devCurrentHeat.toFixed(1)}/${devMaxHeat.toFixed(1)}`]
+      } // end if setting heat
+      if (field === 'energy') {
+        player.ep = Math.max(0, Math.min(player.maxEp, parseFiniteNumber(value, 'player.set energy')))
+        nextEventTag(`Energy set to ${player.ep.toFixed(1)}`)
+        return [`player.ep = ${player.ep.toFixed(1)}/${player.maxEp.toFixed(1)}`]
+      } // end if setting energy
+      if (field === 'weight') {
+        const requestedWeight = Math.max(0, parseFiniteNumber(value, 'player.set weight'))
+        const exoShell = devParts.get('ExoShell')
+        if (exoShell) {
+          exoShell.weight = requestedWeight
+        }
+        nextEventTag(`Weight set to ${requestedWeight.toFixed(1)}`)
+        return [`player.weight = ${getDevTotalWeight().toFixed(1)}`]
+      } // end if setting weight
+      throw new Error('Usage: player.set <heat|energy|weight> <value>')
+    } // end if player.set command
+
+    if (normalizedCommand.startsWith('part.set ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const slotRaw = rawArgs[1]
+      if (!slotRaw) {
+        throw new Error('Usage: part.set <slot> integrity <value> | offline | online')
+      } // end if slot missing
+      const slot = toDevPartSlot(slotRaw)
+      const part = devParts.get(slot)
+      if (!part) {
+        throw new Error(`Slot has no part data: ${slot}`)
+      } // end if missing slot data
+      const action = (rawArgs[2] ?? '').toLowerCase()
+      if (action === 'integrity') {
+        const value = parseFiniteNumber(rawArgs[3] ?? '', `${slot} integrity`)
+        part.integrity = Math.max(0, Math.min(part.maxIntegrity, value))
+        part.online = part.integrity > 0
+        nextEventTag(`${slot} integrity set to ${part.integrity.toFixed(1)}`)
+        return [`${slot} integrity = ${part.integrity.toFixed(1)}/${part.maxIntegrity.toFixed(1)} (${part.online ? 'ONLINE' : 'OFFLINE'})`]
+      } // end if setting integrity
+      if (action === 'offline') {
+        part.online = false
+        nextEventTag(`${slot} forced OFFLINE`)
+        return [`${slot} is OFFLINE`]
+      } // end if forcing offline
+      if (action === 'online') {
+        part.online = true
+        if (part.integrity <= 0) {
+          part.integrity = 1
+        }
+        nextEventTag(`${slot} forced ONLINE`)
+        return [`${slot} is ONLINE`]
+      } // end if forcing online
+      throw new Error('Usage: part.set <slot> integrity <value> | offline | online')
+    } // end if part.set command
+
+    if (normalizedCommand.startsWith('part.attach ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const partId = rawArgs[1]
+      const slotRaw = rawArgs[2]
+      if (!partId || !slotRaw) {
+        throw new Error('Usage: part.attach <partId> <slot>')
+      } // end if part attach args missing
+      const slot = toDevPartSlot(slotRaw)
+      const part = devParts.get(slot)
+      if (!part) {
+        throw new Error(`Slot has no part data: ${slot}`)
+      } // end if part state missing
+      part.partId = partId
+      part.name = partId
+      part.online = true
+      if (part.integrity <= 0) {
+        part.integrity = part.maxIntegrity
+      }
+      nextEventTag(`Attached ${partId} to ${slot}`)
+      return [`attached ${partId} to ${slot}`]
+    } // end if part.attach command
+
+    if (normalizedCommand.startsWith('part.detach ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const slotRaw = rawArgs[1]
+      if (!slotRaw) {
+        throw new Error('Usage: part.detach <slot>')
+      } // end if slot missing
+      const slot = toDevPartSlot(slotRaw)
+      const part = devParts.get(slot)
+      if (!part) {
+        throw new Error(`Slot has no part data: ${slot}`)
+      } // end if part state missing
+      part.partId = `placeholder.${slot}`
+      part.name = `${slot} Placeholder`
+      part.integrity = part.maxIntegrity
+      part.online = false
+      part.weight = 0
+      part.PDEF = 0
+      part.EDEF = 0
+      part.energyDrain = 0
+      nextEventTag(`Detached part from ${slot}`)
+      return [`detached part from ${slot}`]
+    } // end if part.detach command
+
+    if (normalizedCommand.startsWith('player.damage ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const amount = Math.max(0, parseFiniteNumber(rawArgs[1] ?? '', 'player.damage amount'))
+      const damageType = (rawArgs[2] ?? 'physical').toLowerCase()
+      player.hp = Math.max(0, player.hp - amount)
+      devLastDamageAmount = amount
+      devLastDamageType = damageType
+      devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + (amount * 0.1))
+      nextEventTag(`Player damaged: ${amount.toFixed(1)} ${damageType}`)
+      return [`player.hp = ${player.hp.toFixed(1)}/${player.maxHp.toFixed(1)}`]
+    } // end if player.damage command
+
+    if (normalizedCommand === 'player.stagger') {
+      nextEventTag('Player stagger triggered (placeholder)')
+      return ['player.stagger: triggered (TODO hook for stagger system).']
+    } // end if player.stagger command
+
+    if (normalizedCommand === 'player.overheat') {
+      devCurrentHeat = devMaxHeat
+      nextEventTag('Player overheat triggered')
+      return [`player.heat = ${devCurrentHeat.toFixed(1)}/${devMaxHeat.toFixed(1)}`]
+    } // end if player.overheat command
+
+    if (normalizedCommand === 'player.shutdown') {
+      player.ep = 0
+      player.isBoosting = false
+      player.isFlying = false
+      player.flightState = 'grounded'
+      if (audio.isAudioStarted()) {
+        audio.stopBoostAudio()
+        audio.stopFlightLoop()
+      }
+      nextEventTag('Player shutdown triggered')
+      return ['player shutdown applied: ep=0, flight disabled, boost disabled.']
+    } // end if player.shutdown command
+
+    if (normalizedCommand.startsWith('spawn enemy ')) {
+      const enemyId = (commandLine.trim().split(/\s+/)[2] ?? '') as EnemyId
+      if (!enemyIds.includes(enemyId)) {
+        throw new Error(`Usage: spawn enemy <${enemyIds.join('|')}>`)
+      } // end if enemy id invalid
+      const spawned = spawnRandomEnemy(combatWorld, collisionWorld, player, enemyId)
+      nextEventTag(`Spawn enemy: ${enemyId} (${spawned ? 'ok' : 'failed'})`)
+      return [spawned ? `${enemyId} spawned.` : `No valid spawn location for ${enemyId}.`]
+    } // end if spawn enemy command
+
+    if (normalizedCommand === 'kill all') {
+      const removed = clearCombatEntities(combatWorld)
+      nextEventTag(`Kill all removed ${removed} entities`)
+      return [`Removed ${removed} hostile/projectile entities.`]
+    } // end if kill all command
+
+    if (normalizedCommand.startsWith('time.scale ')) {
+      const rawValue = commandLine.trim().split(/\s+/)[1] ?? ''
+      devTimeScale = Math.max(0, Math.min(4, parseFiniteNumber(rawValue, 'time.scale')))
+      nextEventTag(`Time scale set to ${devTimeScale.toFixed(2)}`)
+      return [`time.scale = ${devTimeScale.toFixed(2)}`]
+    } // end if time.scale command
+
+    if (normalizedCommand === 'ai.enable') {
+      devAiEnabled = true
+      nextEventTag('AI enabled')
+      return ['ai = enabled']
+    } // end if ai.enable command
+
+    if (normalizedCommand === 'ai.disable') {
+      devAiEnabled = false
+      nextEventTag('AI disabled')
+      return ['ai = disabled']
+    } // end if ai.disable command
+
+    if (normalizedCommand === 'physics.debug on') {
+      devPhysicsDebugEnabled = true
+      nextEventTag('Physics debug enabled')
+      return ['physics.debug = on']
+    } // end if physics.debug on command
+
+    if (normalizedCommand === 'physics.debug off') {
+      devPhysicsDebugEnabled = false
+      nextEventTag('Physics debug disabled')
+      return ['physics.debug = off']
+    } // end if physics.debug off command
+
+    if (normalizedCommand === 'audio.debug on') {
+      devAudioDebugEnabled = true
+      nextEventTag('Audio debug enabled')
+      return ['audio.debug = on']
+    } // end if audio.debug on command
+
+    if (normalizedCommand === 'audio.debug off') {
+      devAudioDebugEnabled = false
+      nextEventTag('Audio debug disabled')
+      return ['audio.debug = off']
+    } // end if audio.debug off command
+
+    if (normalizedCommand === 'events.debug on') {
+      devEventsDebugEnabled = true
+      nextEventTag('Events debug enabled')
+      return ['events.debug = on']
+    } // end if events.debug on command
+
+    if (normalizedCommand === 'events.debug off') {
+      devEventsDebugEnabled = false
+      nextEventTag('Events debug disabled')
+      return ['events.debug = off']
+    } // end if events.debug off command
+
+    if (normalizedCommand.startsWith('save.build ')) {
+      const name = commandLine.trim().slice('save.build '.length).trim()
+      if (name.length <= 0) {
+        throw new Error('Usage: save.build <name>')
+      } // end if build name missing
+      const snapshot = {
+        player: {
+          hp: player.hp,
+          ep: player.ep,
+          heat: devCurrentHeat,
+          maxHeat: devMaxHeat,
+          x: player.x,
+          y: player.y,
+          z: player.z ?? 0
+        },
+        parts: DEV_PART_SLOTS.map((slot) => ({ slot, part: devParts.get(slot) })),
+        timeScale: devTimeScale,
+        aiEnabled: devAiEnabled
+      }
+      localStorage.setItem(`mech.dev.build.${name}`, JSON.stringify(snapshot))
+      nextEventTag(`Build saved: ${name}`)
+      return [`Saved build "${name}".`]
+    } // end if save.build command
+
+    if (normalizedCommand.startsWith('load.build ')) {
+      const name = commandLine.trim().slice('load.build '.length).trim()
+      if (name.length <= 0) {
+        throw new Error('Usage: load.build <name>')
+      } // end if build name missing
+      const rawSnapshot = localStorage.getItem(`mech.dev.build.${name}`)
+      if (!rawSnapshot) {
+        throw new Error(`No build saved with name "${name}".`)
+      } // end if snapshot missing
+      const snapshot = JSON.parse(rawSnapshot) as {
+        player?: { hp?: number; ep?: number; heat?: number; maxHeat?: number; x?: number; y?: number; z?: number }
+        parts?: Array<{ slot: DevPartSlot; part: DevPartState | undefined }>
+        timeScale?: number
+        aiEnabled?: boolean
+      }
+      if (snapshot.player) {
+        if (Number.isFinite(snapshot.player.hp)) {
+          player.hp = Math.max(0, Math.min(player.maxHp, snapshot.player.hp ?? player.hp))
+        }
+        if (Number.isFinite(snapshot.player.ep)) {
+          player.ep = Math.max(0, Math.min(player.maxEp, snapshot.player.ep ?? player.ep))
+        }
+        if (Number.isFinite(snapshot.player.heat)) {
+          devCurrentHeat = Math.max(0, snapshot.player.heat ?? devCurrentHeat)
+        }
+        if (Number.isFinite(snapshot.player.maxHeat)) {
+          devMaxHeat = Math.max(1, snapshot.player.maxHeat ?? devMaxHeat)
+        }
+        if (Number.isFinite(snapshot.player.x) && Number.isFinite(snapshot.player.y)) {
+          placePlayer(snapshot.player.x ?? player.x, snapshot.player.y ?? player.y, snapshot.player.z ?? (player.z ?? 0))
+        }
+      }
+      if (Array.isArray(snapshot.parts)) {
+        for (const entry of snapshot.parts) {
+          if (!entry || !DEV_PART_SLOTS.includes(entry.slot) || !entry.part) {
+            continue
+          }
+          devParts.set(entry.slot, { ...entry.part })
+        }
+      }
+      if (Number.isFinite(snapshot.timeScale)) {
+        devTimeScale = Math.max(0, Math.min(4, snapshot.timeScale ?? devTimeScale))
+      }
+      if (typeof snapshot.aiEnabled === 'boolean') {
+        devAiEnabled = snapshot.aiEnabled
+      }
+      nextEventTag(`Build loaded: ${name}`)
+      return [`Loaded build "${name}".`]
+    } // end if load.build command
+
+    if (normalizedCommand === 'reset.build') {
+      player.hp = player.maxHp
+      player.ep = player.maxEp
+      devCurrentHeat = 0
+      devMaxHeat = 100
+      devTimeScale = 1
+      devAiEnabled = true
+      devPhysicsDebugEnabled = false
+      devAudioDebugEnabled = false
+      devEventsDebugEnabled = false
+      for (const slot of DEV_PART_SLOTS) {
+        devParts.set(slot, {
+          partId: `placeholder.${slot}`,
+          name: `${slot} Placeholder`,
+          integrity: 100,
+          maxIntegrity: 100,
+          online: true,
+          weight: 0,
+          PDEF: 0,
+          EDEF: 0,
+          energyDrain: 0
+        })
+      }
+      nextEventTag('Build reset to placeholder defaults')
+      return ['Build reset to defaults.']
+    } // end if reset.build command
 
     if (command === 'help') {
       if (args.length === 0) {
@@ -2238,8 +2931,9 @@ function startTestMap(): void {
   }
 
   const gameLoop = (timestampMs: number): void => {
-    const deltaSeconds = Math.min((timestampMs - lastTimeMs) / 1000, 0.05)
+    const baseDeltaSeconds = Math.min((timestampMs - lastTimeMs) / 1000, 0.05)
     lastTimeMs = timestampMs
+    const deltaSeconds = baseDeltaSeconds * devTimeScale
 
     if (isPaused) {
       requestAnimationFrame(gameLoop)
@@ -2288,6 +2982,16 @@ function startTestMap(): void {
       },
       deltaSeconds
     )
+
+    if (deltaSeconds > 0) {
+      const currentZ = player.z ?? 0
+      devVelocityX = (player.x - devPrevX) / deltaSeconds
+      devVelocityY = (player.y - devPrevY) / deltaSeconds
+      devVelocityZ = (currentZ - devPrevZ) / deltaSeconds
+      devPrevX = player.x
+      devPrevY = player.y
+      devPrevZ = currentZ
+    } // end if velocity sample is valid
 
     const hpBeforeCombat = Math.max(0, player.hp)
 
@@ -2375,10 +3079,20 @@ function startTestMap(): void {
       spawnEnemyCloseInFront(combatWorld, collisionWorld, player, 'test-dummy')
     } // end if spawn test dummy pending
 
-    stepCombatEcsWorld(combatWorld, collisionWorld, audio, player, deltaSeconds)
+    if (devAiEnabled) {
+      stepCombatEcsWorld(combatWorld, collisionWorld, audio, player, deltaSeconds)
+    }
     if (player.hp < hpBeforeCombat) {
       audio.playPlayerHealthStatusTone(player.hp / Math.max(1, player.maxHp))
+      devLastDamageAmount = hpBeforeCombat - player.hp
+      devLastDamageType = 'incoming'
+      nextEventTag(`Player took ${devLastDamageAmount.toFixed(1)} incoming damage`)
     } // end if player took damage this frame
+
+    devTimers.set('player.fireCooldown', playerFireCooldownSeconds)
+    devTimers.set('player.meleeCooldown', playerMeleeCooldownSeconds)
+    devTimers.set('weapon.reload', isReloading ? 1 : 0)
+    devTimers.set('missile.lockProgressMs', missileLockProgressMs)
 
     audio.updatePlayerHealthStatusAudio(deltaSeconds, player.hp / Math.max(1, player.maxHp))
 

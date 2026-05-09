@@ -36,6 +36,22 @@ import type {
 } from './types.js'
 import { findNearestDropEdgeContact, getTopSurfaceHeight, type WorldCollisionWorld } from './world-collision.js'
 
+const AUDIO_BROWSER_DEBUG_LOGS_ENABLED = false
+
+function audioDebugLog(...args: unknown[]): void {
+  if (!AUDIO_BROWSER_DEBUG_LOGS_ENABLED) {
+    return
+  } // end if browser debug logs are disabled
+  console.log(...args)
+} // end function audioDebugLog
+
+function audioDebugWarn(...args: unknown[]): void {
+  if (!AUDIO_BROWSER_DEBUG_LOGS_ENABLED) {
+    return
+  } // end if browser debug logs are disabled
+  console.warn(...args)
+} // end function audioDebugWarn
+
 interface EnemySoundSet {
   idleLoop: Tone.Player
   movementLoop: Tone.Player
@@ -467,7 +483,7 @@ function createAttackVariantPlayers(automaticFire?: EnemyAutomaticFireDefinition
     const variantPlayer = new Tone.Player(variantPath)
     // Kick off variant loading immediately so the first burst can use the intended SFX.
     void variantPlayer.load(variantPath).catch((error) => {
-      console.warn('Failed to load burst attack variant.', { variantPath, error })
+      audioDebugWarn('Failed to load burst attack variant.', { variantPath, error })
     })
     variants.set(roundedRoundCount, variantPlayer)
   } // end for each configured burst round count
@@ -508,7 +524,7 @@ function createTankProfile(enemyId: string, enemyType: string, overrides?: Enemy
       idleLoop: new Tone.Player(loopSoundPath),
       movementLoop: new Tone.Player(loopSoundPath),
       passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
-      threatCue: new Tone.Player(definition?.sounds.startupSound ?? 'assets/sounds/weapons/reloadCannon.ogg'),
+      threatCue: new Tone.Player(definition?.sounds.startupSound ?? 'assets/sounds/weapons/reload/reloadCannon.ogg'),
       attackSound: new Tone.Player(definition?.sounds.attackSound ?? 'assets/sounds/explosions/explosion_1A.ogg'),
       attackVariants: createAttackVariantPlayers(getEnemyAutomaticFireDefinition(definition)),
       hurtSound: new Tone.Player(definition?.sounds.hurtSound ?? 'assets/sounds/explosions/explosion_1B.ogg'),
@@ -555,7 +571,7 @@ function createHelicopterProfile(enemyId: string, enemyType: string, overrides?:
       idleLoop: new Tone.Player(loopSoundPath),
       movementLoop: new Tone.Player(loopSoundPath),
       passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
-      threatCue: new Tone.Player(definition?.sounds.startupSound ?? 'assets/sounds/weapons/reload.ogg'),
+      threatCue: new Tone.Player(definition?.sounds.startupSound ?? 'assets/sounds/weapons/reload/reload.ogg'),
       attackSound: new Tone.Player(definition?.sounds.attackSound ?? 'assets/sounds/weapons/pistol_fire.ogg'),
       attackVariants: createAttackVariantPlayers(getEnemyAutomaticFireDefinition(definition)),
       hurtSound: new Tone.Player(definition?.sounds.hurtSound ?? 'assets/sounds/tankHit.ogg'),
@@ -1026,8 +1042,8 @@ export function createAudioController(): AudioController {
     'assets/sounds/tankMoving.ogg',
     'assets/sounds/helicopterLoop.ogg',
     'assets/sounds/servomotor.ogg',
-    'assets/sounds/weapons/reloadCannon.ogg',
-    'assets/sounds/weapons/reload.ogg',
+    'assets/sounds/weapons/reload/reloadCannon.ogg',
+    'assets/sounds/weapons/reload/reload.ogg',
     'assets/sounds/weapons/pistol_fire.ogg',
     'assets/sounds/weapons/sniper_fire.ogg',
     'assets/sounds/weapons/rocket_fire.OGG',
@@ -1493,7 +1509,7 @@ export function createAudioController(): AudioController {
         retriggerLoadedPlayer(player)
       })
       .catch((error) => {
-        console.warn('Failed to load cardinal heading cue.', { path: bestCue.path, error })
+        audioDebugWarn('Failed to load cardinal heading cue.', { path: bestCue.path, error })
       })
   } // end function playCardinalHeadingCue
 
@@ -1525,7 +1541,7 @@ export function createAudioController(): AudioController {
         energyStatusLoopStarted = true
       })
       .catch((error) => {
-        console.warn('Failed to load player energy status loop.', { error })
+        audioDebugWarn('Failed to load player energy status loop.', { error })
       })
   } // end function ensureEnergyStatusLoopStarted
 
@@ -2578,7 +2594,7 @@ export function createAudioController(): AudioController {
         retriggerLoadedPlayer(dynamicPlayer)
       })
       .catch((error) => {
-        console.warn('Failed to load player fire sound, falling back to default.', { soundPath, error })
+        audioDebugWarn('Failed to load player fire sound, falling back to default.', { soundPath, error })
         playerFireSoundCache.delete(soundPath)
         retriggerLoadedPlayer(playerFireSound)
       })
@@ -2981,12 +2997,12 @@ export function createAudioController(): AudioController {
       )
       const inRange = dist > nearExclusionRange && dist <= detectionRange
       if (inRange) {
-        console.log(`[RADAR] Contact: id=${enemy.id}, type=${enemy.type}, dist=${dist.toFixed(1)}, range=[${nearExclusionRange}, ${detectionRange}]`)
+        audioDebugLog(`[RADAR] Contact: id=${enemy.id}, type=${enemy.type}, dist=${dist.toFixed(1)}, range=[${nearExclusionRange}, ${detectionRange}]`)
       } // end if log radar contact
       return inRange
     })
 
-    console.log(`[RADAR] Frame: totalEnemies=${enemies.length}, contacts=${contacts.length}, playerPos=(${player.position.x.toFixed(1)}, ${player.position.y.toFixed(1)})`)
+    audioDebugLog(`[RADAR] Frame: totalEnemies=${enemies.length}, contacts=${contacts.length}, playerPos=(${player.position.x.toFixed(1)}, ${player.position.y.toFixed(1)})`)
 
     if (contacts.length === 0) {
       radarDetectionGain.gain.rampTo(0, 0.4)
@@ -3047,7 +3063,7 @@ export function createAudioController(): AudioController {
     radarDetectionTremolo.frequency.rampTo(tremoloRate, 0.3)
 
     const targetGain = AUDIO_NAVIGATION_CONFIG.radarGain * enemiesVolume
-    console.log(`[RADAR] Cluster: clusterDist=${clusterDist.toFixed(1)}, freq=${targetFreq.toFixed(1)}, tremolo=${tremoloRate.toFixed(2)}, gain=${targetGain.toFixed(3)}, enemiesVolume=${enemiesVolume.toFixed(2)}`)
+    audioDebugLog(`[RADAR] Cluster: clusterDist=${clusterDist.toFixed(1)}, freq=${targetFreq.toFixed(1)}, tremolo=${tremoloRate.toFixed(2)}, gain=${targetGain.toFixed(3)}, enemiesVolume=${enemiesVolume.toFixed(2)}`)
     radarDetectionGain.gain.rampTo(targetGain, 0.3)
   } // end function updateRadarDetection
 
@@ -3180,7 +3196,7 @@ export function createAudioController(): AudioController {
       profile = createEnemyProfile(enemyId, enemyType, overrides)
     } catch (error) {
       // Keep frame-audio updates alive when a late-loaded enemy clip fails to fetch.
-      console.warn('Enemy audio asset load failed, using silent fallback runtime.', { enemyId, enemyType, error })
+      audioDebugWarn('Enemy audio asset load failed, using silent fallback runtime.', { enemyId, enemyType, error })
       profile = createFallbackEnemyProfile(enemyId, enemyType)
     }
 
@@ -3202,7 +3218,7 @@ export function createAudioController(): AudioController {
       void tempPlayer
         .load(path)
         .catch((error) => {
-          console.warn('Failed to prewarm enemy audio asset.', { path, error })
+          audioDebugWarn('Failed to prewarm enemy audio asset.', { path, error })
         })
         .finally(() => {
           tempPlayer.dispose()

@@ -45,6 +45,9 @@ Build this first, before touching gameplay systems.
 ---
 
 ## Ticket 0A — Expand Dev Console Commands *(if not already implemented)*
+Copilot status: Complete
+Developer status: Approved
+Notes: Some Ticket 0A commands are wired to placeholder runtime state (heat/parts/stagger) with TODO hooks because those gameplay systems are defined in later roadmap tickets.
 
 ### 🧠 Copilot Prompt
 
