@@ -1,0 +1,19 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Open Master Docs",
+      "type": "shell",
+      "command": "code",
+      "args": [
+        "-r",
+        "MasterSpecDoc.md",
+        "ImplementationRoadMap.md"
+      ],
+      "runOptions": {
+        "runOn": "folderOpen"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

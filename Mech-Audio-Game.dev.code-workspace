@@ -4,32 +4,44 @@
       "path": "."
     }
   ],
+
   "settings": {
+
+    /* ---------------------------
+       FILE WATCHING (optimized)
+    ----------------------------*/
     "files.watcherExclude": {
       "**/.git/objects/**": true,
       "**/.git/subtree-cache/**": true,
       "**/node_modules/**": true,
-      "**/assets/**": true,
-      "**/assets/sounds/**": true,
-      "**/assets/audio/**": true,
-      "**/packages/*/dist/**": true,
       "**/.mech-audio/**": true,
       "**/.next/**": true,
-      "**/.turbo/**": true
+      "**/.turbo/**": true,
+      "**/packages/*/dist/**": true
     },
+
+    /* ---------------------------
+       FILE VISIBILITY
+    ----------------------------*/
     "files.exclude": {
       "**/node_modules": true,
-      "**/assets/sounds": true,
-      "**/assets/audio": true,
       "**/packages/*/dist": true
     },
+
+    /* ---------------------------
+       SEARCH FILTERING
+       (IMPORTANT CHANGE HERE)
+    ----------------------------*/
     "search.exclude": {
       "**/node_modules": true,
-      "**/assets": true,
-      "**/assets/sounds": true,
-      "**/assets/audio": true,
-      "**/packages/*/dist": true
+      "**/assets/sounds/**": true,
+      "**/assets/audio/**": true,
+      "**/packages/*/dist/**": true
     },
+
+    /* ---------------------------
+       TYPESCRIPT PERFORMANCE
+    ----------------------------*/
     "typescript.tsserver.watchOptions": {
       "watchFile": "useFsEventsOnParentDirectory",
       "watchDirectory": "useFsEvents",
@@ -37,16 +49,30 @@
       "synchronousWatchDirectory": false,
       "excludeDirectories": [
         "**/node_modules",
-        "**/assets",
-        "**/assets/sounds",
-        "**/assets/audio",
+        "**/.mech-audio",
+        "**/.next",
+        "**/.turbo",
         "**/packages/*/dist"
       ]
     },
+
     "typescript.tsserver.maxTsServerMemory": 4096,
     "typescript.disableAutomaticTypeAcquisition": true,
-    "npm.autoDetect": "off",
+
+    /* ---------------------------
+       GIT BEHAVIOR (clean + stable)
+    ----------------------------*/
     "git.autorefresh": false,
-    "task.allowAutomaticTasks": "off"
+
+    /* ---------------------------
+       TASK BEHAVIOR
+    ----------------------------*/
+    "task.allowAutomaticTasks": "on",
+
+    /* ---------------------------
+       WORKSPACE STARTUP BEHAVIOR
+       (this is the key upgrade)
+    ----------------------------*/
+    "window.restoreWindows": "all"
   }
 }

@@ -1,30 +1,26 @@
 {
+  /* ---------------------------
+     FILE SYSTEM FILTERING
+  ----------------------------*/
   "files.watcherExclude": {
     "**/.git/**": true,
-
     "**/node_modules/**": true,
     "**/packages/*/dist/**": true,
-
     "**/.mech-audio/**": true,
     "**/.next/**": true,
     "**/.turbo/**": true,
-
     "**/assets/sounds/**": true,
     "**/assets/audio/**": true,
-
     "**/*.tsbuildinfo": true
   },
 
   "files.exclude": {
     "**/node_modules": true,
     "**/packages/*/dist": true,
-
     "**/assets/sounds": true,
     "**/assets/audio": true,
-
     "**/*.tsbuildinfo": true,
     "**/*.d.ts.map": true,
-
     "**/output.txt": true,
     "**/typecheck_output.txt": true,
     "**/*Freeze-Investigation*.txt": true
@@ -32,24 +28,22 @@
 
   "search.exclude": {
     "**/.git": true,
-
     "**/node_modules": true,
     "**/packages/*/dist": true,
-
     "**/.mech-audio": true,
-
     "**/assets/sounds": true,
     "**/assets/audio": true,
-
     "**/*.tsbuildinfo": true,
     "**/*.d.ts": true,
     "**/*.d.ts.map": true,
-
     "**/output.txt": true,
     "**/typecheck_output.txt": true,
     "**/*Freeze-Investigation*.txt": true
   },
 
+  /* ---------------------------
+     TYPESCRIPT (slightly safer)
+  ----------------------------*/
   "typescript.tsserver.watchOptions": {
     "watchFile": "useFsEventsOnParentDirectory",
     "watchDirectory": "useFsEvents",
@@ -59,9 +53,7 @@
     "excludeDirectories": [
       "**/node_modules",
       "**/packages/*/dist",
-
       "**/.mech-audio",
-
       "**/assets/sounds",
       "**/assets/audio"
     ]
@@ -69,24 +61,37 @@
 
   "typescript.tsserver.maxTsServerMemory": 6144,
   "typescript.disableAutomaticTypeAcquisition": true,
+  "typescript.tsserver.experimental.enableProjectDiagnostics": false,
 
+  /* ---------------------------
+     TOOLING BEHAVIOR
+  ----------------------------*/
   "npm.autoDetect": "off",
   "git.autorefresh": false,
   "task.allowAutomaticTasks": "on",
-
   "task.autoDetect": "off",
 
+  /* ---------------------------
+     TERMINAL UX
+  ----------------------------*/
   "terminal.integrated.confirmOnKill": "never",
   "terminal.integrated.enableMultiLinePasteWarning": "never",
 
-  "security.workspace.trust.enabled": true,
-  "security.workspace.trust.startupPrompt": "never",
-  "security.workspace.trust.untrustedFiles": "open",
-
+  /* ---------------------------
+     SEARCH BEHAVIOR
+  ----------------------------*/
   "search.followSymlinks": false,
 
-  "typescript.tsserver.experimental.enableProjectDiagnostics": false,
-
+  /* ---------------------------
+     UI PREFERENCES
+  ----------------------------*/
   "explorer.autoReveal": false,
-  "breadcrumbs.enabled": true
+  "breadcrumbs.enabled": true,
+
+  /* ---------------------------
+     WORKSPACE TRUST (fine as-is)
+  ----------------------------*/
+  "security.workspace.trust.enabled": true,
+  "security.workspace.trust.startupPrompt": "never",
+  "security.workspace.trust.untrustedFiles": "open"
 }

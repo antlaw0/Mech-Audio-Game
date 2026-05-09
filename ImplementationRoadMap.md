@@ -19,6 +19,12 @@ If required data is missing:
 
 Implement extensible placeholders
 and leave TODO hooks.
+Track status of each ticket by adding these two lines after each ticket heading if not already done so:
+Copilot status:
+Developer status:
+put Copilot status as either, not started, in-progress, ready for approval
+I will put my own status in the developer status. If I approve the ticket once I see it has the Copilot status of 'ready for review', I will indicate Approved on developer status line and move Copilot status to 'Complete'
+This way you need approval from me the developer before considering a ticket done.
 
 Copilot must not:
 - invent new systems
