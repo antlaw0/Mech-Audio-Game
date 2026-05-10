@@ -14,6 +14,7 @@ part categories,
 movement behaviors,
 audio behaviors,
 or UI conventions that contradict the master spec.
+If any instructions are unclear or better options are available, pause work and ask me before proceeding
 
 If required data is missing:
 
@@ -169,6 +170,8 @@ reset.build
 ---
 
 ## Ticket 0B — Runtime Debug Overlay
+Copilot status: Complete
+Developer status: Approved
 
 ### 🧠 Copilot Prompt
 
@@ -316,6 +319,8 @@ Debug overlay must also support optional:
 ---
 
 ## Ticket 0C — Pause Menu Debug Tabs
+Copilot status: Complete
+Developer status: Approved
 
 ### 🧠 Copilot Prompt
 
@@ -396,7 +401,7 @@ Tab or button for every slot:
 
 ```text
 Head
-Core
+Core/ExoShell
 Generator
 Thermal
 Movement
@@ -487,7 +492,8 @@ Stats must update immediately when:
 * part changes
 * integrity changes
 * subsystem goes offline
-
+---
+There will need to be actual parts equipped to the player by default for testing purposes. Use existing stats as the player is already using where applicable and placeholder for things not implemented yet. Here is the initial loadout player has by default:
 ---
 
 ### Accessibility requirement

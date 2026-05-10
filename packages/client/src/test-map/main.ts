@@ -10,6 +10,7 @@ import {
   PLAYER_FLIGHT_SPEED,
   PLAYER_RADIUS,
   PLAYER_SPEED,
+  TURN_SPEED,
   WEAPON_DEFAULT_ACCURACY
 } from './constants.js'
 import { createAudioController } from './audio.js'
@@ -160,6 +161,9 @@ function startTestMap(): void {
   const sonarCoordinatesElement = document.getElementById('sonarCoordinates')
   const sonarRadarRangeElement = document.getElementById('sonarRadarRange')
   const sonarDestinationElement = document.getElementById('sonarDestination')
+  const runtimeDebugOverlayElement = document.getElementById('runtimeDebugOverlay')
+  const runtimeDebugContentElement = document.getElementById('runtimeDebugContent')
+  const runtimeDebugSpeechStatusElement = document.getElementById('runtimeDebugSpeechStatus')
   const hpBarLabelElement = document.getElementById('hpBarLabel')
   const epBarLabelElement = document.getElementById('epBarLabel')
   const ammoResourceLabelElement = document.getElementById('ammoResourceLabel')
@@ -167,6 +171,23 @@ function startTestMap(): void {
   const epBarFillElement = document.getElementById('epBarFill')
   const playerNameElement = document.getElementById('playerName')
   const pauseOverlayElement = document.getElementById('pauseOverlay')
+  const pauseDebugTabRuntimeButtonElement = document.getElementById('pauseDebugTabRuntimeButton')
+  const pauseDebugTabEventsButtonElement = document.getElementById('pauseDebugTabEventsButton')
+  const pauseDebugTabTuningButtonElement = document.getElementById('pauseDebugTabTuningButton')
+  const pauseDebugRuntimePanelElement = document.getElementById('pauseDebugRuntimePanel')
+  const pauseDebugEventsPanelElement = document.getElementById('pauseDebugEventsPanel')
+  const pauseDebugTuningPanelElement = document.getElementById('pauseDebugTuningPanel')
+  const pauseDebugRuntimeContentElement = document.getElementById('pauseDebugRuntimeContent')
+  const pauseDebugEventsContentElement = document.getElementById('pauseDebugEventsContent')
+  const pauseTuneHeatMultiplierInput = getInput('pauseTuneHeatMultiplier')
+  const pauseTuneEnergyRegenInput = getInput('pauseTuneEnergyRegen')
+  const pauseTuneCoolingRateInput = getInput('pauseTuneCoolingRate')
+  const pauseTuneMovementScalingInput = getInput('pauseTuneMovementScaling')
+  const pauseTuneStaggerScalingInput = getInput('pauseTuneStaggerScaling')
+  const pauseTuneTractionMultiplierInput = getInput('pauseTuneTractionMultiplier')
+  const pauseTuneDriftMultiplierInput = getInput('pauseTuneDriftMultiplier')
+  const pauseTuneAudioPitchScalingInput = getInput('pauseTuneAudioPitchScaling')
+  const pauseTuneAudioVolumeScalingInput = getInput('pauseTuneAudioVolumeScaling')
   const resumeButtonElement = document.getElementById('pauseResumeButton')
   const exitButtonElement = document.getElementById('pauseExitButton')
   const devConsoleOverlayElement = document.getElementById('devConsoleOverlay')
@@ -284,6 +305,7 @@ function startTestMap(): void {
   let devLastDamageType = 'none'
   let devLastEvent = 'none'
   let devEventCounter = 0
+  const devEventLog: string[] = []
   const devTimers = new Map<string, number>()
   let devVelocityX = 0
   let devVelocityY = 0
@@ -291,6 +313,26 @@ function startTestMap(): void {
   let devPrevX = player.x
   let devPrevY = player.y
   let devPrevZ = player.z ?? 0
+  let devLastHitLocation = 'none'
+  let devLastHeatGain = 0
+  let devLastEnergyDrain = 0
+  let devFps = 0
+  let devPreviousSpeed = 0
+  let devApproxAcceleration = 0
+  let devTargetLockedId: number | null = null
+  let devEnemyCount = 0
+  let devProjectileCount = 0
+  let isRuntimeDebugOverlayVisible = false
+  let pauseDebugActiveTab: 'runtime' | 'events' | 'tuning' = 'runtime'
+  let devHeatMultiplier = 1
+  let devEnergyRegenRate = 1
+  let devCoolingRate = 0
+  let devMovementScale = 1
+  let devStaggerScale = 1
+  let devTractionMultiplier = 1
+  let devDriftMultiplier = 1
+  let devAudioPitchScale = 1
+  let devAudioVolumeScale = 1
 
   const DEV_PART_SLOTS = [
     'Head',
@@ -453,7 +495,83 @@ function startTestMap(): void {
 
     pauseOverlayElement.style.display = visible ? 'flex' : 'none'
     pauseOverlayElement.setAttribute('aria-hidden', visible ? 'false' : 'true')
+    if (visible) {
+      updatePauseDebugTabs()
+    } // end if pause overlay became visible
   } // end function setPauseOverlayVisible
+
+  const setPauseDebugActiveTab = (nextTab: 'runtime' | 'events' | 'tuning'): void => {
+    pauseDebugActiveTab = nextTab
+    const buttonState = [
+      { button: pauseDebugTabRuntimeButtonElement, selected: nextTab === 'runtime' },
+      { button: pauseDebugTabEventsButtonElement, selected: nextTab === 'events' },
+      { button: pauseDebugTabTuningButtonElement, selected: nextTab === 'tuning' }
+    ]
+    for (const entry of buttonState) {
+      if (!(entry.button instanceof HTMLButtonElement)) {
+        continue
+      } // end if tab button is unavailable
+      entry.button.setAttribute('aria-selected', entry.selected ? 'true' : 'false')
+    } // end for each tab button
+
+    const panelState = [
+      { panel: pauseDebugRuntimePanelElement, active: nextTab === 'runtime' },
+      { panel: pauseDebugEventsPanelElement, active: nextTab === 'events' },
+      { panel: pauseDebugTuningPanelElement, active: nextTab === 'tuning' }
+    ]
+    for (const entry of panelState) {
+      if (!(entry.panel instanceof HTMLElement)) {
+        continue
+      } // end if tab panel is unavailable
+      entry.panel.classList.toggle('active', entry.active)
+    } // end for each tab panel
+  } // end function setPauseDebugActiveTab
+
+  const applyDebugAudioVolumeScale = (): void => {
+    const scaledMaster = Math.max(0, Math.min(2, devAudioVolumeScale))
+    audio.setVolumeChannel('master', scaledMaster)
+  } // end function applyDebugAudioVolumeScale
+
+  const readTuningInput = (input: HTMLInputElement | null, fallback: number): number => {
+    if (!input) {
+      return fallback
+    } // end if input is missing
+    const parsed = Number(input.value)
+    return Number.isFinite(parsed) ? parsed : fallback
+  } // end function readTuningInput
+
+  const applyPauseDebugTuningValues = (): void => {
+    devHeatMultiplier = Math.max(0, readTuningInput(pauseTuneHeatMultiplierInput, devHeatMultiplier))
+    devEnergyRegenRate = Math.max(0, readTuningInput(pauseTuneEnergyRegenInput, devEnergyRegenRate))
+    devCoolingRate = Math.max(0, readTuningInput(pauseTuneCoolingRateInput, devCoolingRate))
+    devMovementScale = Math.max(0, readTuningInput(pauseTuneMovementScalingInput, devMovementScale))
+    devStaggerScale = Math.max(0, readTuningInput(pauseTuneStaggerScalingInput, devStaggerScale))
+    devTractionMultiplier = Math.max(0.1, readTuningInput(pauseTuneTractionMultiplierInput, devTractionMultiplier))
+    devDriftMultiplier = Math.max(0.1, readTuningInput(pauseTuneDriftMultiplierInput, devDriftMultiplier))
+    devAudioPitchScale = Math.max(0.5, Math.min(2, readTuningInput(pauseTuneAudioPitchScalingInput, devAudioPitchScale)))
+    devAudioVolumeScale = Math.max(0, Math.min(2, readTuningInput(pauseTuneAudioVolumeScalingInput, devAudioVolumeScale)))
+
+    audio.setDebugPitchScale(devAudioPitchScale)
+    applyDebugAudioVolumeScale()
+  } // end function applyPauseDebugTuningValues
+
+  const updatePauseDebugTabs = (): void => {
+    if (!(pauseOverlayElement instanceof HTMLDivElement) || pauseOverlayElement.style.display === 'none') {
+      return
+    } // end if pause overlay is hidden
+
+    if (pauseDebugRuntimeContentElement instanceof HTMLElement) {
+      pauseDebugRuntimeContentElement.textContent = getRuntimeDebugOverlayLines().join('\n')
+    } // end if runtime tab content exists
+
+    if (pauseDebugEventsContentElement instanceof HTMLElement) {
+      pauseDebugEventsContentElement.textContent = devEventLog.length > 0
+        ? devEventLog.join('\n')
+        : 'No events yet.'
+    } // end if event tab content exists
+
+    setPauseDebugActiveTab(pauseDebugActiveTab)
+  } // end function updatePauseDebugTabs
 
   const getDestinationPoi = (): KnownPoi | null => {
     if (!destinationPoiId) {
@@ -881,6 +999,58 @@ function startTestMap(): void {
     })
   } // end if close button exists
 
+  const pauseDebugTabButtons: Array<[HTMLButtonElement | null, 'runtime' | 'events' | 'tuning']> = [
+    [pauseDebugTabRuntimeButtonElement instanceof HTMLButtonElement ? pauseDebugTabRuntimeButtonElement : null, 'runtime'],
+    [pauseDebugTabEventsButtonElement instanceof HTMLButtonElement ? pauseDebugTabEventsButtonElement : null, 'events'],
+    [pauseDebugTabTuningButtonElement instanceof HTMLButtonElement ? pauseDebugTabTuningButtonElement : null, 'tuning']
+  ]
+  for (const [button, tabId] of pauseDebugTabButtons) {
+    if (!button) {
+      continue
+    } // end if tab button missing
+    button.addEventListener('click', () => {
+      setPauseDebugActiveTab(tabId)
+      updatePauseDebugTabs()
+    })
+  } // end for each pause debug tab button
+
+  const syncPauseTuningInputs = (): void => {
+    if (pauseTuneHeatMultiplierInput) pauseTuneHeatMultiplierInput.value = devHeatMultiplier.toFixed(2)
+    if (pauseTuneEnergyRegenInput) pauseTuneEnergyRegenInput.value = devEnergyRegenRate.toFixed(2)
+    if (pauseTuneCoolingRateInput) pauseTuneCoolingRateInput.value = devCoolingRate.toFixed(2)
+    if (pauseTuneMovementScalingInput) pauseTuneMovementScalingInput.value = devMovementScale.toFixed(2)
+    if (pauseTuneStaggerScalingInput) pauseTuneStaggerScalingInput.value = devStaggerScale.toFixed(2)
+    if (pauseTuneTractionMultiplierInput) pauseTuneTractionMultiplierInput.value = devTractionMultiplier.toFixed(2)
+    if (pauseTuneDriftMultiplierInput) pauseTuneDriftMultiplierInput.value = devDriftMultiplier.toFixed(2)
+    if (pauseTuneAudioPitchScalingInput) pauseTuneAudioPitchScalingInput.value = devAudioPitchScale.toFixed(2)
+    if (pauseTuneAudioVolumeScalingInput) pauseTuneAudioVolumeScalingInput.value = devAudioVolumeScale.toFixed(2)
+  } // end function syncPauseTuningInputs
+
+  const tuningInputs: Array<HTMLInputElement | null> = [
+    pauseTuneHeatMultiplierInput,
+    pauseTuneEnergyRegenInput,
+    pauseTuneCoolingRateInput,
+    pauseTuneMovementScalingInput,
+    pauseTuneStaggerScalingInput,
+    pauseTuneTractionMultiplierInput,
+    pauseTuneDriftMultiplierInput,
+    pauseTuneAudioPitchScalingInput,
+    pauseTuneAudioVolumeScalingInput
+  ]
+  for (const inputElement of tuningInputs) {
+    if (!(inputElement instanceof HTMLInputElement)) {
+      continue
+    } // end if tuning input missing
+    inputElement.addEventListener('input', () => {
+      applyPauseDebugTuningValues()
+      updatePauseDebugTabs()
+    })
+  } // end for each tuning input
+
+  syncPauseTuningInputs()
+  applyPauseDebugTuningValues()
+  setPauseDebugActiveTab('runtime')
+
   renderNavigationPoiMenu()
   updateNavigationOverlayVisibility(false)
 
@@ -935,6 +1105,34 @@ function startTestMap(): void {
     } // end if toggling console closed
 
     void openDeveloperConsole()
+  })
+
+  document.addEventListener('keydown', (event) => {
+    if (event.repeat || isEditorModalOpen || isWeaponEditorOpen) {
+      return
+    } // end if editor modal blocks debug overlay shortcuts
+
+    if (event.code === 'F3') {
+      event.preventDefault()
+      setRuntimeDebugOverlayVisible(!isRuntimeDebugOverlayVisible)
+      updateRuntimeDebugOverlay()
+      return
+    } // end if toggling runtime debug overlay
+
+    if (!isRuntimeDebugOverlayVisible) {
+      return
+    } // end if overlay-only shortcuts require overlay visibility
+
+    if (event.code === 'F4') {
+      event.preventDefault()
+      dumpRuntimeDebugOverlay()
+      return
+    } // end if runtime debug dump requested
+
+    if (event.code === 'F6') {
+      event.preventDefault()
+      speakRuntimeDebugSummary()
+    } // end if runtime debug speech requested
   })
 
   if (resumeButtonElement instanceof HTMLButtonElement) {
@@ -1292,7 +1490,12 @@ function startTestMap(): void {
 
   const nextEventTag = (label: string): string => {
     devEventCounter += 1
-    devLastEvent = `${devEventCounter}. ${label}`
+    const timestampSeconds = (performance.now() / 1000).toFixed(1)
+    devLastEvent = `${timestampSeconds} ${label}`
+    devEventLog.unshift(devLastEvent)
+    while (devEventLog.length > 120) {
+      devEventLog.pop()
+    } // end while trimming event history
     return devLastEvent
   } // end function nextEventTag
 
@@ -1314,6 +1517,180 @@ function startTestMap(): void {
     } // end if player is flying
     return 'grounded'
   } // end function getPlayerMovementStateLabel
+
+  const setRuntimeDebugOverlayVisible = (visible: boolean): void => {
+    if (!(runtimeDebugOverlayElement instanceof HTMLElement)) {
+      return
+    } // end if runtime debug overlay is unavailable
+
+    runtimeDebugOverlayElement.style.display = visible ? 'block' : 'none'
+    runtimeDebugOverlayElement.setAttribute('aria-hidden', visible ? 'false' : 'true')
+    isRuntimeDebugOverlayVisible = visible
+  } // end function setRuntimeDebugOverlayVisible
+
+  const getHeatStateLabel = (): string => {
+    const ratio = devCurrentHeat / Math.max(1, devMaxHeat)
+    if (ratio >= 1) {
+      return 'overheated'
+    }
+    if (ratio >= 0.75) {
+      return 'high'
+    }
+    if (ratio >= 0.35) {
+      return 'elevated'
+    }
+    return 'stable'
+  } // end function getHeatStateLabel
+
+  const getEnergyStateLabel = (): string => {
+    const ratio = player.ep / Math.max(1, player.maxEp)
+    if (ratio <= 0) {
+      return 'starved'
+    }
+    if (ratio <= 0.2) {
+      return 'critical'
+    }
+    if (ratio <= 0.5) {
+      return 'low'
+    }
+    return 'stable'
+  } // end function getEnergyStateLabel
+
+  const inferMobilityType = (): string => {
+    const movementPart = devParts.get('Movement')
+    const source = `${movementPart?.partId ?? ''} ${movementPart?.name ?? ''}`.toLowerCase()
+    if (source.includes('wheel')) {
+      return 'Wheels'
+    }
+    if (source.includes('tread')) {
+      return 'Treads'
+    }
+    if (source.includes('hover')) {
+      return 'Hover'
+    }
+    if (source.includes('walker') || source.includes('leg')) {
+      return 'Walker'
+    }
+    if (source.includes('flight')) {
+      return 'Flight'
+    }
+    return 'Placeholder'
+  } // end function inferMobilityType
+
+  const getRuntimeDebugOverlayLines = (): string[] => {
+    const headingDegrees = normalizeDegrees((player.angle * 180) / Math.PI)
+    const totalWeight = getDevTotalWeight()
+    const ratedLoad = 100
+    const weightFactor = totalWeight / Math.max(1, ratedLoad)
+    const movementSpeedLimit = player.isFlying ? PLAYER_FLIGHT_SPEED : PLAYER_SPEED
+    const turnSpeedDegrees = (TURN_SPEED * 180) / Math.PI
+    const activeTimers = Array.from(devTimers.entries()).filter((entry) => Math.abs(entry[1]) > 0.0001).length
+    const audioVoicesEstimate = Math.max(2, devEnemyCount + devProjectileCount + (player.isFlying ? 1 : 0) + (audio.isServoPlaying() ? 1 : 0))
+    const loopState = player.isFlying
+      ? (player.isBoosting ? 'flight+boost' : 'flight')
+      : (audio.isServoPlaying() ? 'servo' : 'idle')
+
+    const lines: string[] = [
+      'PLAYER',
+      `Position: (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${(player.z ?? 0).toFixed(2)})`,
+      `Velocity: (${devVelocityX.toFixed(2)}, ${devVelocityY.toFixed(2)}, ${devVelocityZ.toFixed(2)})`,
+      `Heading: ${headingDegrees.toFixed(1)} deg`,
+      `Grounded: ${player.flightState === 'grounded' ? 'true' : 'false'}`,
+      `Flying: ${player.isFlying ? 'true' : 'false'}`,
+      `Boosting: ${player.isBoosting ? 'true' : 'false'}`,
+      `Target Locked: ${devTargetLockedId === null ? 'false' : `true (id ${devTargetLockedId})`}`,
+      '',
+      'CORE STATS',
+      `Current Heat / Max Heat: ${devCurrentHeat.toFixed(1)} / ${devMaxHeat.toFixed(1)}`,
+      `Current Energy / Max Energy: ${player.ep.toFixed(1)} / ${player.maxEp.toFixed(1)}`,
+      `Total Weight: ${totalWeight.toFixed(1)}`,
+      `Weight Factor: ${weightFactor.toFixed(3)} (TODO Ticket 6 formula)`,
+      `Heat State: ${getHeatStateLabel()}`,
+      `Energy State: ${getEnergyStateLabel()}`,
+      `Movement State: ${getPlayerMovementStateLabel()}`,
+      '',
+      'MOVEMENT',
+      `Mobility Type: ${inferMobilityType()}`,
+      `Forward Speed: ${movementSpeedLimit.toFixed(2)}`,
+      `Reverse Speed: ${movementSpeedLimit.toFixed(2)} (placeholder)`,
+      `Strafe Speed: ${movementSpeedLimit.toFixed(2)} (placeholder)`,
+      `Turn Speed: ${turnSpeedDegrees.toFixed(2)} deg/s`,
+      `Acceleration: ${devApproxAcceleration.toFixed(2)} m/s^2 (sampled)`,
+      `Flight Thrust: ${PLAYER_FLIGHT_SPEED.toFixed(2)} (placeholder)`,
+      `Lift Capacity: ${getSharedFlightHeight().toFixed(2)} (placeholder)`,
+      'Terrain Multiplier: 1.000 (TODO movement subsystem)',
+      '',
+      'DEFENSE',
+      `Total PDEF: ${getDevTotalPdef().toFixed(1)}`,
+      `Total EDEF: ${getDevTotalEdef().toFixed(1)}`,
+      'Stagger Resistance: TODO (Ticket 9)',
+      '',
+      'PERFORMANCE',
+      `FPS: ${devFps.toFixed(1)}`,
+      `Entity Count: ${1 + devEnemyCount + devProjectileCount}`,
+      `Projectile Count: ${devProjectileCount}`,
+      `Audio Voices: ~${audioVoicesEstimate} (estimated)`,
+      `Active Timers: ${activeTimers}`,
+      '',
+      'COMBAT',
+      `Last Damage Taken: ${devLastDamageAmount.toFixed(1)}`,
+      `Last Damage Type: ${devLastDamageType}`,
+      `Last Hit Location: ${devLastHitLocation}`,
+      `Last Heat Gain: ${devLastHeatGain.toFixed(2)}`,
+      `Last Energy Drain: ${devLastEnergyDrain.toFixed(2)} /s`,
+      '',
+      'AUDIO',
+      `Current Audio Event: ${devLastEvent}`,
+      'Playback Rate: 1.00 (TODO expose audio playback-rate metrics)',
+      `Volume: master=${audio.getVolumeChannel('master').toFixed(2)} music=${audio.getVolumeChannel('music').toFixed(2)} ambience=${audio.getVolumeChannel('ambience').toFixed(2)}`,
+      `Loop State: ${loopState}`,
+      '',
+      'PART STATUS'
+    ]
+
+    for (const slot of DEV_PART_SLOTS) {
+      const part = devParts.get(slot)
+      if (!part) {
+        lines.push(`${slot}: <missing>`)
+        continue
+      }
+      lines.push(`${slot}: ${part.name} | integrity ${part.integrity.toFixed(1)}/${part.maxIntegrity.toFixed(1)} | ${part.online ? 'ONLINE' : 'OFFLINE'}`)
+    } // end for each slot
+
+    return lines
+  } // end function getRuntimeDebugOverlayLines
+
+  const updateRuntimeDebugOverlay = (): void => {
+    if (!(runtimeDebugContentElement instanceof HTMLElement) || !isRuntimeDebugOverlayVisible) {
+      return
+    } // end if overlay content cannot be updated
+
+    const lines = getRuntimeDebugOverlayLines()
+    runtimeDebugContentElement.textContent = lines.join('\n')
+
+    if (runtimeDebugSpeechStatusElement instanceof HTMLElement) {
+      runtimeDebugSpeechStatusElement.textContent = `Debug overlay updated. Heat ${Math.round(devCurrentHeat)} of ${Math.round(devMaxHeat)}. Energy ${Math.round(player.ep)} of ${Math.round(player.maxEp)}. Enemies ${devEnemyCount}.`
+    } // end if screen-reader status element exists
+  } // end function updateRuntimeDebugOverlay
+
+  const dumpRuntimeDebugOverlay = (): void => {
+    const lines = getRuntimeDebugOverlayLines()
+    console.log(`[runtime-debug-overlay]\n${lines.join('\n')}`)
+    devConsole?.print(['[runtime debug dump]', ...lines])
+  } // end function dumpRuntimeDebugOverlay
+
+  const speakRuntimeDebugSummary = (): void => {
+    if (!('speechSynthesis' in window)) {
+      return
+    } // end if speech synthesis is unavailable
+
+    const summary = `Debug summary. Heat ${Math.round(devCurrentHeat)} of ${Math.round(devMaxHeat)}. Energy ${Math.round(player.ep)} of ${Math.round(player.maxEp)}. Enemies ${devEnemyCount}. Projectiles ${devProjectileCount}. Movement ${getPlayerMovementStateLabel()}.`
+    const utterance = new SpeechSynthesisUtterance(summary)
+    utterance.rate = 1
+    utterance.pitch = 1
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utterance)
+  } // end function speakRuntimeDebugSummary
 
   const audioCategories: AudioCategory[] = ['proximity', 'objects', 'enemies', 'navigation']
   const enemyIds: EnemyId[] = ['tank', 'striker', 'brute', 'helicopter', 'bruiser', 'test-dummy']
@@ -2490,17 +2867,20 @@ function startTestMap(): void {
       player.hp = Math.max(0, player.hp - amount)
       devLastDamageAmount = amount
       devLastDamageType = damageType
-      devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + (amount * 0.1))
+      devLastHitLocation = 'center mass'
+      devLastHeatGain = amount * 0.1 * devHeatMultiplier
+      devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + devLastHeatGain)
       nextEventTag(`Player damaged: ${amount.toFixed(1)} ${damageType}`)
       return [`player.hp = ${player.hp.toFixed(1)}/${player.maxHp.toFixed(1)}`]
     } // end if player.damage command
 
     if (normalizedCommand === 'player.stagger') {
       nextEventTag('Player stagger triggered (placeholder)')
-      return ['player.stagger: triggered (TODO hook for stagger system).']
+      return [`player.stagger: triggered with scale ${devStaggerScale.toFixed(2)} (TODO hook for stagger system).`]
     } // end if player.stagger command
 
     if (normalizedCommand === 'player.overheat') {
+      devLastHeatGain = Math.max(0, devMaxHeat - devCurrentHeat)
       devCurrentHeat = devMaxHeat
       nextEventTag('Player overheat triggered')
       return [`player.heat = ${devCurrentHeat.toFixed(1)}/${devMaxHeat.toFixed(1)}`]
@@ -2935,7 +3315,14 @@ function startTestMap(): void {
     lastTimeMs = timestampMs
     const deltaSeconds = baseDeltaSeconds * devTimeScale
 
+    if (baseDeltaSeconds > 0) {
+      const sampledFps = 1 / baseDeltaSeconds
+      devFps = devFps <= 0 ? sampledFps : (devFps * 0.9) + (sampledFps * 0.1)
+    } // end if FPS sample is valid
+
     if (isPaused) {
+      updateRuntimeDebugOverlay()
+      updatePauseDebugTabs()
       requestAnimationFrame(gameLoop)
       return
     } // end if game paused
@@ -2971,6 +3358,11 @@ function startTestMap(): void {
       audio.playLockLostChirp()
     } // end if directional snap requested
 
+    const movementDeltaSeconds = deltaSeconds
+      * Math.max(0, devMovementScale)
+      * Math.max(0.1, devTractionMultiplier)
+      / Math.max(0.1, devDriftMultiplier)
+
     updateFrame(
       {
         player,
@@ -2980,7 +3372,7 @@ function startTestMap(): void {
         flightAltitude: getSharedFlightHeight(),
         collisionWorld
       },
-      deltaSeconds
+      movementDeltaSeconds
     )
 
     if (deltaSeconds > 0) {
@@ -2988,6 +3380,9 @@ function startTestMap(): void {
       devVelocityX = (player.x - devPrevX) / deltaSeconds
       devVelocityY = (player.y - devPrevY) / deltaSeconds
       devVelocityZ = (currentZ - devPrevZ) / deltaSeconds
+      const currentSpeed = Math.hypot(devVelocityX, devVelocityY, devVelocityZ)
+      devApproxAcceleration = (currentSpeed - devPreviousSpeed) / deltaSeconds
+      devPreviousSpeed = currentSpeed
       devPrevX = player.x
       devPrevY = player.y
       devPrevZ = currentZ
@@ -2995,10 +3390,12 @@ function startTestMap(): void {
 
     const hpBeforeCombat = Math.max(0, player.hp)
 
-    const energyRegenPerSecond = 1
+    const energyRegenPerSecond = devEnergyRegenRate
     const energyDrainPerSecond = (player.isFlying ? 2 : 0) + ((player.isBoosting ?? false) ? BOOST_EP_DRAIN_PER_SECOND : 0)
+    devLastEnergyDrain = Math.max(0, energyDrainPerSecond)
     const epDelta = (energyRegenPerSecond - energyDrainPerSecond) * deltaSeconds
     player.ep = Math.max(0, Math.min(player.maxEp, player.ep + epDelta))
+    devCurrentHeat = Math.max(0, devCurrentHeat - (devCoolingRate * deltaSeconds))
 
     // Force landing when EP is fully depleted while in flight
     if (player.ep <= 0 && player.isFlying &&
@@ -3086,8 +3483,15 @@ function startTestMap(): void {
       audio.playPlayerHealthStatusTone(player.hp / Math.max(1, player.maxHp))
       devLastDamageAmount = hpBeforeCombat - player.hp
       devLastDamageType = 'incoming'
+      devLastHitLocation = 'front armor'
+      devLastHeatGain = devLastDamageAmount * 0.1 * devHeatMultiplier
+      devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + devLastHeatGain)
       nextEventTag(`Player took ${devLastDamageAmount.toFixed(1)} incoming damage`)
     } // end if player took damage this frame
+
+    const combatCounts = getCombatEntityCounts(combatWorld)
+    devEnemyCount = combatCounts.enemies
+    devProjectileCount = combatCounts.projectiles
 
     devTimers.set('player.fireCooldown', playerFireCooldownSeconds)
     devTimers.set('player.meleeCooldown', playerMeleeCooldownSeconds)
@@ -3118,6 +3522,8 @@ function startTestMap(): void {
     if (lockUpdate.justLocked || lockUpdate.switchedTarget) {
       audio.playLockOnChirp()
     } // end if lock acquired
+
+    devTargetLockedId = lockUpdate.lockedTank?.id ?? null
 
     const missileRequiresLock = playerWeapon.weaponType === 'missile'
       && (playerWeapon.lockOnTimeMs > 0 || playerWeapon.trackingRating > 0)
@@ -3369,6 +3775,8 @@ function startTestMap(): void {
     if (epBarFillElement instanceof HTMLElement) {
       epBarFillElement.style.width = `${epPercent}%`
     } // end if EP fill element exists
+
+    updateRuntimeDebugOverlay()
 
     previousPlayerX = player.x
     previousPlayerY = player.y

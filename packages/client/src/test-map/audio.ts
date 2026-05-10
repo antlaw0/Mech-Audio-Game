@@ -689,6 +689,7 @@ export function createAudioController(): AudioController {
   let musicVolume = 0
   let servoVolume = 1
   let footstepsVolume = 1
+  let debugPitchScale = 1
   let flightLoopVolume = 0.5
   let energyStatusVolume = 1.35
   let proximityVolume = 1
@@ -771,6 +772,27 @@ export function createAudioController(): AudioController {
       audio.volume = AUDIO_CONFIG.player.terrainStepVolume * masterVolume * footstepsVolume
     })
   } // end function applyHtmlAudioVolumes
+
+  const applyHtmlAudioPitchScale = (): void => {
+    const playbackRate = Math.max(0.5, Math.min(2, debugPitchScale))
+    ambienceAudio.playbackRate = playbackRate
+    cityAmbienceAudio.playbackRate = playbackRate
+    musicAudio.playbackRate = playbackRate
+    servoAudio.playbackRate = playbackRate
+    footstepAudio.playbackRate = playbackRate
+    allTerrainStepAudios.forEach((audio) => {
+      audio.playbackRate = playbackRate
+    })
+  } // end function applyHtmlAudioPitchScale
+
+  const setDebugPitchScale = (value: number): number => {
+    const nextValue = Math.max(0.5, Math.min(2, Number.isFinite(value) ? value : 1))
+    debugPitchScale = nextValue
+    applyHtmlAudioPitchScale()
+    return debugPitchScale
+  } // end function setDebugPitchScale
+
+  const getDebugPitchScale = (): number => debugPitchScale
 
   const getCategoryVolume = (name: AudioCategory): number => {
     if (name === 'proximity') return proximityVolume
@@ -1515,7 +1537,7 @@ export function createAudioController(): AudioController {
 
   const setPlaybackRateSafely = (player: Tone.Player, playbackRate: number): void => {
     try {
-      player.playbackRate = playbackRate
+      player.playbackRate = Math.max(0.5, Math.min(2, playbackRate * debugPitchScale))
     } catch {
       // Ignore timeline ordering collisions from rapid rate updates.
     } // end try/catch playbackRate set
@@ -3276,6 +3298,8 @@ export function createAudioController(): AudioController {
     getCategoryEnabled,
     setVolumeChannel,
     getVolumeChannel,
+    setDebugPitchScale,
+    getDebugPitchScale,
     setMusicTrack,
     getMusicTrack,
     getMusicTracks,

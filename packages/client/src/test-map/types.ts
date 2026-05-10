@@ -330,6 +330,8 @@ export interface AudioController {
   getCategoryEnabled: (name: AudioCategory) => boolean
   setVolumeChannel: (name: AudioVolumeChannel, value: number) => number
   getVolumeChannel: (name: AudioVolumeChannel) => number
+  setDebugPitchScale: (value: number) => number
+  getDebugPitchScale: () => number
   setMusicTrack: (name: string) => string
   getMusicTrack: () => string
   getMusicTracks: () => string[]
