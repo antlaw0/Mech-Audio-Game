@@ -589,6 +589,8 @@ Missing values must never crash systems.
 ---
 
 ## Ticket 2 — Compute Global Mech Stats
+Copilot status: Complete
+Developer status: Approved
 
 ### 🧠 Copilot Prompt
 
@@ -617,6 +619,8 @@ Update instantly when parts change.
 ---
 
 ## Ticket 3 — Subsystem Integrity Binding
+Copilot status: Complete
+Developer status: Approved
 
 ### 🧠 Copilot Prompt
 

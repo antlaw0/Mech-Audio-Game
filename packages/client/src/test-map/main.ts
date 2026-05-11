@@ -122,6 +122,14 @@ type LoadoutViewId =
   | 'Utility 2'
   | 'Aggregate Stats'
 
+interface DevMechStatsSnapshot {
+  totalWeight: number
+  totalPDEF: number
+  totalEDEF: number
+  maxEP: number
+  maxHeat: number
+} // end interface DevMechStatsSnapshot
+
 declare global {
   interface Window {
     mechDev?: TestMapDevConsole
@@ -387,6 +395,8 @@ function startTestMap(): void {
     PDEF: number
     EDEF: number
     energyDrain: number
+    energyCapacity?: number
+    heatCapacity?: number
     mobilityType?: string
     heatGeneration?: number
     heatDissipation?: number
@@ -463,6 +473,7 @@ function startTestMap(): void {
       PDEF: 12,
       EDEF: 14,
       energyDrain: -6,
+      energyCapacity: player.maxEp,
       powerOutput: player.maxEp,
       passiveBonuses: ['Idle EP regeneration enabled']
     },
@@ -476,6 +487,7 @@ function startTestMap(): void {
       PDEF: 10,
       EDEF: 12,
       energyDrain: 2,
+      heatCapacity: devMaxHeat,
       heatDissipation: 12,
       passiveBonuses: ['Cooling loop online']
     },
@@ -723,6 +735,11 @@ function startTestMap(): void {
       return
     } // end if already reloading
 
+    if (!canUseRangedSubsystem()) {
+      audio.playNegativeActionTone()
+      return
+    } // end if ranged subsystem is offline
+
     if (playerWeapon.ammoInClip >= playerWeapon.clipSize) {
       return
     } // end if clip already full
@@ -740,7 +757,7 @@ function startTestMap(): void {
     void audio.playWeaponReloadSequence(reloadWeapon.reloadDefinition)
       .catch(() => undefined)
       .finally(() => {
-        if (playerWeapon.id === reloadWeaponId) {
+        if (playerWeapon.id === reloadWeaponId && canUseRangedSubsystem()) {
           if (universalAmmoResource >= reloadCost) {
             universalAmmoResource -= reloadCost
             reloadWeapon.ammoInClip = reloadWeapon.clipSize
@@ -803,13 +820,11 @@ function startTestMap(): void {
   } // end function getLoadoutPartByView
 
   const getLoadoutAggregateLines = (): string[] => {
-    const totalWeight = getDevTotalWeight()
-    const totalPdef = getDevTotalPdef()
-    const totalEdef = getDevTotalEdef()
+    const stats = syncAuthoritativeMechStats()
     const movementPart = getDevPartState('Movement')
     const utility2Part = getDevPartState('Utility2')
     const ratedLoad = Math.max(1, movementPart?.ratedLoad ?? 100)
-    const loadRatio = totalWeight / ratedLoad
+    const loadRatio = stats.totalWeight / ratedLoad
     const weightFactor = 1 / (1 + loadRatio)
     const speedModifier = Math.max(0.1, movementPart?.speedModifier ?? 1)
     const forwardSpeed = PLAYER_SPEED * speedModifier
@@ -817,8 +832,8 @@ function startTestMap(): void {
     const strafeSpeed = forwardSpeed * 0.8
     const turnSpeed = ((TURN_SPEED * 180) / Math.PI) * Math.sqrt(weightFactor)
     const liftCapacity = utility2Part?.liftCapacity ?? getDevPartState('FlightSystem').liftCapacity ?? 0
-    const flightEnabled = (utility2Part?.online ?? false) && liftCapacity >= totalWeight
-    const staggerResistance = totalWeight / (totalWeight + 1000)
+    const flightEnabled = (utility2Part?.online ?? false) && liftCapacity >= stats.totalWeight
+    const staggerResistance = stats.totalWeight / (stats.totalWeight + 1000)
 
     let totalPassiveBonuses = 0
     let totalActiveSystems = 0
@@ -832,17 +847,17 @@ function startTestMap(): void {
 
     return [
       'Aggregate Stats',
-      `Total Weight: ${formatLoadoutNumber(totalWeight)} kg`,
+      `Total Weight: ${formatLoadoutNumber(stats.totalWeight)} kg`,
       `Rated Load: ${formatLoadoutNumber(ratedLoad)} kg`,
       `Weight Factor: ${formatLoadoutNumber(weightFactor, 3)}`,
       '',
-      `Total PDEF: ${formatLoadoutNumber(totalPdef)}`,
-      `Total EDEF: ${formatLoadoutNumber(totalEdef)}`,
+      `Total PDEF: ${formatLoadoutNumber(stats.totalPDEF)}`,
+      `Total EDEF: ${formatLoadoutNumber(stats.totalEDEF)}`,
       '',
-      `Max Energy: ${formatLoadoutNumber(player.maxEp)}`,
+      `Max Energy: ${formatLoadoutNumber(stats.maxEP)}`,
       `Energy Regen: ${formatLoadoutNumber(devEnergyRegenRate, 2)}`,
       '',
-      `Max Heat: ${formatLoadoutNumber(devMaxHeat)}`,
+      `Max Heat: ${formatLoadoutNumber(stats.maxHeat)}`,
       `Cooling Rate: ${formatLoadoutNumber(devCoolingRate, 2)}`,
       '',
       `Mobility Type: ${movementPart?.mobilityType ?? inferMobilityType()}`,
@@ -1969,6 +1984,8 @@ function startTestMap(): void {
       PDEF: readNumber(safeSource.PDEF, fallback.PDEF),
       EDEF: readNumber(safeSource.EDEF, fallback.EDEF),
       energyDrain: readNumber(safeSource.energyDrain, fallback.energyDrain),
+      energyCapacity: safeSource.energyCapacity === undefined ? undefined : readNumber(safeSource.energyCapacity, 0),
+      heatCapacity: safeSource.heatCapacity === undefined ? undefined : readNumber(safeSource.heatCapacity, 0),
       mobilityType: typeof safeSource.mobilityType === 'string' ? safeSource.mobilityType : undefined,
       heatGeneration: safeSource.heatGeneration === undefined ? undefined : readNumber(safeSource.heatGeneration, 0),
       heatDissipation: safeSource.heatDissipation === undefined ? undefined : readNumber(safeSource.heatDissipation, 0),
@@ -1993,34 +2010,116 @@ function startTestMap(): void {
     return DEV_PART_SLOTS.map((slot) => ({ slot, part: getDevPartState(slot) }))
   } // end function getAllDevParts
 
-  const getDevTotalWeight = (): number => {
-    let total = 0
+  const getDevMechStatsSnapshot = (): DevMechStatsSnapshot => {
+    const snapshot: DevMechStatsSnapshot = {
+      totalWeight: 0,
+      totalPDEF: 0,
+      totalEDEF: 0,
+      maxEP: 0,
+      maxHeat: 0
+    }
+
     for (const { slot, part } of getAllDevParts()) {
-      if (part.online && AGGREGATE_PART_SLOTS.has(slot)) {
-        total += part.weight
+      if (!part.online || !AGGREGATE_PART_SLOTS.has(slot)) {
+        continue
+      }
+      snapshot.totalWeight += part.weight
+      snapshot.totalPDEF += part.PDEF
+      snapshot.totalEDEF += part.EDEF
+      snapshot.maxEP += Math.max(0, part.energyCapacity ?? 0)
+      snapshot.maxHeat += Math.max(0, part.heatCapacity ?? 0)
+    } // end for each equipped aggregate part
+
+    snapshot.maxEP = Math.max(0, snapshot.maxEP)
+    snapshot.maxHeat = Math.max(1, snapshot.maxHeat)
+    return snapshot
+  } // end function getDevMechStatsSnapshot
+
+  const syncAuthoritativeMechStats = (): DevMechStatsSnapshot => {
+    const snapshot = getDevMechStatsSnapshot()
+    player.maxEp = snapshot.maxEP
+    player.ep = Math.max(0, Math.min(player.maxEp, player.ep))
+    devMaxHeat = snapshot.maxHeat
+    devCurrentHeat = Math.max(0, Math.min(devMaxHeat, devCurrentHeat))
+    return snapshot
+  } // end function syncAuthoritativeMechStats
+
+  const isDevPartOperational = (slot: DevPartSlot): boolean => {
+    const part = getDevPartState(slot)
+    return part.online && part.integrity > 0
+  } // end function isDevPartOperational
+
+  const areDevPartsOperational = (...slots: DevPartSlot[]): boolean => {
+    return slots.every((slot) => isDevPartOperational(slot))
+  } // end function areDevPartsOperational
+
+  const canUseMovementSubsystem = (): boolean => areDevPartsOperational('Movement')
+
+  const canUseFlightSubsystem = (): boolean => areDevPartsOperational('Utility2', 'FlightSystem')
+
+  const canUseRangedSubsystem = (): boolean => areDevPartsOperational('RightArm', 'RightHand')
+
+  const canUseMeleeSubsystem = (): boolean => areDevPartsOperational('LeftArm', 'LeftHand')
+
+  const applySubsystemIntegrityState = (): void => {
+    for (const { slot, part } of getAllDevParts()) {
+      if (part.integrity <= 0) {
+        part.online = false
+      }
+      if (slot === 'Legs') {
+        const movementPart = getDevPartState('Movement')
+        part.online = movementPart.online && movementPart.integrity > 0
+        part.integrity = part.online ? movementPart.integrity : 0
+        part.maxIntegrity = movementPart.maxIntegrity
       }
     } // end for each part
-    return total
+
+    if (!canUseMovementSubsystem()) {
+      input.moveForward = false
+      input.moveBack = false
+      input.strafeLeft = false
+      input.strafeRight = false
+      input.turnLeft = false
+      input.turnRight = false
+      input.boostTogglePending = false
+      if (player.isBoosting) {
+        player.isBoosting = false
+        if (audio.isAudioStarted()) {
+          audio.stopBoostAudio()
+        }
+      }
+    }
+
+    if (!canUseFlightSubsystem()) {
+      input.flightTogglePending = false
+      if (player.isBoosting) {
+        player.isBoosting = false
+        if (audio.isAudioStarted()) {
+          audio.stopBoostAudio()
+        }
+      }
+      if (player.isFlying || player.flightState !== 'grounded' || (player.z ?? 0) > 0) {
+        player.isFlying = false
+        player.flightState = 'grounded'
+        player.z = 0
+        syncTrackedPlayerPosition()
+        if (audio.isAudioStarted()) {
+          audio.stopFlightLoop()
+        }
+      }
+    }
+  } // end function applySubsystemIntegrityState
+
+  const getDevTotalWeight = (): number => {
+    return getDevMechStatsSnapshot().totalWeight
   } // end function getDevTotalWeight
 
   const getDevTotalPdef = (): number => {
-    let total = 0
-    for (const { slot, part } of getAllDevParts()) {
-      if (part.online && AGGREGATE_PART_SLOTS.has(slot)) {
-        total += part.PDEF
-      }
-    } // end for each part
-    return total
+    return getDevMechStatsSnapshot().totalPDEF
   } // end function getDevTotalPdef
 
   const getDevTotalEdef = (): number => {
-    let total = 0
-    for (const { slot, part } of getAllDevParts()) {
-      if (part.online && AGGREGATE_PART_SLOTS.has(slot)) {
-        total += part.EDEF
-      }
-    } // end for each part
-    return total
+    return getDevMechStatsSnapshot().totalEDEF
   } // end function getDevTotalEdef
 
   const nextEventTag = (label: string): string => {
@@ -2114,9 +2213,9 @@ function startTestMap(): void {
 
   const getRuntimeDebugOverlayLines = (): string[] => {
     const headingDegrees = normalizeDegrees((player.angle * 180) / Math.PI)
-    const totalWeight = getDevTotalWeight()
+    const stats = syncAuthoritativeMechStats()
     const ratedLoad = 100
-    const weightFactor = totalWeight / Math.max(1, ratedLoad)
+    const weightFactor = stats.totalWeight / Math.max(1, ratedLoad)
     const movementSpeedLimit = player.isFlying ? PLAYER_FLIGHT_SPEED : PLAYER_SPEED
     const turnSpeedDegrees = (TURN_SPEED * 180) / Math.PI
     const activeTimers = Array.from(devTimers.entries()).filter((entry) => Math.abs(entry[1]) > 0.0001).length
@@ -2136,9 +2235,9 @@ function startTestMap(): void {
       `Target Locked: ${devTargetLockedId === null ? 'false' : `true (id ${devTargetLockedId})`}`,
       '',
       'CORE STATS',
-      `Current Heat / Max Heat: ${devCurrentHeat.toFixed(1)} / ${devMaxHeat.toFixed(1)}`,
-      `Current Energy / Max Energy: ${player.ep.toFixed(1)} / ${player.maxEp.toFixed(1)}`,
-      `Total Weight: ${totalWeight.toFixed(1)}`,
+      `Current Heat / Max Heat: ${devCurrentHeat.toFixed(1)} / ${stats.maxHeat.toFixed(1)}`,
+      `Current Energy / Max Energy: ${player.ep.toFixed(1)} / ${stats.maxEP.toFixed(1)}`,
+      `Total Weight: ${stats.totalWeight.toFixed(1)}`,
       `Weight Factor: ${weightFactor.toFixed(3)} (TODO Ticket 6 formula)`,
       `Heat State: ${getHeatStateLabel()}`,
       `Energy State: ${getEnergyStateLabel()}`,
@@ -2156,8 +2255,8 @@ function startTestMap(): void {
       'Terrain Multiplier: 1.000 (TODO movement subsystem)',
       '',
       'DEFENSE',
-      `Total PDEF: ${getDevTotalPdef().toFixed(1)}`,
-      `Total EDEF: ${getDevTotalEdef().toFixed(1)}`,
+      `Total PDEF: ${stats.totalPDEF.toFixed(1)}`,
+      `Total EDEF: ${stats.totalEDEF.toFixed(1)}`,
       'Stagger Resistance: TODO (Ticket 9)',
       '',
       'PERFORMANCE',
@@ -3204,12 +3303,13 @@ function startTestMap(): void {
     if (normalizedCommand.startsWith('player.get ')) {
       const mode = normalizedCommand.slice('player.get '.length)
       const targetId = targetLockState.lockedTankId
-      const weight = getDevTotalWeight()
+      const stats = syncAuthoritativeMechStats()
+      const weight = stats.totalWeight
       if (mode === 'all') {
         return [
           `position = (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${(player.z ?? 0).toFixed(2)})`,
           `velocity = (${devVelocityX.toFixed(2)}, ${devVelocityY.toFixed(2)}, ${devVelocityZ.toFixed(2)})`,
-          `stats = hp:${player.hp.toFixed(1)}/${player.maxHp.toFixed(1)} ep:${player.ep.toFixed(1)}/${player.maxEp.toFixed(1)} heat:${devCurrentHeat.toFixed(1)}/${devMaxHeat.toFixed(1)} weight:${weight.toFixed(1)}`,
+          `stats = hp:${player.hp.toFixed(1)}/${player.maxHp.toFixed(1)} ep:${player.ep.toFixed(1)}/${stats.maxEP.toFixed(1)} heat:${devCurrentHeat.toFixed(1)}/${stats.maxHeat.toFixed(1)} weight:${weight.toFixed(1)}`,
           `movement = ${getPlayerMovementStateLabel()}`,
           `target = ${targetId === null ? 'none' : String(targetId)}`
         ]
@@ -3217,18 +3317,18 @@ function startTestMap(): void {
       if (mode === 'stats') {
         return [
           `hp = ${player.hp.toFixed(1)}/${player.maxHp.toFixed(1)}`,
-          `ep = ${player.ep.toFixed(1)}/${player.maxEp.toFixed(1)}`,
-          `heat = ${devCurrentHeat.toFixed(1)}/${devMaxHeat.toFixed(1)}`,
+          `ep = ${player.ep.toFixed(1)}/${stats.maxEP.toFixed(1)}`,
+          `heat = ${devCurrentHeat.toFixed(1)}/${stats.maxHeat.toFixed(1)}`,
           `weight = ${weight.toFixed(1)}`,
-          `PDEF = ${getDevTotalPdef().toFixed(1)}`,
-          `EDEF = ${getDevTotalEdef().toFixed(1)}`
+          `PDEF = ${stats.totalPDEF.toFixed(1)}`,
+          `EDEF = ${stats.totalEDEF.toFixed(1)}`
         ]
       } // end if player.get stats
       if (mode === 'heat') {
-        return [`heat = ${devCurrentHeat.toFixed(1)}/${devMaxHeat.toFixed(1)}`]
+        return [`heat = ${devCurrentHeat.toFixed(1)}/${stats.maxHeat.toFixed(1)}`]
       } // end if player.get heat
       if (mode === 'energy') {
-        return [`energy = ${player.ep.toFixed(1)}/${player.maxEp.toFixed(1)}`]
+        return [`energy = ${player.ep.toFixed(1)}/${stats.maxEP.toFixed(1)}`]
       } // end if player.get energy
       if (mode === 'weight') {
         return [`weight = ${weight.toFixed(1)}`]
@@ -3318,11 +3418,13 @@ function startTestMap(): void {
         const value = parseFiniteNumber(rawArgs[3] ?? '', `${slot} integrity`)
         part.integrity = Math.max(0, Math.min(part.maxIntegrity, value))
         part.online = part.integrity > 0
+        applySubsystemIntegrityState()
         nextEventTag(`${slot} integrity set to ${part.integrity.toFixed(1)}`)
         return [`${slot} integrity = ${part.integrity.toFixed(1)}/${part.maxIntegrity.toFixed(1)} (${part.online ? 'ONLINE' : 'OFFLINE'})`]
       } // end if setting integrity
       if (action === 'offline') {
         part.online = false
+        applySubsystemIntegrityState()
         nextEventTag(`${slot} forced OFFLINE`)
         return [`${slot} is OFFLINE`]
       } // end if forcing offline
@@ -3331,6 +3433,7 @@ function startTestMap(): void {
         if (part.integrity <= 0) {
           part.integrity = 1
         }
+        applySubsystemIntegrityState()
         nextEventTag(`${slot} forced ONLINE`)
         return [`${slot} is ONLINE`]
       } // end if forcing online
@@ -3356,6 +3459,7 @@ function startTestMap(): void {
       part.specialEffects = []
       part.passiveBonuses = []
       part.activeAbilities = []
+      applySubsystemIntegrityState()
       nextEventTag(`Attached ${partId} to ${slot}`)
       return [`attached ${partId} to ${slot}`]
     } // end if part.attach command
@@ -3388,6 +3492,7 @@ function startTestMap(): void {
       part.specialEffects = []
       part.passiveBonuses = []
       part.activeAbilities = []
+      applySubsystemIntegrityState()
       nextEventTag(`Detached part from ${slot}`)
       return [`detached part from ${slot}`]
     } // end if part.detach command
@@ -3507,12 +3612,13 @@ function startTestMap(): void {
       if (name.length <= 0) {
         throw new Error('Usage: save.build <name>')
       } // end if build name missing
+      const stats = syncAuthoritativeMechStats()
       const snapshot = {
         player: {
           hp: player.hp,
           ep: player.ep,
           heat: devCurrentHeat,
-          maxHeat: devMaxHeat,
+          maxHeat: stats.maxHeat,
           x: player.x,
           y: player.y,
           z: player.z ?? 0
@@ -3573,6 +3679,8 @@ function startTestMap(): void {
           devParts.set(entry.slot, normalizedPart)
         }
       }
+      applySubsystemIntegrityState()
+      syncAuthoritativeMechStats()
       if (Number.isFinite(snapshot.timeScale)) {
         devTimeScale = Math.max(0, Math.min(4, snapshot.timeScale ?? devTimeScale))
       }
@@ -3596,6 +3704,8 @@ function startTestMap(): void {
       for (const slot of DEV_PART_SLOTS) {
         devParts.set(slot, createPlaceholderPart(slot))
       }
+      applySubsystemIntegrityState()
+      syncAuthoritativeMechStats()
       nextEventTag('Build reset to placeholder defaults')
       return ['Build reset to defaults.']
     } // end if reset.build command
@@ -3843,6 +3953,8 @@ function startTestMap(): void {
     const baseDeltaSeconds = Math.min((timestampMs - lastTimeMs) / 1000, 0.05)
     lastTimeMs = timestampMs
     const deltaSeconds = baseDeltaSeconds * devTimeScale
+    applySubsystemIntegrityState()
+    syncAuthoritativeMechStats()
 
     if (baseDeltaSeconds > 0) {
       const sampledFps = 1 / baseDeltaSeconds
@@ -4113,7 +4225,9 @@ function startTestMap(): void {
     } // end if trigger is released
 
     if (shouldAttemptShot && !isReloading && playerFireCooldownSeconds <= 0) {
-      if (playerWeapon.ammoInClip <= 0) {
+      if (!canUseRangedSubsystem()) {
+        audio.playNegativeActionTone()
+      } else if (playerWeapon.ammoInClip <= 0) {
         if (!hasPlayedEmptyClipForCurrentTriggerPull) {
           audio.fireGunshot(EMPTY_CLIP_SOUND_PATH)
           hasPlayedEmptyClipForCurrentTriggerPull = true
@@ -4192,12 +4306,14 @@ function startTestMap(): void {
         } // end if locked target for accuracy cone
         playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
       } // end if missile or ballistic firing mode
-      } // end if weapon has ammo in clip
+      } // end if weapon has ammo in clip and subsystem is online
     } // end if fire input and cooldown allow
 
     if (input.meleePending) {
       input.meleePending = false
-      if (!isReloading && equippedMeleeWeapon && playerMeleeCooldownSeconds <= 0) {
+      if (!canUseMeleeSubsystem()) {
+        audio.playNegativeActionTone()
+      } else if (!isReloading && equippedMeleeWeapon && playerMeleeCooldownSeconds <= 0) {
         const soundPath = equippedMeleeWeapon.swingSoundPaths[Math.floor(Math.random() * equippedMeleeWeapon.swingSoundPaths.length)]
           ?? equippedMeleeWeapon.swingSoundPaths[0]
         if (soundPath) {
