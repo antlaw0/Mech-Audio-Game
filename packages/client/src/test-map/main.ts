@@ -105,6 +105,23 @@ interface KnownPoi {
   position: WorldPosition
 } // end interface KnownPoi
 
+type PauseDebugTabId = 'runtime' | 'events' | 'tuning' | 'loadout'
+
+type LoadoutViewId =
+  | 'Head'
+  | 'Core/ExoShell'
+  | 'Generator'
+  | 'Thermal'
+  | 'Movement'
+  | 'Left Arm'
+  | 'Right Arm'
+  | 'Left Shoulder'
+  | 'Right Shoulder'
+  | 'Legs'
+  | 'Utility 1'
+  | 'Utility 2'
+  | 'Aggregate Stats'
+
 declare global {
   interface Window {
     mechDev?: TestMapDevConsole
@@ -174,11 +191,16 @@ function startTestMap(): void {
   const pauseDebugTabRuntimeButtonElement = document.getElementById('pauseDebugTabRuntimeButton')
   const pauseDebugTabEventsButtonElement = document.getElementById('pauseDebugTabEventsButton')
   const pauseDebugTabTuningButtonElement = document.getElementById('pauseDebugTabTuningButton')
+  const pauseDebugTabLoadoutButtonElement = document.getElementById('pauseDebugTabLoadoutButton')
   const pauseDebugRuntimePanelElement = document.getElementById('pauseDebugRuntimePanel')
   const pauseDebugEventsPanelElement = document.getElementById('pauseDebugEventsPanel')
   const pauseDebugTuningPanelElement = document.getElementById('pauseDebugTuningPanel')
+  const pauseDebugLoadoutPanelElement = document.getElementById('pauseDebugLoadoutPanel')
   const pauseDebugRuntimeContentElement = document.getElementById('pauseDebugRuntimeContent')
   const pauseDebugEventsContentElement = document.getElementById('pauseDebugEventsContent')
+  const pauseLoadoutSlotListElement = document.getElementById('pauseLoadoutSlotList')
+  const pauseLoadoutTitleElement = document.getElementById('pauseLoadoutTitle')
+  const pauseLoadoutDetailsContentElement = document.getElementById('pauseLoadoutDetailsContent')
   const pauseTuneHeatMultiplierInput = getInput('pauseTuneHeatMultiplier')
   const pauseTuneEnergyRegenInput = getInput('pauseTuneEnergyRegen')
   const pauseTuneCoolingRateInput = getInput('pauseTuneCoolingRate')
@@ -323,7 +345,8 @@ function startTestMap(): void {
   let devEnemyCount = 0
   let devProjectileCount = 0
   let isRuntimeDebugOverlayVisible = false
-  let pauseDebugActiveTab: 'runtime' | 'events' | 'tuning' = 'runtime'
+  let pauseDebugActiveTab: PauseDebugTabId = 'runtime'
+  let pauseLoadoutActiveView: LoadoutViewId = 'Head'
   let devHeatMultiplier = 1
   let devEnergyRegenRate = 1
   let devCoolingRate = 0
@@ -338,19 +361,24 @@ function startTestMap(): void {
     'Head',
     'Computer',
     'ExoShell',
-    'Arms',
-    'Movement',
     'Generator',
     'ThermalRegulator',
+    'Movement',
+    'LeftArm',
+    'RightArm',
     'ShoulderLeft',
     'ShoulderRight',
     'LeftHand',
     'RightHand',
+    'Legs',
+    'Utility1',
+    'Utility2',
     'FlightSystem'
   ] as const
   type DevPartSlot = typeof DEV_PART_SLOTS[number]
   type DevPartState = {
     partId: string
+    partType: string
     name: string
     integrity: number
     maxIntegrity: number
@@ -359,21 +387,280 @@ function startTestMap(): void {
     PDEF: number
     EDEF: number
     energyDrain: number
+    mobilityType?: string
+    heatGeneration?: number
+    heatDissipation?: number
+    powerOutput?: number
+    ratedLoad?: number
+    liftCapacity?: number
+    speedModifier?: number
+    terrainMultiplier?: number
+    specialEffects: string[]
+    passiveBonuses: string[]
+    activeAbilities: string[]
   }
-  const devParts = new Map<DevPartSlot, DevPartState>(DEV_PART_SLOTS.map((slot) => [
-    slot,
-    {
-      partId: `placeholder.${slot}`,
-      name: `${slot} Placeholder`,
+
+  const createPlaceholderPart = (slot: DevPartSlot): DevPartState => ({
+    partId: `placeholder.${slot}`,
+    partType: 'Placeholder',
+    name: `${slot} Placeholder`,
+    integrity: 100,
+    maxIntegrity: 100,
+    online: true,
+    weight: 0,
+    PDEF: 0,
+    EDEF: 0,
+    energyDrain: 0,
+    specialEffects: [],
+    passiveBonuses: [],
+    activeAbilities: []
+  })
+
+  const defaultPartOverrides: Partial<Record<DevPartSlot, Partial<DevPartState>>> = {
+    Head: {
+      partId: 'basic.head',
+      partType: 'Head',
+      name: 'Basic Head',
+      integrity: 120,
+      maxIntegrity: 120,
+      weight: 70,
+      PDEF: 18,
+      EDEF: 24,
+      energyDrain: 1,
+      passiveBonuses: ['Targeting stability +2%']
+    },
+    Computer: {
+      partId: 'basic.computer',
+      partType: 'Computer',
+      name: 'Basic Computer',
+      integrity: 90,
+      maxIntegrity: 90,
+      weight: 40,
+      PDEF: 4,
+      EDEF: 8,
+      energyDrain: 1,
+      passiveBonuses: ['Navigation assist enabled']
+    },
+    ExoShell: {
+      partId: 'basic.exoshell',
+      partType: 'Core/ExoShell',
+      name: 'Basic ExoShell',
+      integrity: 420,
+      maxIntegrity: 420,
+      weight: 460,
+      PDEF: 140,
+      EDEF: 105,
+      energyDrain: 0,
+      passiveBonuses: ['Core chassis stabilization']
+    },
+    Generator: {
+      partId: 'basic.generator',
+      partType: 'Generator',
+      name: 'Basic Generator',
+      integrity: 180,
+      maxIntegrity: 180,
+      weight: 170,
+      PDEF: 12,
+      EDEF: 14,
+      energyDrain: -6,
+      powerOutput: player.maxEp,
+      passiveBonuses: ['Idle EP regeneration enabled']
+    },
+    ThermalRegulator: {
+      partId: 'basic.thermal',
+      partType: 'Thermal Regulator',
+      name: 'Basic Thermal Regulator',
+      integrity: 140,
+      maxIntegrity: 140,
+      weight: 95,
+      PDEF: 10,
+      EDEF: 12,
+      energyDrain: 2,
+      heatDissipation: 12,
+      passiveBonuses: ['Cooling loop online']
+    },
+    Movement: {
+      partId: 'basic.legs',
+      partType: 'Movement',
+      name: 'Basic Legs',
+      integrity: 260,
+      maxIntegrity: 260,
+      weight: 290,
+      PDEF: 22,
+      EDEF: 16,
+      energyDrain: 4,
+      mobilityType: 'Walker',
+      ratedLoad: 1600,
+      speedModifier: 1,
+      terrainMultiplier: 1,
+      passiveBonuses: ['Ground traction standard']
+    },
+    LeftArm: {
+      partId: 'basic.left-arm',
+      partType: 'Arm',
+      name: 'Basic Left Arm',
+      integrity: 160,
+      maxIntegrity: 160,
+      weight: 120,
+      PDEF: 18,
+      EDEF: 12,
+      energyDrain: 1,
+      passiveBonuses: ['Melee actuator stability']
+    },
+    RightArm: {
+      partId: 'basic.right-arm',
+      partType: 'Arm',
+      name: 'Basic Right Arm',
+      integrity: 160,
+      maxIntegrity: 160,
+      weight: 120,
+      PDEF: 18,
+      EDEF: 12,
+      energyDrain: 1,
+      passiveBonuses: ['Recoil dampening +5%']
+    },
+    ShoulderLeft: {
+      partId: 'empty.left-shoulder',
+      partType: 'Shoulder Mount',
+      name: 'Empty',
+      integrity: 0,
+      maxIntegrity: 100,
+      online: false,
+      weight: 0,
+      PDEF: 0,
+      EDEF: 0,
+      energyDrain: 0
+    },
+    ShoulderRight: {
+      partId: 'empty.right-shoulder',
+      partType: 'Shoulder Mount',
+      name: 'Empty',
+      integrity: 0,
+      maxIntegrity: 100,
+      online: false,
+      weight: 0,
+      PDEF: 0,
+      EDEF: 0,
+      energyDrain: 0
+    },
+    LeftHand: {
+      partId: 'basic.sword',
+      partType: 'Hand Weapon',
+      name: 'Basic Sword',
+      integrity: 130,
+      maxIntegrity: 130,
+      weight: 85,
+      PDEF: 7,
+      EDEF: 6,
+      energyDrain: 2,
+      heatGeneration: 1,
+      activeAbilities: ['Mapped to current melee sword behavior']
+    },
+    RightHand: {
+      partId: 'basic.pistol',
+      partType: 'Hand Weapon',
+      name: 'Basic Pistol',
+      integrity: 130,
+      maxIntegrity: 130,
+      weight: 72,
+      PDEF: 7,
+      EDEF: 6,
+      energyDrain: 2,
+      heatGeneration: 2,
+      activeAbilities: ['Mapped to current pistol behavior and stats']
+    },
+    Legs: {
+      partId: 'basic.legs.display',
+      partType: 'Leg Chassis',
+      name: 'Basic Legs',
+      integrity: 260,
+      maxIntegrity: 260,
+      weight: 0,
+      PDEF: 0,
+      EDEF: 0,
+      energyDrain: 0,
+      passiveBonuses: ['Mirrors movement subsystem loadout']
+    },
+    Utility1: {
+      partId: 'basic.utility1',
+      partType: 'Utility',
+      name: 'Basic Utility 1',
+      integrity: 100,
+      maxIntegrity: 100,
+      weight: 55,
+      PDEF: 4,
+      EDEF: 5,
+      energyDrain: 1,
+      passiveBonuses: ['Auxiliary sensor burst']
+    },
+    Utility2: {
+      partId: 'basic.jetpack',
+      partType: 'Utility',
+      name: 'Basic Jetpack',
+      integrity: 115,
+      maxIntegrity: 115,
+      weight: 95,
+      PDEF: 8,
+      EDEF: 10,
+      energyDrain: 6,
+      heatGeneration: 5,
+      liftCapacity: 1600,
+      activeAbilities: ['Flight assist enabled']
+    },
+    FlightSystem: {
+      partId: 'basic.flight',
+      partType: 'Flight System',
+      name: 'Flight Link',
       integrity: 100,
       maxIntegrity: 100,
       online: true,
       weight: 0,
       PDEF: 0,
       EDEF: 0,
-      energyDrain: 0
+      energyDrain: 0,
+      liftCapacity: 1600,
+      passiveBonuses: ['Linked to Utility 2 jetpack']
     }
-  ]))
+  }
+
+  const devParts = new Map<DevPartSlot, DevPartState>(DEV_PART_SLOTS.map((slot) => {
+    const basePart = createPlaceholderPart(slot)
+    const override = defaultPartOverrides[slot]
+    return [slot, { ...basePart, ...override }]
+  }))
+
+  const LOADOUT_SLOT_VIEWS: ReadonlyArray<{ id: LoadoutViewId; slot?: DevPartSlot }> = [
+    { id: 'Head', slot: 'Head' },
+    { id: 'Core/ExoShell', slot: 'ExoShell' },
+    { id: 'Generator', slot: 'Generator' },
+    { id: 'Thermal', slot: 'ThermalRegulator' },
+    { id: 'Movement', slot: 'Movement' },
+    { id: 'Left Arm', slot: 'LeftArm' },
+    { id: 'Right Arm', slot: 'RightArm' },
+    { id: 'Left Shoulder', slot: 'ShoulderLeft' },
+    { id: 'Right Shoulder', slot: 'ShoulderRight' },
+    { id: 'Legs', slot: 'Legs' },
+    { id: 'Utility 1', slot: 'Utility1' },
+    { id: 'Utility 2', slot: 'Utility2' },
+    { id: 'Aggregate Stats' }
+  ]
+
+  const AGGREGATE_PART_SLOTS: ReadonlySet<DevPartSlot> = new Set([
+    'Head',
+    'Computer',
+    'ExoShell',
+    'Generator',
+    'ThermalRegulator',
+    'Movement',
+    'LeftArm',
+    'RightArm',
+    'ShoulderLeft',
+    'ShoulderRight',
+    'LeftHand',
+    'RightHand',
+    'Utility1',
+    'Utility2'
+  ])
 
   const knownPois: KnownPoi[] = TEST_MAP_NAVIGATION_POIS.map((poi) => ({
     id: poi.id,
@@ -500,12 +787,188 @@ function startTestMap(): void {
     } // end if pause overlay became visible
   } // end function setPauseOverlayVisible
 
-  const setPauseDebugActiveTab = (nextTab: 'runtime' | 'events' | 'tuning'): void => {
+  const formatLoadoutNumber = (value: number, fractionDigits = 1): string => {
+    if (!Number.isFinite(value)) {
+      return 'N/A'
+    }
+    return value.toFixed(fractionDigits)
+  } // end function formatLoadoutNumber
+
+  const getLoadoutPartByView = (viewId: LoadoutViewId): DevPartState | null => {
+    const view = LOADOUT_SLOT_VIEWS.find((entry) => entry.id === viewId)
+    if (!view?.slot) {
+      return null
+    }
+    return getDevPartState(view.slot)
+  } // end function getLoadoutPartByView
+
+  const getLoadoutAggregateLines = (): string[] => {
+    const totalWeight = getDevTotalWeight()
+    const totalPdef = getDevTotalPdef()
+    const totalEdef = getDevTotalEdef()
+    const movementPart = getDevPartState('Movement')
+    const utility2Part = getDevPartState('Utility2')
+    const ratedLoad = Math.max(1, movementPart?.ratedLoad ?? 100)
+    const loadRatio = totalWeight / ratedLoad
+    const weightFactor = 1 / (1 + loadRatio)
+    const speedModifier = Math.max(0.1, movementPart?.speedModifier ?? 1)
+    const forwardSpeed = PLAYER_SPEED * speedModifier
+    const reverseSpeed = forwardSpeed * 0.72
+    const strafeSpeed = forwardSpeed * 0.8
+    const turnSpeed = ((TURN_SPEED * 180) / Math.PI) * Math.sqrt(weightFactor)
+    const liftCapacity = utility2Part?.liftCapacity ?? getDevPartState('FlightSystem').liftCapacity ?? 0
+    const flightEnabled = (utility2Part?.online ?? false) && liftCapacity >= totalWeight
+    const staggerResistance = totalWeight / (totalWeight + 1000)
+
+    let totalPassiveBonuses = 0
+    let totalActiveSystems = 0
+    for (const { slot, part } of getAllDevParts()) {
+      if (!part.online || !AGGREGATE_PART_SLOTS.has(slot)) {
+        continue
+      }
+      totalPassiveBonuses += part.passiveBonuses.length
+      totalActiveSystems += part.activeAbilities.length
+    } // end for each active aggregate part
+
+    return [
+      'Aggregate Stats',
+      `Total Weight: ${formatLoadoutNumber(totalWeight)} kg`,
+      `Rated Load: ${formatLoadoutNumber(ratedLoad)} kg`,
+      `Weight Factor: ${formatLoadoutNumber(weightFactor, 3)}`,
+      '',
+      `Total PDEF: ${formatLoadoutNumber(totalPdef)}`,
+      `Total EDEF: ${formatLoadoutNumber(totalEdef)}`,
+      '',
+      `Max Energy: ${formatLoadoutNumber(player.maxEp)}`,
+      `Energy Regen: ${formatLoadoutNumber(devEnergyRegenRate, 2)}`,
+      '',
+      `Max Heat: ${formatLoadoutNumber(devMaxHeat)}`,
+      `Cooling Rate: ${formatLoadoutNumber(devCoolingRate, 2)}`,
+      '',
+      `Mobility Type: ${movementPart?.mobilityType ?? inferMobilityType()}`,
+      '',
+      `Top Speed: ${formatLoadoutNumber(forwardSpeed, 2)} m/s`,
+      `Reverse Speed: ${formatLoadoutNumber(reverseSpeed, 2)} m/s`,
+      `Strafe Speed: ${formatLoadoutNumber(strafeSpeed, 2)} m/s`,
+      `Turn Speed: ${formatLoadoutNumber(turnSpeed, 2)} deg/s`,
+      '',
+      `Flight Enabled: ${flightEnabled ? 'Yes' : 'No'}`,
+      `Lift Capacity: ${formatLoadoutNumber(liftCapacity)} kg`,
+      '',
+      `Stagger Resistance: ${formatLoadoutNumber(staggerResistance, 3)}`,
+      '',
+      `Total Passive Bonuses: ${totalPassiveBonuses}`,
+      `Total Active Systems: ${totalActiveSystems}`
+    ]
+  } // end function getLoadoutAggregateLines
+
+  const getLoadoutPartDetailLines = (viewId: LoadoutViewId): string[] => {
+    if (viewId === 'Aggregate Stats') {
+      return getLoadoutAggregateLines()
+    }
+
+    const part = getLoadoutPartByView(viewId)
+    if (!part) {
+      return [viewId, 'No slot data found.']
+    }
+
+    const lines: string[] = [
+      part.name,
+      `Part Type: ${part.partType}`,
+      `Weight: ${formatLoadoutNumber(part.weight)} kg`,
+      `Integrity: ${formatLoadoutNumber(part.integrity)} / ${formatLoadoutNumber(part.maxIntegrity)}`,
+      `${part.online ? 'ONLINE' : 'OFFLINE'}`,
+      '',
+      `PDEF: ${formatLoadoutNumber(part.PDEF)}`,
+      `EDEF: ${formatLoadoutNumber(part.EDEF)}`,
+      `Energy Drain: ${formatLoadoutNumber(part.energyDrain, 2)}`
+    ]
+
+    if (part.mobilityType) {
+      lines.push(`Mobility Type: ${part.mobilityType}`)
+    }
+    if (part.heatGeneration !== undefined) {
+      lines.push(`Heat Generation: ${formatLoadoutNumber(part.heatGeneration, 2)}`)
+    }
+    if (part.heatDissipation !== undefined) {
+      lines.push(`Heat Dissipation: ${formatLoadoutNumber(part.heatDissipation, 2)}`)
+    }
+    if (part.powerOutput !== undefined) {
+      lines.push(`Power Output: ${formatLoadoutNumber(part.powerOutput, 1)}`)
+    }
+    if (part.ratedLoad !== undefined) {
+      lines.push(`Rated Load: ${formatLoadoutNumber(part.ratedLoad, 1)} kg`)
+    }
+    if (part.liftCapacity !== undefined) {
+      lines.push(`Lift Capacity: ${formatLoadoutNumber(part.liftCapacity, 1)} kg`)
+    }
+    if (part.speedModifier !== undefined) {
+      lines.push(`Speed Modifier: ${formatLoadoutNumber(part.speedModifier, 2)}`)
+    }
+    if (part.terrainMultiplier !== undefined) {
+      lines.push(`Terrain Multiplier: ${formatLoadoutNumber(part.terrainMultiplier, 2)}`)
+    }
+
+    if (part.specialEffects.length > 0) {
+      lines.push('', `Special Effects: ${part.specialEffects.join('; ')}`)
+    }
+    if (part.passiveBonuses.length > 0) {
+      lines.push('', `Passive Bonuses: ${part.passiveBonuses.join('; ')}`)
+    }
+    if (part.activeAbilities.length > 0) {
+      lines.push('', `Active Abilities: ${part.activeAbilities.join('; ')}`)
+    }
+
+    return lines
+  } // end function getLoadoutPartDetailLines
+
+  const renderPauseLoadoutTab = (): void => {
+    if (!(pauseLoadoutSlotListElement instanceof HTMLUListElement)) {
+      return
+    }
+
+    if (pauseLoadoutSlotListElement.childElementCount === 0) {
+      for (const view of LOADOUT_SLOT_VIEWS) {
+        const listItem = document.createElement('li')
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'pause-loadout-slot-button'
+        button.textContent = view.id
+        button.dataset.viewId = view.id
+        button.setAttribute('aria-selected', view.id === pauseLoadoutActiveView ? 'true' : 'false')
+        button.addEventListener('click', () => {
+          pauseLoadoutActiveView = view.id
+          renderPauseLoadoutTab()
+        })
+        listItem.appendChild(button)
+        pauseLoadoutSlotListElement.appendChild(listItem)
+      } // end for each loadout view
+    }
+
+    const slotButtons = pauseLoadoutSlotListElement.querySelectorAll('button.pause-loadout-slot-button')
+    slotButtons.forEach((button) => {
+      if (!(button instanceof HTMLButtonElement)) {
+        return
+      }
+      button.setAttribute('aria-selected', button.dataset.viewId === pauseLoadoutActiveView ? 'true' : 'false')
+    })
+
+    const detailLines = getLoadoutPartDetailLines(pauseLoadoutActiveView)
+    if (pauseLoadoutTitleElement instanceof HTMLElement) {
+      pauseLoadoutTitleElement.textContent = pauseLoadoutActiveView
+    }
+    if (pauseLoadoutDetailsContentElement instanceof HTMLElement) {
+      pauseLoadoutDetailsContentElement.textContent = detailLines.join('\n')
+    }
+  } // end function renderPauseLoadoutTab
+
+  const setPauseDebugActiveTab = (nextTab: PauseDebugTabId): void => {
     pauseDebugActiveTab = nextTab
     const buttonState = [
       { button: pauseDebugTabRuntimeButtonElement, selected: nextTab === 'runtime' },
       { button: pauseDebugTabEventsButtonElement, selected: nextTab === 'events' },
-      { button: pauseDebugTabTuningButtonElement, selected: nextTab === 'tuning' }
+      { button: pauseDebugTabTuningButtonElement, selected: nextTab === 'tuning' },
+      { button: pauseDebugTabLoadoutButtonElement, selected: nextTab === 'loadout' }
     ]
     for (const entry of buttonState) {
       if (!(entry.button instanceof HTMLButtonElement)) {
@@ -517,7 +980,8 @@ function startTestMap(): void {
     const panelState = [
       { panel: pauseDebugRuntimePanelElement, active: nextTab === 'runtime' },
       { panel: pauseDebugEventsPanelElement, active: nextTab === 'events' },
-      { panel: pauseDebugTuningPanelElement, active: nextTab === 'tuning' }
+      { panel: pauseDebugTuningPanelElement, active: nextTab === 'tuning' },
+      { panel: pauseDebugLoadoutPanelElement, active: nextTab === 'loadout' }
     ]
     for (const entry of panelState) {
       if (!(entry.panel instanceof HTMLElement)) {
@@ -525,6 +989,10 @@ function startTestMap(): void {
       } // end if tab panel is unavailable
       entry.panel.classList.toggle('active', entry.active)
     } // end for each tab panel
+
+    if (nextTab === 'loadout') {
+      renderPauseLoadoutTab()
+    }
   } // end function setPauseDebugActiveTab
 
   const applyDebugAudioVolumeScale = (): void => {
@@ -569,6 +1037,8 @@ function startTestMap(): void {
         ? devEventLog.join('\n')
         : 'No events yet.'
     } // end if event tab content exists
+
+    renderPauseLoadoutTab()
 
     setPauseDebugActiveTab(pauseDebugActiveTab)
   } // end function updatePauseDebugTabs
@@ -999,10 +1469,11 @@ function startTestMap(): void {
     })
   } // end if close button exists
 
-  const pauseDebugTabButtons: Array<[HTMLButtonElement | null, 'runtime' | 'events' | 'tuning']> = [
+  const pauseDebugTabButtons: Array<[HTMLButtonElement | null, PauseDebugTabId]> = [
     [pauseDebugTabRuntimeButtonElement instanceof HTMLButtonElement ? pauseDebugTabRuntimeButtonElement : null, 'runtime'],
     [pauseDebugTabEventsButtonElement instanceof HTMLButtonElement ? pauseDebugTabEventsButtonElement : null, 'events'],
-    [pauseDebugTabTuningButtonElement instanceof HTMLButtonElement ? pauseDebugTabTuningButtonElement : null, 'tuning']
+    [pauseDebugTabTuningButtonElement instanceof HTMLButtonElement ? pauseDebugTabTuningButtonElement : null, 'tuning'],
+    [pauseDebugTabLoadoutButtonElement instanceof HTMLButtonElement ? pauseDebugTabLoadoutButtonElement : null, 'loadout']
   ]
   for (const [button, tabId] of pauseDebugTabButtons) {
     if (!button) {
@@ -1451,6 +1922,26 @@ function startTestMap(): void {
   } // end function parseTeleportArguments
 
   const toDevPartSlot = (rawSlot: string): DevPartSlot => {
+    const normalized = rawSlot.trim().toLowerCase().replace(/[_\-\s]+/g, '')
+    const aliasMap: Record<string, DevPartSlot> = {
+      core: 'ExoShell',
+      exoshell: 'ExoShell',
+      thermal: 'ThermalRegulator',
+      thermalregulator: 'ThermalRegulator',
+      leftarm: 'LeftArm',
+      rightarm: 'RightArm',
+      leftshoulder: 'ShoulderLeft',
+      rightshoulder: 'ShoulderRight',
+      shoulderleft: 'ShoulderLeft',
+      shoulderright: 'ShoulderRight',
+      utility1: 'Utility1',
+      utility2: 'Utility2'
+    }
+    const aliased = aliasMap[normalized]
+    if (aliased) {
+      return aliased
+    } // end if slot alias matched
+
     const matched = DEV_PART_SLOTS.find((slot) => slot.toLowerCase() === rawSlot.trim().toLowerCase())
     if (!matched) {
       throw new Error(`Unknown slot: ${rawSlot}.`) 
@@ -1458,10 +1949,54 @@ function startTestMap(): void {
     return matched
   } // end function toDevPartSlot
 
+  const normalizeDevPartState = (slot: DevPartSlot, source?: Partial<DevPartState> | null): DevPartState => {
+    const fallback = createPlaceholderPart(slot)
+    const safeSource = source ?? {}
+    const readNumber = (value: unknown, fallbackValue: number): number => {
+      return Number.isFinite(value) ? Number(value) : fallbackValue
+    } // end function readNumber
+
+    return {
+      ...fallback,
+      ...safeSource,
+      partId: typeof safeSource.partId === 'string' && safeSource.partId.length > 0 ? safeSource.partId : fallback.partId,
+      partType: typeof safeSource.partType === 'string' && safeSource.partType.length > 0 ? safeSource.partType : fallback.partType,
+      name: typeof safeSource.name === 'string' && safeSource.name.length > 0 ? safeSource.name : fallback.name,
+      integrity: readNumber(safeSource.integrity, fallback.integrity),
+      maxIntegrity: Math.max(1, readNumber(safeSource.maxIntegrity, fallback.maxIntegrity)),
+      online: typeof safeSource.online === 'boolean' ? safeSource.online : fallback.online,
+      weight: readNumber(safeSource.weight, fallback.weight),
+      PDEF: readNumber(safeSource.PDEF, fallback.PDEF),
+      EDEF: readNumber(safeSource.EDEF, fallback.EDEF),
+      energyDrain: readNumber(safeSource.energyDrain, fallback.energyDrain),
+      mobilityType: typeof safeSource.mobilityType === 'string' ? safeSource.mobilityType : undefined,
+      heatGeneration: safeSource.heatGeneration === undefined ? undefined : readNumber(safeSource.heatGeneration, 0),
+      heatDissipation: safeSource.heatDissipation === undefined ? undefined : readNumber(safeSource.heatDissipation, 0),
+      powerOutput: safeSource.powerOutput === undefined ? undefined : readNumber(safeSource.powerOutput, 0),
+      ratedLoad: safeSource.ratedLoad === undefined ? undefined : readNumber(safeSource.ratedLoad, 0),
+      liftCapacity: safeSource.liftCapacity === undefined ? undefined : readNumber(safeSource.liftCapacity, 0),
+      speedModifier: safeSource.speedModifier === undefined ? undefined : readNumber(safeSource.speedModifier, 1),
+      terrainMultiplier: safeSource.terrainMultiplier === undefined ? undefined : readNumber(safeSource.terrainMultiplier, 1),
+      specialEffects: Array.isArray(safeSource.specialEffects) ? [...safeSource.specialEffects] : [],
+      passiveBonuses: Array.isArray(safeSource.passiveBonuses) ? [...safeSource.passiveBonuses] : [],
+      activeAbilities: Array.isArray(safeSource.activeAbilities) ? [...safeSource.activeAbilities] : []
+    }
+  } // end function normalizeDevPartState
+
+  const getDevPartState = (slot: DevPartSlot): DevPartState => {
+    const normalized = normalizeDevPartState(slot, devParts.get(slot))
+    devParts.set(slot, normalized)
+    return normalized
+  } // end function getDevPartState
+
+  const getAllDevParts = (): Array<{ slot: DevPartSlot; part: DevPartState }> => {
+    return DEV_PART_SLOTS.map((slot) => ({ slot, part: getDevPartState(slot) }))
+  } // end function getAllDevParts
+
   const getDevTotalWeight = (): number => {
     let total = 0
-    for (const part of devParts.values()) {
-      if (part.online) {
+    for (const { slot, part } of getAllDevParts()) {
+      if (part.online && AGGREGATE_PART_SLOTS.has(slot)) {
         total += part.weight
       }
     } // end for each part
@@ -1470,8 +2005,8 @@ function startTestMap(): void {
 
   const getDevTotalPdef = (): number => {
     let total = 0
-    for (const part of devParts.values()) {
-      if (part.online) {
+    for (const { slot, part } of getAllDevParts()) {
+      if (part.online && AGGREGATE_PART_SLOTS.has(slot)) {
         total += part.PDEF
       }
     } // end for each part
@@ -1480,8 +2015,8 @@ function startTestMap(): void {
 
   const getDevTotalEdef = (): number => {
     let total = 0
-    for (const part of devParts.values()) {
-      if (part.online) {
+    for (const { slot, part } of getAllDevParts()) {
+      if (part.online && AGGREGATE_PART_SLOTS.has(slot)) {
         total += part.EDEF
       }
     } // end for each part
@@ -1500,10 +2035,7 @@ function startTestMap(): void {
   } // end function nextEventTag
 
   const formatDevPart = (slot: DevPartSlot): string => {
-    const part = devParts.get(slot)
-    if (!part) {
-      return `${slot}: <missing>`
-    } // end if part placeholder is unexpectedly missing
+    const part = getDevPartState(slot)
 
     return `${slot}: ${part.name} (${part.partId}) integrity:${part.integrity.toFixed(1)}/${part.maxIntegrity.toFixed(1)} ${part.online ? 'ONLINE' : 'OFFLINE'}`
   } // end function formatDevPart
@@ -1557,7 +2089,10 @@ function startTestMap(): void {
   } // end function getEnergyStateLabel
 
   const inferMobilityType = (): string => {
-    const movementPart = devParts.get('Movement')
+    const movementPart = getDevPartState('Movement')
+    if (movementPart?.mobilityType) {
+      return movementPart.mobilityType
+    }
     const source = `${movementPart?.partId ?? ''} ${movementPart?.name ?? ''}`.toLowerCase()
     if (source.includes('wheel')) {
       return 'Wheels'
@@ -1648,12 +2183,7 @@ function startTestMap(): void {
       'PART STATUS'
     ]
 
-    for (const slot of DEV_PART_SLOTS) {
-      const part = devParts.get(slot)
-      if (!part) {
-        lines.push(`${slot}: <missing>`)
-        continue
-      }
+    for (const { slot, part } of getAllDevParts()) {
       lines.push(`${slot}: ${part.name} | integrity ${part.integrity.toFixed(1)}/${part.maxIntegrity.toFixed(1)} | ${part.online ? 'ONLINE' : 'OFFLINE'}`)
     } // end for each slot
 
@@ -2725,13 +3255,10 @@ function startTestMap(): void {
         throw new Error('Usage: part.get <all|slot> [integrity|stats|state]')
       } // end if part slot missing
       if (requestedSlot.toLowerCase() === 'all') {
-        return ['part.get all:', ...DEV_PART_SLOTS.map((slot) => `  ${formatDevPart(slot)}`)]
+        return ['part.get all:', ...getAllDevParts().map(({ slot }) => `  ${formatDevPart(slot)}`)]
       } // end if listing all parts
       const slot = toDevPartSlot(requestedSlot)
-      const part = devParts.get(slot)
-      if (!part) {
-        throw new Error(`Slot has no part data: ${slot}`)
-      } // end if slot missing state
+      const part = getDevPartState(slot)
       const field = (rawArgs[2] ?? '').toLowerCase()
       if (field === '' || field === 'state') {
         return [`${slot} state = ${part.online ? 'ONLINE' : 'OFFLINE'}`]
@@ -2770,10 +3297,8 @@ function startTestMap(): void {
       } // end if setting energy
       if (field === 'weight') {
         const requestedWeight = Math.max(0, parseFiniteNumber(value, 'player.set weight'))
-        const exoShell = devParts.get('ExoShell')
-        if (exoShell) {
-          exoShell.weight = requestedWeight
-        }
+        const exoShell = getDevPartState('ExoShell')
+        exoShell.weight = requestedWeight
         nextEventTag(`Weight set to ${requestedWeight.toFixed(1)}`)
         return [`player.weight = ${getDevTotalWeight().toFixed(1)}`]
       } // end if setting weight
@@ -2787,10 +3312,7 @@ function startTestMap(): void {
         throw new Error('Usage: part.set <slot> integrity <value> | offline | online')
       } // end if slot missing
       const slot = toDevPartSlot(slotRaw)
-      const part = devParts.get(slot)
-      if (!part) {
-        throw new Error(`Slot has no part data: ${slot}`)
-      } // end if missing slot data
+      const part = getDevPartState(slot)
       const action = (rawArgs[2] ?? '').toLowerCase()
       if (action === 'integrity') {
         const value = parseFiniteNumber(rawArgs[3] ?? '', `${slot} integrity`)
@@ -2823,16 +3345,17 @@ function startTestMap(): void {
         throw new Error('Usage: part.attach <partId> <slot>')
       } // end if part attach args missing
       const slot = toDevPartSlot(slotRaw)
-      const part = devParts.get(slot)
-      if (!part) {
-        throw new Error(`Slot has no part data: ${slot}`)
-      } // end if part state missing
+      const part = getDevPartState(slot)
       part.partId = partId
+      part.partType = 'Attached'
       part.name = partId
       part.online = true
       if (part.integrity <= 0) {
         part.integrity = part.maxIntegrity
       }
+      part.specialEffects = []
+      part.passiveBonuses = []
+      part.activeAbilities = []
       nextEventTag(`Attached ${partId} to ${slot}`)
       return [`attached ${partId} to ${slot}`]
     } // end if part.attach command
@@ -2844,11 +3367,9 @@ function startTestMap(): void {
         throw new Error('Usage: part.detach <slot>')
       } // end if slot missing
       const slot = toDevPartSlot(slotRaw)
-      const part = devParts.get(slot)
-      if (!part) {
-        throw new Error(`Slot has no part data: ${slot}`)
-      } // end if part state missing
+      const part = getDevPartState(slot)
       part.partId = `placeholder.${slot}`
+      part.partType = 'Placeholder'
       part.name = `${slot} Placeholder`
       part.integrity = part.maxIntegrity
       part.online = false
@@ -2856,6 +3377,17 @@ function startTestMap(): void {
       part.PDEF = 0
       part.EDEF = 0
       part.energyDrain = 0
+      part.mobilityType = undefined
+      part.heatGeneration = undefined
+      part.heatDissipation = undefined
+      part.powerOutput = undefined
+      part.ratedLoad = undefined
+      part.liftCapacity = undefined
+      part.speedModifier = undefined
+      part.terrainMultiplier = undefined
+      part.specialEffects = []
+      part.passiveBonuses = []
+      part.activeAbilities = []
       nextEventTag(`Detached part from ${slot}`)
       return [`detached part from ${slot}`]
     } // end if part.detach command
@@ -2985,7 +3517,7 @@ function startTestMap(): void {
           y: player.y,
           z: player.z ?? 0
         },
-        parts: DEV_PART_SLOTS.map((slot) => ({ slot, part: devParts.get(slot) })),
+        parts: getAllDevParts().map(({ slot, part }) => ({ slot, part })),
         timeScale: devTimeScale,
         aiEnabled: devAiEnabled
       }
@@ -3031,7 +3563,14 @@ function startTestMap(): void {
           if (!entry || !DEV_PART_SLOTS.includes(entry.slot) || !entry.part) {
             continue
           }
-          devParts.set(entry.slot, { ...entry.part })
+          const normalizedPart = {
+            ...createPlaceholderPart(entry.slot),
+            ...entry.part,
+            specialEffects: Array.isArray(entry.part.specialEffects) ? [...entry.part.specialEffects] : [],
+            passiveBonuses: Array.isArray(entry.part.passiveBonuses) ? [...entry.part.passiveBonuses] : [],
+            activeAbilities: Array.isArray(entry.part.activeAbilities) ? [...entry.part.activeAbilities] : []
+          }
+          devParts.set(entry.slot, normalizedPart)
         }
       }
       if (Number.isFinite(snapshot.timeScale)) {
@@ -3055,17 +3594,7 @@ function startTestMap(): void {
       devAudioDebugEnabled = false
       devEventsDebugEnabled = false
       for (const slot of DEV_PART_SLOTS) {
-        devParts.set(slot, {
-          partId: `placeholder.${slot}`,
-          name: `${slot} Placeholder`,
-          integrity: 100,
-          maxIntegrity: 100,
-          online: true,
-          weight: 0,
-          PDEF: 0,
-          EDEF: 0,
-          energyDrain: 0
-        })
+        devParts.set(slot, createPlaceholderPart(slot))
       }
       nextEventTag('Build reset to placeholder defaults')
       return ['Build reset to defaults.']

@@ -291,6 +291,9 @@
         width: 100%;
         justify-content: flex-start;
       }
+      .pause-loadout-layout {
+        grid-template-columns: 1fr;
+      }
     }
     #pauseOverlay {
       position: absolute;
@@ -412,6 +415,65 @@
       margin-top: 8px;
       font-size: 11px;
       color: #88d7f4;
+    }
+    .pause-loadout-layout {
+      display: grid;
+      grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+      gap: 12px;
+      align-items: stretch;
+    }
+    .pause-loadout-slots {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 6px;
+      align-content: start;
+    }
+    .pause-loadout-slot-button {
+      width: 100%;
+      text-align: left;
+      padding: 7px 9px;
+      border: 1px solid rgba(111, 220, 255, 0.52);
+      background: rgba(0, 39, 57, 0.65);
+      color: #bff6ff;
+      font-family: monospace;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .pause-loadout-slot-button[aria-selected="true"] {
+      background: rgba(0, 105, 145, 0.72);
+      border-color: rgba(151, 236, 255, 0.95);
+      color: #e7fbff;
+    }
+    .pause-loadout-slot-button:hover,
+    .pause-loadout-slot-button:focus {
+      outline: none;
+      background: rgba(0, 96, 136, 0.58);
+    }
+    .pause-loadout-details {
+      border: 1px solid rgba(98, 214, 255, 0.35);
+      background: rgba(1, 23, 38, 0.72);
+      padding: 10px;
+      min-height: 280px;
+    }
+    .pause-loadout-title {
+      margin: 0 0 8px;
+      font-size: 16px;
+      color: #d7f8ff;
+      letter-spacing: 1px;
+    }
+    .pause-loadout-pre {
+      margin: 0;
+      white-space: pre-wrap;
+      line-height: 1.45;
+      font-size: 12px;
+      color: #c6f6ff;
+    }
+    .pause-loadout-summary {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #8dd9f2;
     }
     #devConsoleOverlay {
       position: absolute;
@@ -702,6 +764,7 @@
         <button id="pauseDebugTabRuntimeButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="true" aria-controls="pauseDebugRuntimePanel">Runtime Stats</button>
         <button id="pauseDebugTabEventsButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugEventsPanel">Event Log</button>
         <button id="pauseDebugTabTuningButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugTuningPanel">Live Tuning</button>
+        <button id="pauseDebugTabLoadoutButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugLoadoutPanel">Loadout</button>
       </div>
       <section id="pauseDebugRuntimePanel" class="pause-debug-tab-panel active" role="tabpanel" aria-label="Runtime Stats">
         <pre id="pauseDebugRuntimeContent" class="pause-debug-pre">Runtime stats loading...</pre>
@@ -722,6 +785,16 @@
           <div class="pause-debug-tuning-row"><label for="pauseTuneAudioVolumeScaling">audio volume scaling</label><input id="pauseTuneAudioVolumeScaling" type="number" min="0" max="2" step="0.01" value="1" /></div>
         </div>
         <div class="pause-debug-hint">Live tuning applies instantly while paused and after resuming.</div>
+      </section>
+      <section id="pauseDebugLoadoutPanel" class="pause-debug-tab-panel" role="tabpanel" aria-label="Loadout">
+        <div class="pause-loadout-layout">
+          <ul id="pauseLoadoutSlotList" class="pause-loadout-slots" aria-label="Loadout slots"></ul>
+          <section class="pause-loadout-details" aria-live="polite" aria-atomic="false">
+            <h3 id="pauseLoadoutTitle" class="pause-loadout-title">Loadout</h3>
+            <pre id="pauseLoadoutDetailsContent" class="pause-loadout-pre">Loadout details loading...</pre>
+            <div class="pause-loadout-summary">Use tab and arrow keys to inspect each equipped subsystem and aggregate stats.</div>
+          </section>
+        </div>
       </section>
     </div>
     <button id="pauseResumeButton" class="pause-button" type="button">Resume Game</button>

@@ -386,6 +386,8 @@ Changes apply instantly.
 ---
 
 ## Ticket 0D — In-Game Loadout HTML UI
+Copilot status: Complete
+Developer status: Approved
 
 ### 🧠 Copilot Prompt
 
@@ -496,6 +498,34 @@ Stats must update immediately when:
 There will need to be actual parts equipped to the player by default for testing purposes. Use existing stats as the player is already using where applicable and placeholder for things not implemented yet. Here is the initial loadout player has by default:
 ---
 
+## Default Equipped Parts (Required for Testing)
+
+The player must spawn with a complete baseline loadout so every slot in the loadout UI can be validated against current player stats and capabilities.
+
+Use these generic part names:
+
+Head: Basic Head
+Core/ExoShell: Basic ExoShell
+Generator: Basic Generator
+Thermal: Basic Thermal Regulator
+Movement: Basic Legs
+Left Arm: Basic Left Arm
+Right Arm: Basic Right Arm
+Legs: Basic Legs
+Utility 1: Basic Utility 1
+Utility 2: Basic Jetpack
+
+Weapon/mount requirements:
+
+Right Hand: Basic Pistol (must map to current pistol behavior/stats)
+Left Hand: Basic Sword (must map to current melee sword behavior/stats)
+Left Shoulder: Empty
+Right Shoulder: Empty
+
+Implementation note:
+
+For any part stat category not implemented yet, use placeholder values that are stable and visible in the UI. Slot displays and aggregate stats must still reflect those placeholders consistently.
+
 ### Accessibility requirement
 
 * keyboard navigable
@@ -527,6 +557,8 @@ There will need to be actual parts equipped to the player by default for testing
 ---
 
 ## Ticket 1 — Normalize Part Data Access
+Copilot status: Complete
+Developer status: Approved
 
 ### 🧠 Copilot Prompt
 
