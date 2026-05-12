@@ -284,6 +284,13 @@ export interface AudioController {
   stopServo: () => void
   playFootstep: (terrainLayer?: FootstepTerrainLayer) => void
   stopFootstep: () => void
+  updatePlayerMobilityAudio: (
+    mobilityType: 'Wheels' | 'Treads' | 'Hover' | 'Walker' | 'Flight' | 'Placeholder',
+    normalizedSpeed: number,
+    normalizedForward: number,
+    accelerating: boolean,
+    grounded: boolean
+  ) => void
   playBump: () => void
   playPitchCenterConfirm: () => void
   fireGunshot: (soundPath?: string) => void

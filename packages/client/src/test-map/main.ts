@@ -122,6 +122,96 @@ type LoadoutViewId =
   | 'Utility 2'
   | 'Aggregate Stats'
 
+type MobilityType = 'Wheels' | 'Treads' | 'Hover' | 'Walker' | 'Flight' | 'Placeholder'
+
+interface MovementArchetypeProfile {
+  mobilityType: MobilityType
+  ratedLoad: number
+  groundAcceleration: number
+  groundDeceleration: number
+  maxForwardSpeed: number
+  maxReverseSpeed: number
+  maxStrafeSpeed: number
+  turnRate: number
+  terrainPenaltyMultiplier: number
+  energyUse: number
+} // end interface MovementArchetypeProfile
+
+const MOVEMENT_ARCHETYPE_PROFILES: Readonly<Record<MobilityType, MovementArchetypeProfile>> = {
+  Wheels: {
+    mobilityType: 'Wheels',
+    ratedLoad: 1500,
+    groundAcceleration: 5.2,
+    groundDeceleration: 7.2,
+    maxForwardSpeed: 7.2,
+    maxReverseSpeed: 3.4,
+    maxStrafeSpeed: 0.8,
+    turnRate: 1.1,
+    terrainPenaltyMultiplier: 1.3,
+    energyUse: 3.2
+  },
+  Treads: {
+    mobilityType: 'Treads',
+    ratedLoad: 2200,
+    groundAcceleration: 3.8,
+    groundDeceleration: 6.6,
+    maxForwardSpeed: 5.4,
+    maxReverseSpeed: 2.8,
+    maxStrafeSpeed: 0.3,
+    turnRate: 1.35,
+    terrainPenaltyMultiplier: 0.9,
+    energyUse: 2.8
+  },
+  Hover: {
+    mobilityType: 'Hover',
+    ratedLoad: 1400,
+    groundAcceleration: 6.4,
+    groundDeceleration: 3.1,
+    maxForwardSpeed: 8.2,
+    maxReverseSpeed: 4.8,
+    maxStrafeSpeed: 5.9,
+    turnRate: 1.7,
+    terrainPenaltyMultiplier: 0.7,
+    energyUse: 4.3
+  },
+  Walker: {
+    mobilityType: 'Walker',
+    ratedLoad: 1600,
+    groundAcceleration: 4.9,
+    groundDeceleration: 5.2,
+    maxForwardSpeed: 6.4,
+    maxReverseSpeed: 4.6,
+    maxStrafeSpeed: 4.2,
+    turnRate: 1.8,
+    terrainPenaltyMultiplier: 1,
+    energyUse: 3.6
+  },
+  Flight: {
+    mobilityType: 'Flight',
+    ratedLoad: 1350,
+    groundAcceleration: 4.2,
+    groundDeceleration: 4.8,
+    maxForwardSpeed: 6,
+    maxReverseSpeed: 4,
+    maxStrafeSpeed: 3.8,
+    turnRate: 2,
+    terrainPenaltyMultiplier: 0.85,
+    energyUse: 5.2
+  },
+  Placeholder: {
+    mobilityType: 'Placeholder',
+    ratedLoad: 1000,
+    groundAcceleration: 3,
+    groundDeceleration: 3,
+    maxForwardSpeed: PLAYER_SPEED,
+    maxReverseSpeed: PLAYER_SPEED * 0.72,
+    maxStrafeSpeed: PLAYER_SPEED * 0.8,
+    turnRate: TURN_SPEED,
+    terrainPenaltyMultiplier: 1,
+    energyUse: 0
+  }
+}
+
 interface DevMechStatsSnapshot {
   totalWeight: number
   totalPDEF: number
@@ -405,6 +495,14 @@ function startTestMap(): void {
     liftCapacity?: number
     speedModifier?: number
     terrainMultiplier?: number
+    groundAcceleration?: number
+    groundDeceleration?: number
+    maxForwardSpeed?: number
+    maxReverseSpeed?: number
+    maxStrafeSpeed?: number
+    turnRate?: number
+    terrainPenaltyMultiplier?: number
+    energyUse?: number
     specialEffects: string[]
     passiveBonuses: string[]
     activeAbilities: string[]
@@ -505,6 +603,14 @@ function startTestMap(): void {
       ratedLoad: 1600,
       speedModifier: 1,
       terrainMultiplier: 1,
+      groundAcceleration: 4.9,
+      groundDeceleration: 5.2,
+      maxForwardSpeed: 6.4,
+      maxReverseSpeed: 4.6,
+      maxStrafeSpeed: 4.2,
+      turnRate: 1.8,
+      terrainPenaltyMultiplier: 1,
+      energyUse: 3.6,
       passiveBonuses: ['Ground traction standard']
     },
     LeftArm: {
@@ -823,14 +929,14 @@ function startTestMap(): void {
     const stats = syncAuthoritativeMechStats()
     const movementPart = getDevPartState('Movement')
     const utility2Part = getDevPartState('Utility2')
-    const ratedLoad = Math.max(1, movementPart?.ratedLoad ?? 100)
+    const movementProfile = getCurrentMovementArchetypeProfile()
+    const ratedLoad = Math.max(1, movementProfile.ratedLoad)
     const loadRatio = stats.totalWeight / ratedLoad
     const weightFactor = 1 / (1 + loadRatio)
-    const speedModifier = Math.max(0.1, movementPart?.speedModifier ?? 1)
-    const forwardSpeed = PLAYER_SPEED * speedModifier
-    const reverseSpeed = forwardSpeed * 0.72
-    const strafeSpeed = forwardSpeed * 0.8
-    const turnSpeed = ((TURN_SPEED * 180) / Math.PI) * Math.sqrt(weightFactor)
+    const forwardSpeed = movementProfile.maxForwardSpeed
+    const reverseSpeed = movementProfile.maxReverseSpeed
+    const strafeSpeed = movementProfile.maxStrafeSpeed
+    const turnSpeed = (movementProfile.turnRate * 180) / Math.PI
     const liftCapacity = utility2Part?.liftCapacity ?? getDevPartState('FlightSystem').liftCapacity ?? 0
     const flightEnabled = (utility2Part?.online ?? false) && liftCapacity >= stats.totalWeight
     const staggerResistance = stats.totalWeight / (stats.totalWeight + 1000)
@@ -860,7 +966,7 @@ function startTestMap(): void {
       `Max Heat: ${formatLoadoutNumber(stats.maxHeat)}`,
       `Cooling Rate: ${formatLoadoutNumber(devCoolingRate, 2)}`,
       '',
-      `Mobility Type: ${movementPart?.mobilityType ?? inferMobilityType()}`,
+      `Mobility Type: ${movementProfile.mobilityType}`,
       '',
       `Top Speed: ${formatLoadoutNumber(forwardSpeed, 2)} m/s`,
       `Reverse Speed: ${formatLoadoutNumber(reverseSpeed, 2)} m/s`,
@@ -922,6 +1028,30 @@ function startTestMap(): void {
     }
     if (part.terrainMultiplier !== undefined) {
       lines.push(`Terrain Multiplier: ${formatLoadoutNumber(part.terrainMultiplier, 2)}`)
+    }
+    if (part.groundAcceleration !== undefined) {
+      lines.push(`Ground Acceleration: ${formatLoadoutNumber(part.groundAcceleration, 2)} m/s^2`)
+    }
+    if (part.groundDeceleration !== undefined) {
+      lines.push(`Ground Deceleration: ${formatLoadoutNumber(part.groundDeceleration, 2)} m/s^2`)
+    }
+    if (part.maxForwardSpeed !== undefined) {
+      lines.push(`Max Forward Speed: ${formatLoadoutNumber(part.maxForwardSpeed, 2)} m/s`)
+    }
+    if (part.maxReverseSpeed !== undefined) {
+      lines.push(`Max Reverse Speed: ${formatLoadoutNumber(part.maxReverseSpeed, 2)} m/s`)
+    }
+    if (part.maxStrafeSpeed !== undefined) {
+      lines.push(`Max Strafe Speed: ${formatLoadoutNumber(part.maxStrafeSpeed, 2)} m/s`)
+    }
+    if (part.turnRate !== undefined) {
+      lines.push(`Turn Rate: ${formatLoadoutNumber(part.turnRate, 2)} rad/s`)
+    }
+    if (part.terrainPenaltyMultiplier !== undefined) {
+      lines.push(`Terrain Penalty Multiplier: ${formatLoadoutNumber(part.terrainPenaltyMultiplier, 2)}`)
+    }
+    if (part.energyUse !== undefined) {
+      lines.push(`Energy Use: ${formatLoadoutNumber(part.energyUse, 2)} EP/s`)
     }
 
     if (part.specialEffects.length > 0) {
@@ -1994,6 +2124,14 @@ function startTestMap(): void {
       liftCapacity: safeSource.liftCapacity === undefined ? undefined : readNumber(safeSource.liftCapacity, 0),
       speedModifier: safeSource.speedModifier === undefined ? undefined : readNumber(safeSource.speedModifier, 1),
       terrainMultiplier: safeSource.terrainMultiplier === undefined ? undefined : readNumber(safeSource.terrainMultiplier, 1),
+      groundAcceleration: safeSource.groundAcceleration === undefined ? undefined : readNumber(safeSource.groundAcceleration, 0),
+      groundDeceleration: safeSource.groundDeceleration === undefined ? undefined : readNumber(safeSource.groundDeceleration, 0),
+      maxForwardSpeed: safeSource.maxForwardSpeed === undefined ? undefined : readNumber(safeSource.maxForwardSpeed, 0),
+      maxReverseSpeed: safeSource.maxReverseSpeed === undefined ? undefined : readNumber(safeSource.maxReverseSpeed, 0),
+      maxStrafeSpeed: safeSource.maxStrafeSpeed === undefined ? undefined : readNumber(safeSource.maxStrafeSpeed, 0),
+      turnRate: safeSource.turnRate === undefined ? undefined : readNumber(safeSource.turnRate, 0),
+      terrainPenaltyMultiplier: safeSource.terrainPenaltyMultiplier === undefined ? undefined : readNumber(safeSource.terrainPenaltyMultiplier, 1),
+      energyUse: safeSource.energyUse === undefined ? undefined : readNumber(safeSource.energyUse, 0),
       specialEffects: Array.isArray(safeSource.specialEffects) ? [...safeSource.specialEffects] : [],
       passiveBonuses: Array.isArray(safeSource.passiveBonuses) ? [...safeSource.passiveBonuses] : [],
       activeAbilities: Array.isArray(safeSource.activeAbilities) ? [...safeSource.activeAbilities] : []
@@ -2211,13 +2349,67 @@ function startTestMap(): void {
     return 'Placeholder'
   } // end function inferMobilityType
 
+  const toMobilityType = (rawMobilityType?: string): MobilityType => {
+    const normalized = (rawMobilityType ?? '').trim().toLowerCase()
+    if (normalized === 'wheels' || normalized === 'wheel') {
+      return 'Wheels'
+    }
+    if (normalized === 'treads' || normalized === 'tread') {
+      return 'Treads'
+    }
+    if (normalized === 'hover') {
+      return 'Hover'
+    }
+    if (normalized === 'walker' || normalized === 'walkers') {
+      return 'Walker'
+    }
+    if (normalized === 'flight' || normalized === 'flying') {
+      return 'Flight'
+    }
+    return 'Placeholder'
+  } // end function toMobilityType
+
+  const getCurrentMovementArchetypeProfile = (): MovementArchetypeProfile => {
+    const movementPart = getDevPartState('Movement')
+    const mobilityType = toMobilityType(movementPart?.mobilityType ?? inferMobilityType())
+    const defaults = MOVEMENT_ARCHETYPE_PROFILES[mobilityType]
+    return {
+      mobilityType,
+      ratedLoad: Math.max(1, movementPart?.ratedLoad ?? defaults.ratedLoad),
+      groundAcceleration: Math.max(0.1, movementPart?.groundAcceleration ?? defaults.groundAcceleration),
+      groundDeceleration: Math.max(0.1, movementPart?.groundDeceleration ?? defaults.groundDeceleration),
+      maxForwardSpeed: Math.max(0.1, movementPart?.maxForwardSpeed ?? defaults.maxForwardSpeed),
+      maxReverseSpeed: Math.max(0.1, movementPart?.maxReverseSpeed ?? defaults.maxReverseSpeed),
+      maxStrafeSpeed: Math.max(0, movementPart?.maxStrafeSpeed ?? defaults.maxStrafeSpeed),
+      turnRate: Math.max(0.1, movementPart?.turnRate ?? defaults.turnRate),
+      terrainPenaltyMultiplier: Math.max(0.1, movementPart?.terrainPenaltyMultiplier ?? defaults.terrainPenaltyMultiplier),
+      energyUse: Math.max(0, movementPart?.energyUse ?? defaults.energyUse)
+    }
+  } // end function getCurrentMovementArchetypeProfile
+
+  const applyMovementArchetypeToPart = (part: DevPartState, mobilityTypeRaw: string): void => {
+    const mobilityType = toMobilityType(mobilityTypeRaw)
+    const profile = MOVEMENT_ARCHETYPE_PROFILES[mobilityType]
+    part.mobilityType = mobilityType
+    part.ratedLoad = profile.ratedLoad
+    part.groundAcceleration = profile.groundAcceleration
+    part.groundDeceleration = profile.groundDeceleration
+    part.maxForwardSpeed = profile.maxForwardSpeed
+    part.maxReverseSpeed = profile.maxReverseSpeed
+    part.maxStrafeSpeed = profile.maxStrafeSpeed
+    part.turnRate = profile.turnRate
+    part.terrainPenaltyMultiplier = profile.terrainPenaltyMultiplier
+    part.energyUse = profile.energyUse
+  } // end function applyMovementArchetypeToPart
+
   const getRuntimeDebugOverlayLines = (): string[] => {
     const headingDegrees = normalizeDegrees((player.angle * 180) / Math.PI)
     const stats = syncAuthoritativeMechStats()
     const ratedLoad = 100
     const weightFactor = stats.totalWeight / Math.max(1, ratedLoad)
-    const movementSpeedLimit = player.isFlying ? PLAYER_FLIGHT_SPEED : PLAYER_SPEED
-    const turnSpeedDegrees = (TURN_SPEED * 180) / Math.PI
+    const movementProfile = getCurrentMovementArchetypeProfile()
+    const movementSpeedLimit = player.isFlying ? PLAYER_FLIGHT_SPEED : movementProfile.maxForwardSpeed
+    const turnSpeedDegrees = (movementProfile.turnRate * 180) / Math.PI
     const activeTimers = Array.from(devTimers.entries()).filter((entry) => Math.abs(entry[1]) > 0.0001).length
     const audioVoicesEstimate = Math.max(2, devEnemyCount + devProjectileCount + (player.isFlying ? 1 : 0) + (audio.isServoPlaying() ? 1 : 0))
     const loopState = player.isFlying
@@ -2244,15 +2436,15 @@ function startTestMap(): void {
       `Movement State: ${getPlayerMovementStateLabel()}`,
       '',
       'MOVEMENT',
-      `Mobility Type: ${inferMobilityType()}`,
+      `Mobility Type: ${movementProfile.mobilityType}`,
       `Forward Speed: ${movementSpeedLimit.toFixed(2)}`,
-      `Reverse Speed: ${movementSpeedLimit.toFixed(2)} (placeholder)`,
-      `Strafe Speed: ${movementSpeedLimit.toFixed(2)} (placeholder)`,
+      `Reverse Speed: ${movementProfile.maxReverseSpeed.toFixed(2)}`,
+      `Strafe Speed: ${movementProfile.maxStrafeSpeed.toFixed(2)}`,
       `Turn Speed: ${turnSpeedDegrees.toFixed(2)} deg/s`,
       `Acceleration: ${devApproxAcceleration.toFixed(2)} m/s^2 (sampled)`,
-      `Flight Thrust: ${PLAYER_FLIGHT_SPEED.toFixed(2)} (placeholder)`,
+      `Flight Thrust: ${PLAYER_FLIGHT_SPEED.toFixed(2)} (baseline)`,
       `Lift Capacity: ${getSharedFlightHeight().toFixed(2)} (placeholder)`,
-      'Terrain Multiplier: 1.000 (TODO movement subsystem)',
+      `Terrain Multiplier: ${movementProfile.terrainPenaltyMultiplier.toFixed(3)}`,
       '',
       'DEFENSE',
       `Total PDEF: ${stats.totalPDEF.toFixed(1)}`,
@@ -2737,6 +2929,17 @@ function startTestMap(): void {
       examples: ['list', 'list weapon.', 'paths audio.']
     },
     {
+      syntax: 'list systems',
+      description: 'Show high-level runtime toggles and simulation flags.',
+      helpPath: ['Console', 'Reference']
+    },
+    {
+      syntax: 'list parts|slots|weapons|enemies|projectiles|audio|timers|events',
+      description: 'List runtime entities and diagnostics grouped by topic.',
+      helpPath: ['Console', 'Reference'],
+      examples: ['list parts', 'list slots', 'list audio', 'list events']
+    },
+    {
       syntax: 'get <path>',
       description: 'Read the current value of a bound property.',
       helpPath: ['Console', 'Reference'],
@@ -2777,13 +2980,13 @@ function startTestMap(): void {
       syntax: 'player.get <view>',
       description: 'Inspect player values using Ticket views such as all, stats, heat, and target.',
       helpPath: ['Player', 'Vitals'],
-      examples: ['player.get all', 'player.get heat']
+      examples: ['player.get all', 'player.get movement', 'player.get heat', 'player.get target']
     },
     {
       syntax: 'part.get <slot>',
       description: 'Inspect placeholder part state by slot, integrity, stats, or state.',
       helpPath: ['Gameplay', 'Session'],
-      examples: ['part.get all', 'part.get LeftHand integrity']
+      examples: ['part.get all', 'part.get Movement stats', 'part.get LeftHand integrity']
     },
     {
       syntax: 'player.set <field> <value>',
@@ -2795,12 +2998,13 @@ function startTestMap(): void {
       syntax: 'part.set <slot> <action>',
       description: 'Set part integrity or force slot state online/offline.',
       helpPath: ['Gameplay', 'Session'],
-      examples: ['part.set LeftHand integrity 0', 'part.set Generator offline']
+      examples: ['part.set LeftHand integrity 0', 'part.set Movement online', 'part.set Generator offline']
     },
     {
       syntax: 'part.attach <partId> <slot>',
-      description: 'Attach a placeholder part identifier to the specified slot.',
-      helpPath: ['Gameplay', 'Session']
+      description: 'Attach a placeholder part identifier to the specified slot (Movement infers mobility by partId text).',
+      helpPath: ['Gameplay', 'Session'],
+      examples: ['part.attach Wheels Movement', 'part.attach Treads Movement', 'part.attach basic.left-arm LeftArm']
     },
     {
       syntax: 'part.detach <slot>',
@@ -3203,6 +3407,8 @@ function startTestMap(): void {
       return
     } // end if another modal already owns input focus
 
+    await audio.ensureAudio()
+
     if (!isPaused) {
       consoleResumeOnClose = true
       await enterPausedState(false)
@@ -3459,6 +3665,9 @@ function startTestMap(): void {
       part.specialEffects = []
       part.passiveBonuses = []
       part.activeAbilities = []
+      if (slot === 'Movement') {
+        applyMovementArchetypeToPart(part, partId)
+      }
       applySubsystemIntegrityState()
       nextEventTag(`Attached ${partId} to ${slot}`)
       return [`attached ${partId} to ${slot}`]
@@ -3489,6 +3698,14 @@ function startTestMap(): void {
       part.liftCapacity = undefined
       part.speedModifier = undefined
       part.terrainMultiplier = undefined
+      part.groundAcceleration = undefined
+      part.groundDeceleration = undefined
+      part.maxForwardSpeed = undefined
+      part.maxReverseSpeed = undefined
+      part.maxStrafeSpeed = undefined
+      part.turnRate = undefined
+      part.terrainPenaltyMultiplier = undefined
+      part.energyUse = undefined
       part.specialEffects = []
       part.passiveBonuses = []
       part.activeAbilities = []
@@ -4011,7 +4228,8 @@ function startTestMap(): void {
         audio,
         state: updateState,
         flightAltitude: getSharedFlightHeight(),
-        collisionWorld
+        collisionWorld,
+        movementProfile: getCurrentMovementArchetypeProfile()
       },
       movementDeltaSeconds
     )

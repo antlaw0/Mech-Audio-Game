@@ -34,6 +34,8 @@ export function bindInput(
   document.addEventListener('touchstart', resumeAudioOnInteraction, { passive: true })
 
   document.addEventListener('keydown', async (event) => {
+    void audio.ensureAudio()
+
     if (isEditableTarget(event.target)) {
       return
     } // end if typing in editable field

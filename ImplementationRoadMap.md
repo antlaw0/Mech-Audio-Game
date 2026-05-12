@@ -647,6 +647,8 @@ At zero:
 ---
 
 ## Ticket 4 — Mobility Archetypes
+Copilot status: Complete
+Developer status: Approved
 
 ### 🧠 Copilot Prompt
 
@@ -765,6 +767,8 @@ wheel_accelerate
 wheel_brake
 wheel_skid
 ```
+
+Current client implementation uses layered idle, pitch, and skid synthesis tied to wheel speed and acceleration.
 
 ---
 

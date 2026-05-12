@@ -25,7 +25,24 @@ export interface UpdateState {
   lastBumpTimeSeconds: number
   muzzleFlashTimer: number
   verticalVelocityZ: number
+  groundForwardVelocity: number
+  groundStrafeVelocity: number
 } // end interface UpdateState
+
+export type MobilityType = 'Wheels' | 'Treads' | 'Hover' | 'Walker' | 'Flight' | 'Placeholder'
+
+export interface MovementArchetypeProfile {
+  mobilityType: MobilityType
+  ratedLoad: number
+  groundAcceleration: number
+  groundDeceleration: number
+  maxForwardSpeed: number
+  maxReverseSpeed: number
+  maxStrafeSpeed: number
+  turnRate: number
+  terrainPenaltyMultiplier: number
+  energyUse: number
+} // end interface MovementArchetypeProfile
 
 export interface UpdateEnvironment {
   player: Player
@@ -34,6 +51,7 @@ export interface UpdateEnvironment {
   state: UpdateState
   flightAltitude: number
   collisionWorld: WorldCollisionWorld
+  movementProfile: MovementArchetypeProfile
 } // end interface UpdateEnvironment
 
 export function createUpdateState(): UpdateState {
@@ -41,9 +59,21 @@ export function createUpdateState(): UpdateState {
     footstepTimerSeconds: 0,
     lastBumpTimeSeconds: 0,
     muzzleFlashTimer: 0,
-    verticalVelocityZ: 0
+    verticalVelocityZ: 0,
+    groundForwardVelocity: 0,
+    groundStrafeVelocity: 0
   } // end object update state
 } // end function createUpdateState
+
+function moveToward(current: number, target: number, maxDelta: number): number {
+  if (current < target) {
+    return Math.min(target, current + maxDelta)
+  }
+  if (current > target) {
+    return Math.max(target, current - maxDelta)
+  }
+  return target
+} // end function moveToward
 
 function isPointInsideZone(
   x: number,
@@ -68,17 +98,43 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   if (!Number.isFinite(environment.state.verticalVelocityZ)) {
     environment.state.verticalVelocityZ = 0
   } // end if vertical velocity is uninitialized
+  if (!Number.isFinite(environment.state.groundForwardVelocity)) {
+    environment.state.groundForwardVelocity = 0
+  } // end if forward velocity is uninitialized
+  if (!Number.isFinite(environment.state.groundStrafeVelocity)) {
+    environment.state.groundStrafeVelocity = 0
+  } // end if strafe velocity is uninitialized
 
+  const movementProfile = environment.movementProfile
+  const { input, player, audio, state } = environment
   const moveSpeed = (environment.player.isBoosting ?? false)
     ? PLAYER_BOOST_SPEED
     : environment.player.flightState === 'grounded'
       ? PLAYER_SPEED
       : PLAYER_FLIGHT_SPEED
   const moveAmount = moveSpeed * deltaSeconds
-  const turnAmount = TURN_SPEED * deltaSeconds
   const lookAmount = LOOK_SPEED * deltaSeconds
+  const turnInput = (input.turnRight ? 1 : 0) - (input.turnLeft ? 1 : 0)
+  if (turnInput !== 0) {
+    const mobilityType = movementProfile.mobilityType
+    let turnScale = 1
+    if (player.flightState === 'grounded') {
+      const speedRatio = Math.min(1, Math.abs(state.groundForwardVelocity) / Math.max(0.1, movementProfile.maxForwardSpeed))
+      if (mobilityType === 'Wheels') {
+        turnScale = 0.25 + (speedRatio * 0.75)
+      } else if (mobilityType === 'Hover') {
+        turnScale = 0.9
+      } else if (mobilityType === 'Flight') {
+        turnScale = 0.95
+      }
+    } else if (mobilityType === 'Flight') {
+      turnScale = 1.1
+    }
 
-  const { input, player, audio, state } = environment
+    player.angle += turnInput * movementProfile.turnRate * turnScale * deltaSeconds
+  } // end if turn input
+
+
   let isMoving = false
   let collided = false
   let movementBlockedByObstacle = false
@@ -255,14 +311,6 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     } // end if heading cue should play
   } // end if snap handled
 
-  if (input.turnLeft) {
-    player.angle -= turnAmount
-  } // end if turnLeft
-
-  if (input.turnRight) {
-    player.angle += turnAmount
-  } // end if turnRight
-
   if (input.pitchResetPending) {
     input.pitchResetPending = false
     const wasOffCenter = Math.abs(player.pitch) > 0.001
@@ -285,25 +333,49 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   const forwardAxis = (input.moveForward ? 1 : 0) + (input.moveBack ? -1 : 0)
   const strafeAxis = (input.strafeRight ? 1 : 0) + (input.strafeLeft ? -1 : 0)
 
-  if (forwardAxis !== 0 || strafeAxis !== 0) {
-    const axisLength = Math.hypot(forwardAxis, strafeAxis)
-    const normalizedForward = forwardAxis / axisLength
-    const normalizedStrafe = strafeAxis / axisLength
+  if (player.flightState === 'grounded') {
+    const terrainPenalty = Math.max(0.1, movementProfile.terrainPenaltyMultiplier)
+    const effectiveAcceleration = movementProfile.groundAcceleration / terrainPenalty
+    const effectiveDeceleration = movementProfile.groundDeceleration / terrainPenalty
+    const targetForwardVelocity = forwardAxis >= 0
+      ? forwardAxis * movementProfile.maxForwardSpeed
+      : forwardAxis * movementProfile.maxReverseSpeed
+    const targetStrafeVelocity = strafeAxis * movementProfile.maxStrafeSpeed
+    const accelerationStep = effectiveAcceleration * deltaSeconds
+    const decelerationStep = effectiveDeceleration * deltaSeconds
 
-    const directionX = Math.cos(player.angle) * normalizedForward + Math.cos(player.angle + Math.PI / 2) * normalizedStrafe
-    const directionY = Math.sin(player.angle) * normalizedForward + Math.sin(player.angle + Math.PI / 2) * normalizedStrafe
+    const useForwardStep = Math.abs(targetForwardVelocity) > Math.abs(state.groundForwardVelocity)
+      ? accelerationStep
+      : decelerationStep
+    const useStrafeStep = Math.abs(targetStrafeVelocity) > Math.abs(state.groundStrafeVelocity)
+      ? accelerationStep
+      : decelerationStep
 
-    const nextX = player.x + directionX * moveAmount
-    const nextY = player.y + directionY * moveAmount
+    state.groundForwardVelocity = moveToward(state.groundForwardVelocity, targetForwardVelocity, useForwardStep)
+    state.groundStrafeVelocity = moveToward(state.groundStrafeVelocity, targetStrafeVelocity, useStrafeStep)
+
+    if (movementProfile.mobilityType === 'Wheels' || movementProfile.mobilityType === 'Treads') {
+      state.groundStrafeVelocity = moveToward(state.groundStrafeVelocity, 0, decelerationStep * 1.3)
+    }
+
+    if (movementProfile.mobilityType === 'Treads' && Math.abs(state.groundForwardVelocity) > movementProfile.maxForwardSpeed * 0.92) {
+      state.groundForwardVelocity = Math.sign(state.groundForwardVelocity) * movementProfile.maxForwardSpeed * 0.92
+    }
+
+    const directionX =
+      (Math.cos(player.angle) * state.groundForwardVelocity)
+      + (Math.cos(player.angle + Math.PI / 2) * state.groundStrafeVelocity)
+    const directionY =
+      (Math.sin(player.angle) * state.groundForwardVelocity)
+      + (Math.sin(player.angle + Math.PI / 2) * state.groundStrafeVelocity)
+
+    const nextX = player.x + directionX * deltaSeconds
+    const nextY = player.y + directionY * deltaSeconds
 
     let moved = false
 
     const playerFeet = player.z ?? 0
-    const collisionFeet = (
-      player.flightState === 'ascending' || player.flightState === 'airborne'
-    )
-      ? Math.max(playerFeet, minimumCruiseAltitude)
-      : playerFeet
+    const collisionFeet = playerFeet
     const xWithinMap = Math.max(0.06, Math.min(MAP_WIDTH - 0.06, nextX))
     const yWithinMap = Math.max(0.06, Math.min(MAP_HEIGHT - 0.06, nextY))
 
@@ -314,6 +386,8 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     } else {
       collided = true
       movementBlockedByObstacle = true
+      state.groundForwardVelocity *= 0.45
+      state.groundStrafeVelocity *= 0.45
       collisionDirection = normalizeAngle(Math.atan2(0, directionX) - player.angle)
     } // end if canMoveX
 
@@ -324,6 +398,8 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     } else {
       collided = true
       movementBlockedByObstacle = true
+      state.groundForwardVelocity *= 0.45
+      state.groundStrafeVelocity *= 0.45
       collisionDirection = normalizeAngle(Math.atan2(directionY, 0) - player.angle)
     } // end if canMoveY
 
@@ -331,9 +407,75 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
       isMoving = true
       collided = false
     } // end if moved
+  } else if (forwardAxis !== 0 || strafeAxis !== 0) {
+    state.groundForwardVelocity = 0
+    state.groundStrafeVelocity = 0
+    const axisLength = Math.hypot(forwardAxis, strafeAxis)
+    const normalizedForward = forwardAxis / axisLength
+    const normalizedStrafe = strafeAxis / axisLength
+
+    const directionX = Math.cos(player.angle) * normalizedForward + Math.cos(player.angle + Math.PI / 2) * normalizedStrafe
+    const directionY = Math.sin(player.angle) * normalizedForward + Math.sin(player.angle + Math.PI / 2) * normalizedStrafe
+
+    const nextX = player.x + directionX * moveAmount
+    const nextY = player.y + directionY * moveAmount
+
+    const playerFeet = player.z ?? 0
+    const collisionFeet = Math.max(playerFeet, minimumCruiseAltitude)
+    const xWithinMap = Math.max(0.06, Math.min(MAP_WIDTH - 0.06, nextX))
+    const yWithinMap = Math.max(0.06, Math.min(MAP_HEIGHT - 0.06, nextY))
+
+    const canMoveX = !isPlayerBlocked(environment.collisionWorld, xWithinMap, player.y, collisionFeet, PLAYER_RADIUS)
+    const canMoveY = !isPlayerBlocked(environment.collisionWorld, player.x, yWithinMap, collisionFeet, PLAYER_RADIUS)
+
+    if (canMoveX) {
+      player.x = xWithinMap
+      isMoving = true
+    }
+    if (canMoveY) {
+      player.y = yWithinMap
+      isMoving = true
+    }
   } // end if has movement input
 
-  if (isMoving && !movementBlockedByObstacle && player.flightState === 'grounded' && audio.isAudioStarted()) {
+  const groundedHorizontalSpeed = Math.hypot(state.groundForwardVelocity, state.groundStrafeVelocity)
+  const maxGroundSpeed = Math.max(
+    0.1,
+    movementProfile.maxForwardSpeed,
+    movementProfile.maxReverseSpeed,
+    movementProfile.maxStrafeSpeed
+  )
+  const normalizedGroundSpeed = Math.min(1, groundedHorizontalSpeed / maxGroundSpeed)
+  const normalizedForward = state.groundForwardVelocity >= 0
+    ? Math.min(1, state.groundForwardVelocity / Math.max(0.1, movementProfile.maxForwardSpeed))
+    : -Math.min(1, Math.abs(state.groundForwardVelocity) / Math.max(0.1, movementProfile.maxReverseSpeed))
+  const targetForwardVelocity = forwardAxis >= 0
+    ? forwardAxis * movementProfile.maxForwardSpeed
+    : forwardAxis * movementProfile.maxReverseSpeed
+  const targetStrafeVelocity = strafeAxis * movementProfile.maxStrafeSpeed
+  const accelerating = (
+    Math.abs(targetForwardVelocity) > Math.abs(state.groundForwardVelocity) + 0.05
+    || Math.abs(targetStrafeVelocity) > Math.abs(state.groundStrafeVelocity) + 0.05
+  )
+
+  if (audio.isAudioStarted()) {
+    audio.updatePlayerMobilityAudio(
+      movementProfile.mobilityType,
+      normalizedGroundSpeed,
+      normalizedForward,
+      accelerating,
+      player.flightState === 'grounded'
+    )
+  } // end if mobility placeholder audio should update
+
+  const shouldUseWalkerFootsteps = movementProfile.mobilityType === 'Walker'
+  const shouldPlayFootsteps = shouldUseWalkerFootsteps
+    && isMoving
+    && !movementBlockedByObstacle
+    && player.flightState === 'grounded'
+    && groundedHorizontalSpeed > 0.22
+
+  if (shouldPlayFootsteps && audio.isAudioStarted()) {
     state.footstepTimerSeconds += deltaSeconds
     if (state.footstepTimerSeconds >= FOOTSTEP_INTERVAL_SECONDS) {
       const stepSupportHeight = getTopSurfaceHeight(environment.collisionWorld, player.x, player.y, PLAYER_RADIUS)

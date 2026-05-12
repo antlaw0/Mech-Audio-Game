@@ -1127,6 +1127,38 @@ export function createAudioController(): AudioController {
   const energyStatusCrackleGain = new Tone.Gain(0.001).connect(energyStatusCrackleFilter)
   const energyStatusCrackleNoise = new Tone.Noise('pink').connect(energyStatusCrackleGain)
 
+  const mobilityPlaceholderMasterGain = new Tone.Gain(0).toDestination()
+
+  const wheelMobilityGain = new Tone.Gain(0).connect(mobilityPlaceholderMasterGain)
+
+  const wheelMobilityIdleGain = new Tone.Gain(0).connect(wheelMobilityGain)
+  const wheelMobilityIdleFilter = new Tone.Filter({ type: 'lowpass', frequency: 220, Q: 0.75 }).connect(wheelMobilityIdleGain)
+  const wheelMobilityIdleOsc = new Tone.Oscillator({ frequency: 58, type: 'sawtooth' }).connect(wheelMobilityIdleFilter)
+
+  const wheelMobilityPitchGain = new Tone.Gain(0).connect(wheelMobilityGain)
+  const wheelMobilityPitchFilter = new Tone.Filter({ type: 'bandpass', frequency: 420, Q: 1.1 }).connect(wheelMobilityPitchGain)
+  const wheelMobilityPitchOsc = new Tone.Oscillator({ frequency: 96, type: 'triangle' }).connect(wheelMobilityPitchFilter)
+
+  const wheelMobilitySkidGain = new Tone.Gain(0).connect(wheelMobilityGain)
+  const wheelMobilitySkidFilter = new Tone.Filter({ type: 'highpass', frequency: 1300, Q: 0.9 }).connect(wheelMobilitySkidGain)
+  const wheelMobilitySkidNoise = new Tone.Noise('pink').connect(wheelMobilitySkidFilter)
+
+  const treadMobilityGain = new Tone.Gain(0).connect(mobilityPlaceholderMasterGain)
+  const treadMobilityNoiseFilter = new Tone.Filter({ type: 'bandpass', frequency: 150, Q: 1.1 }).connect(treadMobilityGain)
+  const treadMobilityNoise = new Tone.Noise('brown').connect(treadMobilityNoiseFilter)
+  const treadMobilityPulseGain = new Tone.Gain(0.11).connect(treadMobilityGain)
+  const treadMobilityPulseOsc = new Tone.Oscillator({ frequency: 14, type: 'square' }).connect(treadMobilityPulseGain)
+
+  const hoverMobilityGain = new Tone.Gain(0).connect(mobilityPlaceholderMasterGain)
+  const hoverMobilityTremolo = new Tone.Tremolo({ frequency: 5, depth: 0.3, type: 'sine', spread: 0 }).connect(hoverMobilityGain)
+  hoverMobilityTremolo.start()
+  const hoverMobilityOsc = new Tone.Oscillator({ frequency: 140, type: 'triangle' }).connect(hoverMobilityTremolo)
+  const hoverMobilityHissGain = new Tone.Gain(0.04).connect(hoverMobilityGain)
+  const hoverMobilityHissFilter = new Tone.Filter({ type: 'highpass', frequency: 1050, Q: 0.85 }).connect(hoverMobilityHissGain)
+  const hoverMobilityHissNoise = new Tone.Noise('white').connect(hoverMobilityHissFilter)
+
+  let mobilityPlaceholderSourcesStarted = false
+
   const boostEngageGain = new Tone.Gain(0.9).toDestination()
   const boostEngageSound = new Tone.Player('assets/sounds/boostEngage.ogg').connect(boostEngageGain)
   const hardLandingGain = new Tone.Gain(0.92).toDestination()
@@ -1567,6 +1599,21 @@ export function createAudioController(): AudioController {
       })
   } // end function ensureEnergyStatusLoopStarted
 
+  const ensureMobilityPlaceholderSourcesStarted = (): void => {
+    if (mobilityPlaceholderSourcesStarted || !audioStarted || audioPaused || !isAudioContextRunning()) {
+      return
+    } // end if mobility placeholder sources cannot start
+
+    wheelMobilityIdleOsc.start()
+    wheelMobilityPitchOsc.start()
+    wheelMobilitySkidNoise.start()
+    treadMobilityNoise.start()
+    treadMobilityPulseOsc.start()
+    hoverMobilityOsc.start()
+    hoverMobilityHissNoise.start()
+    mobilityPlaceholderSourcesStarted = true
+  } // end function ensureMobilityPlaceholderSourcesStarted
+
   const playFromVoicePool = (voices: Tone.Player[], cursor: number): number => {
     if (voices.length === 0) {
       return cursor
@@ -1863,6 +1910,7 @@ export function createAudioController(): AudioController {
     if (footstepWasPlayingBeforePause) {
       footstepAudio.pause()
     } // end if footstep was playing
+    mobilityPlaceholderMasterGain.gain.value = 0
 
     ambienceWasPlayingBeforePause = !ambienceAudio.paused
     ambienceTimeBeforePause = ambienceAudio.currentTime
@@ -2962,6 +3010,59 @@ export function createAudioController(): AudioController {
     footstepAudio.currentTime = 0
   } // end function stopFootstep
 
+  const updatePlayerMobilityAudio = (
+    mobilityType: 'Wheels' | 'Treads' | 'Hover' | 'Walker' | 'Flight' | 'Placeholder',
+    normalizedSpeed: number,
+    normalizedForward: number,
+    accelerating: boolean,
+    grounded: boolean
+  ): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
+      mobilityPlaceholderMasterGain.gain.rampTo(0, 0.04)
+      return
+    } // end if mobility placeholder audio cannot update
+
+    ensureMobilityPlaceholderSourcesStarted()
+
+    const clampedSpeed = clamp(normalizedSpeed, 0, 1)
+    const clampedForward = clamp(normalizedForward, -1, 1)
+    const activeMode = grounded ? mobilityType : 'Placeholder'
+    const usePlaceholderLayer = activeMode === 'Wheels' || activeMode === 'Treads' || activeMode === 'Hover'
+    const targetMasterGain = usePlaceholderLayer
+      ? clamp((0.08 + (clampedSpeed * 0.3) + (accelerating ? 0.06 : 0)) * masterVolume * footstepsVolume, 0, 0.9)
+      : 0
+    mobilityPlaceholderMasterGain.gain.rampTo(targetMasterGain, 0.08)
+
+    wheelMobilityGain.gain.rampTo(activeMode === 'Wheels' ? 1 : 0, 0.09)
+    treadMobilityGain.gain.rampTo(activeMode === 'Treads' ? 1 : 0, 0.09)
+    hoverMobilityGain.gain.rampTo(activeMode === 'Hover' ? 1 : 0, 0.09)
+
+    const pitchScale = clamp(debugPitchScale, 0.6, 1.8)
+    const speedCurve = Math.pow(clampedSpeed, 0.55)
+    const wheelIdleLevel = clamp(0.08 + ((1 - speedCurve) * 0.14) + (accelerating ? 0.015 : 0), 0, 0.22)
+    const wheelDriveLevel = clamp(0.04 + (speedCurve * 0.24) + (accelerating ? 0.05 : 0), 0, 0.42)
+    const wheelSkidLevel = clampedForward < -0.08
+      ? 0.02 + (Math.abs(clampedForward) * 0.11)
+      : (!accelerating && clampedSpeed > 0.12 ? 0.01 + (clampedSpeed * 0.04) : 0)
+
+    wheelMobilityIdleOsc.frequency.rampTo((48 + (speedCurve * 36)) * pitchScale, 0.08)
+    wheelMobilityPitchOsc.frequency.rampTo((92 + (speedCurve * 240) + (accelerating ? 28 : 0)) * pitchScale, 0.08)
+    wheelMobilityIdleGain.gain.rampTo(wheelIdleLevel * masterVolume * footstepsVolume, 0.08)
+    wheelMobilityPitchGain.gain.rampTo(wheelDriveLevel * masterVolume * footstepsVolume, 0.08)
+    wheelMobilitySkidGain.gain.rampTo(wheelSkidLevel * masterVolume * footstepsVolume, 0.07)
+    wheelMobilityIdleFilter.frequency.rampTo(170 + (clampedSpeed * 70) + (accelerating ? 28 : 0), 0.08)
+    wheelMobilityPitchFilter.frequency.rampTo(360 + (clampedSpeed * 920) + (accelerating ? 160 : 0), 0.09)
+    wheelMobilitySkidFilter.frequency.rampTo(1300 + (clampedSpeed * 1300) + (accelerating ? 180 : 0), 0.09)
+
+    treadMobilityPulseOsc.frequency.rampTo((8 + (clampedSpeed * 26) + (accelerating ? 4 : 0)) * pitchScale, 0.08)
+    treadMobilityPulseGain.gain.rampTo(0.09 + (clampedSpeed * 0.18), 0.08)
+    treadMobilityNoiseFilter.frequency.rampTo(95 + (clampedSpeed * 190) + (accelerating ? 45 : 0), 0.1)
+
+    hoverMobilityOsc.frequency.rampTo((125 + (clampedSpeed * 140) + (accelerating ? 25 : 0)) * pitchScale, 0.09)
+    hoverMobilityTremolo.frequency.rampTo(4 + (clampedSpeed * 11), 0.1)
+    hoverMobilityHissGain.gain.rampTo(0.02 + (clampedSpeed * 0.09) + (accelerating ? 0.03 : 0), 0.09)
+  } // end function updatePlayerMobilityAudio
+
   const playBump = (): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
@@ -3258,6 +3359,7 @@ export function createAudioController(): AudioController {
     stopServo,
     playFootstep,
     stopFootstep,
+    updatePlayerMobilityAudio,
     playBump,
     startFlightLoop,
     stopFlightLoop,
