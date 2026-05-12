@@ -116,22 +116,30 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   const lookAmount = LOOK_SPEED * deltaSeconds
   const turnInput = (input.turnRight ? 1 : 0) - (input.turnLeft ? 1 : 0)
   if (turnInput !== 0) {
-    const mobilityType = movementProfile.mobilityType
-    let turnScale = 1
-    if (player.flightState === 'grounded') {
-      const speedRatio = Math.min(1, Math.abs(state.groundForwardVelocity) / Math.max(0.1, movementProfile.maxForwardSpeed))
+    const isFlying = player.isFlying || player.flightState === 'ascending' || player.flightState === 'airborne'
+    if (isFlying) {
+      player.angle += turnInput * TURN_SPEED * deltaSeconds
+    } else {
+      const mobilityType = movementProfile.mobilityType
+      let turnScale = 1
+
       if (mobilityType === 'Wheels') {
-        turnScale = 0.25 + (speedRatio * 0.75)
+        const speedRatio = Math.min(1, Math.abs(state.groundForwardVelocity) / Math.max(0.1, movementProfile.maxForwardSpeed))
+        if (state.groundForwardVelocity === 0) {
+          turnScale = 0
+        } else {
+          turnScale = 0.25 + (speedRatio * 0.75)
+        }
+      } else if (mobilityType === 'Treads') {
+        turnScale = 1
       } else if (mobilityType === 'Hover') {
         turnScale = 0.9
       } else if (mobilityType === 'Flight') {
         turnScale = 0.95
       }
-    } else if (mobilityType === 'Flight') {
-      turnScale = 1.1
-    }
 
-    player.angle += turnInput * movementProfile.turnRate * turnScale * deltaSeconds
+      player.angle += turnInput * movementProfile.turnRate * turnScale * deltaSeconds
+    }
   } // end if turn input
 
 
