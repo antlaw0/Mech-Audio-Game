@@ -120,6 +120,51 @@ interface CardinalHeadingCue {
   path: string
 } // end interface CardinalHeadingCue
 
+type PlayerMobilityType = 'Wheels' | 'Treads' | 'Hover' | 'Walker' | 'Flight' | 'Placeholder'
+
+type BaseMovementEventId =
+  | 'move_start'
+  | 'move_stop'
+  | 'move_idle'
+  | 'move_loop'
+  | 'move_accelerate'
+  | 'move_decelerate'
+  | 'move_skid'
+  | 'move_boost'
+
+type WheelsMovementEventId = 'wheel_idle' | 'wheel_roll' | 'wheel_accelerate' | 'wheel_brake' | 'wheel_skid'
+type TreadsMovementEventId = 'tread_idle' | 'tread_roll' | 'tread_turn' | 'tread_brake'
+type HoverMovementEventId = 'hover_idle' | 'hover_move' | 'hover_strafe' | 'hover_boost'
+type WalkerMovementEventId = 'servo_idle' | 'servo_step' | 'servo_turn' | 'servo_jump'
+type FlightMovementEventId = 'thruster_start' | 'thruster_loop' | 'thruster_stop'
+
+type MovementAudioEventId =
+  | BaseMovementEventId
+  | WheelsMovementEventId
+  | TreadsMovementEventId
+  | HoverMovementEventId
+  | WalkerMovementEventId
+  | FlightMovementEventId
+
+const MOVEMENT_EVENT_CONTRACTS = {
+  base: ['move_start', 'move_stop', 'move_idle', 'move_loop', 'move_accelerate', 'move_decelerate', 'move_skid', 'move_boost'],
+  Wheels: ['wheel_idle', 'wheel_roll', 'wheel_accelerate', 'wheel_brake', 'wheel_skid'],
+  Treads: ['tread_idle', 'tread_roll', 'tread_turn', 'tread_brake'],
+  Hover: ['hover_idle', 'hover_move', 'hover_strafe', 'hover_boost'],
+  Walker: ['servo_idle', 'servo_step', 'servo_turn', 'servo_jump'],
+  Flight: ['thruster_start', 'thruster_loop', 'thruster_stop'],
+  Placeholder: []
+} as const
+
+const MOVEMENT_EVENT_CONTRACT_SET = new Set<MovementAudioEventId>([
+  ...MOVEMENT_EVENT_CONTRACTS.base,
+  ...MOVEMENT_EVENT_CONTRACTS.Wheels,
+  ...MOVEMENT_EVENT_CONTRACTS.Treads,
+  ...MOVEMENT_EVENT_CONTRACTS.Hover,
+  ...MOVEMENT_EVENT_CONTRACTS.Walker,
+  ...MOVEMENT_EVENT_CONTRACTS.Flight
+])
+
 class EnemyAudioRuntime {
   readonly profile: EnemyAudioProfile
 
@@ -677,6 +722,19 @@ export function createAudioController(): AudioController {
   let lastImpactTimeSeconds = -1
   let lastTankHitConfirmTimeSeconds = -1
   let suppressObjectNavigationIndicators = false
+  const movementSemanticState: {
+    initialized: boolean
+    activeMode: PlayerMobilityType
+    wasMoving: boolean
+    wasAccelerating: boolean
+    wasGrounded: boolean
+  } = {
+    initialized: false,
+    activeMode: 'Placeholder',
+    wasMoving: false,
+    wasAccelerating: false,
+    wasGrounded: true
+  }
 
   let categoryProximity = true
   let categoryObjects = true
@@ -1157,6 +1215,19 @@ export function createAudioController(): AudioController {
   const hoverMobilityHissFilter = new Tone.Filter({ type: 'highpass', frequency: 1050, Q: 0.85 }).connect(hoverMobilityHissGain)
   const hoverMobilityHissNoise = new Tone.Noise('white').connect(hoverMobilityHissFilter)
 
+  const walkerMobilityGain = new Tone.Gain(0).connect(mobilityPlaceholderMasterGain)
+  const walkerMobilityStepOsc = new Tone.Oscillator({ frequency: 3.5, type: 'square' }).connect(walkerMobilityGain)
+  const walkerMobilityBodyGain = new Tone.Gain(0.04).connect(walkerMobilityGain)
+  const walkerMobilityBodyFilter = new Tone.Filter({ type: 'bandpass', frequency: 520, Q: 0.95 }).connect(walkerMobilityBodyGain)
+  const walkerMobilityBodyNoise = new Tone.Noise('brown').connect(walkerMobilityBodyFilter)
+
+  const flightMobilityGain = new Tone.Gain(0).connect(mobilityPlaceholderMasterGain)
+  const flightMobilityToneGain = new Tone.Gain(0.025).connect(flightMobilityGain)
+  const flightMobilityToneOsc = new Tone.Oscillator({ frequency: 155, type: 'sawtooth' }).connect(flightMobilityToneGain)
+  const flightMobilityNoiseGain = new Tone.Gain(0.045).connect(flightMobilityGain)
+  const flightMobilityNoiseFilter = new Tone.Filter({ type: 'highpass', frequency: 1300, Q: 0.9 }).connect(flightMobilityNoiseGain)
+  const flightMobilityNoise = new Tone.Noise('white').connect(flightMobilityNoiseFilter)
+
   let mobilityPlaceholderSourcesStarted = false
 
   const boostEngageGain = new Tone.Gain(0.9).toDestination()
@@ -1611,6 +1682,10 @@ export function createAudioController(): AudioController {
     treadMobilityPulseOsc.start()
     hoverMobilityOsc.start()
     hoverMobilityHissNoise.start()
+    walkerMobilityStepOsc.start()
+    walkerMobilityBodyNoise.start()
+    flightMobilityToneOsc.start()
+    flightMobilityNoise.start()
     mobilityPlaceholderSourcesStarted = true
   } // end function ensureMobilityPlaceholderSourcesStarted
 
@@ -1986,21 +2061,29 @@ export function createAudioController(): AudioController {
   } // end function resumeAllAudio
 
   const startFlightLoop = (): void => {
-    if (!audioStarted || audioPaused || !isAudioContextRunning() || !flightLoopSound.loaded) {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if player flight loop cannot start
+    emitSemanticMovementEvent('thruster_start')
+    emitSemanticMovementEvent('thruster_loop')
+    if (!flightLoopSound.loaded) {
+      return
+    } // end if loop asset missing; placeholder contract remains active
     if (flightLoopSound.state !== 'started') {
       flightLoopSound.start()
     } // end if player flight loop not already running
   } // end function startFlightLoop
 
   const stopFlightLoop = (): void => {
+    emitSemanticMovementEvent('thruster_stop')
     if (flightLoopSound.state === 'started') {
       flightLoopSound.stop()
     } // end if player flight loop should stop
   } // end function stopFlightLoop
 
   const startBoostAudio = (): void => {
+    emitSemanticMovementEvent('move_boost')
+    emitSemanticMovementEvent('thruster_loop')
     // Play the one-shot engage cue
     if (audioStarted && !audioPaused && isAudioContextRunning() && boostEngageSound.loaded) {
       if (boostEngageSound.state === 'started') {
@@ -2017,6 +2100,7 @@ export function createAudioController(): AudioController {
   } // end function startBoostAudio
 
   const stopBoostAudio = (): void => {
+    emitSemanticMovementEvent('move_decelerate')
     // Gradually return the jet loop to its normal sound profile
     flightLoopSound.playbackRate = 1.0
     flightBoostFilter.frequency.rampTo(20000, 1.5)
@@ -3010,8 +3094,65 @@ export function createAudioController(): AudioController {
     footstepAudio.currentTime = 0
   } // end function stopFootstep
 
+  const resolveActiveMobilityMode = (mobilityType: PlayerMobilityType, grounded: boolean): PlayerMobilityType => {
+    if (mobilityType === 'Flight') {
+      return 'Flight'
+    } // end if flight mode always uses thruster contract
+    return grounded ? mobilityType : 'Placeholder'
+  } // end function resolveActiveMobilityMode
+
+  const getMobilitySpecificEvent = (mode: PlayerMobilityType, semanticEvent: BaseMovementEventId): MovementAudioEventId | null => {
+    if (mode === 'Wheels') {
+      if (semanticEvent === 'move_idle') return 'wheel_idle'
+      if (semanticEvent === 'move_loop' || semanticEvent === 'move_start') return 'wheel_roll'
+      if (semanticEvent === 'move_accelerate') return 'wheel_accelerate'
+      if (semanticEvent === 'move_decelerate') return 'wheel_brake'
+      if (semanticEvent === 'move_skid') return 'wheel_skid'
+    }
+
+    if (mode === 'Treads') {
+      if (semanticEvent === 'move_idle') return 'tread_idle'
+      if (semanticEvent === 'move_loop' || semanticEvent === 'move_start') return 'tread_roll'
+      if (semanticEvent === 'move_accelerate') return 'tread_turn'
+      if (semanticEvent === 'move_decelerate' || semanticEvent === 'move_skid') return 'tread_brake'
+    }
+
+    if (mode === 'Hover') {
+      if (semanticEvent === 'move_idle') return 'hover_idle'
+      if (semanticEvent === 'move_loop' || semanticEvent === 'move_start') return 'hover_move'
+      if (semanticEvent === 'move_accelerate' || semanticEvent === 'move_decelerate') return 'hover_strafe'
+      if (semanticEvent === 'move_boost') return 'hover_boost'
+    }
+
+    if (mode === 'Walker') {
+      if (semanticEvent === 'move_idle') return 'servo_idle'
+      if (semanticEvent === 'move_loop' || semanticEvent === 'move_start') return 'servo_step'
+      if (semanticEvent === 'move_accelerate' || semanticEvent === 'move_decelerate') return 'servo_turn'
+      if (semanticEvent === 'move_boost') return 'servo_jump'
+    }
+
+    if (mode === 'Flight') {
+      if (semanticEvent === 'move_start') return 'thruster_start'
+      if (semanticEvent === 'move_loop' || semanticEvent === 'move_boost') return 'thruster_loop'
+      if (semanticEvent === 'move_stop') return 'thruster_stop'
+    }
+
+    return null
+  } // end function getMobilitySpecificEvent
+
+  const emitSemanticMovementEvent = (eventId: MovementAudioEventId): void => {
+    if (!MOVEMENT_EVENT_CONTRACT_SET.has(eventId)) {
+      return
+    } // end if event is outside ticket movement contract
+
+    // Event emission currently drives placeholder movement synthesis only.
+    if (eventId === 'move_stop') {
+      mobilityPlaceholderMasterGain.gain.rampTo(0, 0.1)
+    }
+  } // end function emitSemanticMovementEvent
+
   const updatePlayerMobilityAudio = (
-    mobilityType: 'Wheels' | 'Treads' | 'Hover' | 'Walker' | 'Flight' | 'Placeholder',
+    mobilityType: PlayerMobilityType,
     normalizedSpeed: number,
     normalizedForward: number,
     accelerating: boolean,
@@ -3026,8 +3167,8 @@ export function createAudioController(): AudioController {
 
     const clampedSpeed = clamp(normalizedSpeed, 0, 1)
     const clampedForward = clamp(normalizedForward, -1, 1)
-    const activeMode = grounded ? mobilityType : 'Placeholder'
-    const usePlaceholderLayer = activeMode === 'Wheels' || activeMode === 'Treads' || activeMode === 'Hover'
+    const activeMode = resolveActiveMobilityMode(mobilityType, grounded)
+    const usePlaceholderLayer = activeMode === 'Wheels' || activeMode === 'Treads' || activeMode === 'Hover' || activeMode === 'Flight'
     const targetMasterGain = usePlaceholderLayer
       ? clamp((0.08 + (clampedSpeed * 0.3) + (accelerating ? 0.06 : 0)) * masterVolume * footstepsVolume, 0, 0.9)
       : 0
@@ -3036,6 +3177,8 @@ export function createAudioController(): AudioController {
     wheelMobilityGain.gain.rampTo(activeMode === 'Wheels' ? 1 : 0, 0.09)
     treadMobilityGain.gain.rampTo(activeMode === 'Treads' ? 1 : 0, 0.09)
     hoverMobilityGain.gain.rampTo(activeMode === 'Hover' ? 1 : 0, 0.09)
+    walkerMobilityGain.gain.rampTo(activeMode === 'Walker' ? 1 : 0, 0.09)
+    flightMobilityGain.gain.rampTo(activeMode === 'Flight' ? 1 : 0, 0.09)
 
     const pitchScale = clamp(debugPitchScale, 0.6, 1.8)
     const speedCurve = Math.pow(clampedSpeed, 0.55)
@@ -3061,6 +3204,84 @@ export function createAudioController(): AudioController {
     hoverMobilityOsc.frequency.rampTo((125 + (clampedSpeed * 140) + (accelerating ? 25 : 0)) * pitchScale, 0.09)
     hoverMobilityTremolo.frequency.rampTo(4 + (clampedSpeed * 11), 0.1)
     hoverMobilityHissGain.gain.rampTo(0.02 + (clampedSpeed * 0.09) + (accelerating ? 0.03 : 0), 0.09)
+
+    walkerMobilityStepOsc.frequency.rampTo((2.2 + (clampedSpeed * 8) + (accelerating ? 0.8 : 0)) * pitchScale, 0.08)
+    walkerMobilityBodyGain.gain.rampTo((0.018 + (clampedSpeed * 0.12)) * masterVolume * footstepsVolume, 0.08)
+    walkerMobilityBodyFilter.frequency.rampTo(420 + (clampedSpeed * 680), 0.09)
+
+    flightMobilityToneOsc.frequency.rampTo((135 + (clampedSpeed * 420) + (accelerating ? 70 : 0)) * pitchScale, 0.08)
+    flightMobilityToneGain.gain.rampTo((0.02 + (clampedSpeed * 0.05) + (accelerating ? 0.02 : 0)) * masterVolume * footstepsVolume, 0.08)
+    flightMobilityNoiseGain.gain.rampTo((0.02 + (clampedSpeed * 0.1) + (accelerating ? 0.03 : 0)) * masterVolume * footstepsVolume, 0.08)
+    flightMobilityNoiseFilter.frequency.rampTo(1200 + (clampedSpeed * 1900) + (accelerating ? 200 : 0), 0.1)
+
+    const moving = clampedSpeed > 0.05
+    if (!movementSemanticState.initialized || movementSemanticState.activeMode !== activeMode) {
+      if (movementSemanticState.initialized && movementSemanticState.wasMoving) {
+        emitSemanticMovementEvent('move_stop')
+      } // end if prior mode was moving
+      movementSemanticState.initialized = true
+      movementSemanticState.activeMode = activeMode
+      movementSemanticState.wasMoving = false
+      movementSemanticState.wasAccelerating = false
+    } // end if mobility mode changed
+
+    if (moving && !movementSemanticState.wasMoving) {
+      emitSemanticMovementEvent('move_start')
+      const specificStart = getMobilitySpecificEvent(activeMode, 'move_start')
+      if (specificStart) {
+        emitSemanticMovementEvent(specificStart)
+      }
+    }
+
+    if (!moving && movementSemanticState.wasMoving) {
+      emitSemanticMovementEvent('move_stop')
+      const specificStop = getMobilitySpecificEvent(activeMode, 'move_stop')
+      if (specificStop) {
+        emitSemanticMovementEvent(specificStop)
+      }
+    }
+
+    emitSemanticMovementEvent(moving ? 'move_loop' : 'move_idle')
+    const mobilityIdleOrLoop = getMobilitySpecificEvent(activeMode, moving ? 'move_loop' : 'move_idle')
+    if (mobilityIdleOrLoop) {
+      emitSemanticMovementEvent(mobilityIdleOrLoop)
+    }
+
+    if (accelerating && !movementSemanticState.wasAccelerating) {
+      emitSemanticMovementEvent('move_accelerate')
+      const specificAccelerate = getMobilitySpecificEvent(activeMode, 'move_accelerate')
+      if (specificAccelerate) {
+        emitSemanticMovementEvent(specificAccelerate)
+      }
+    }
+
+    if (!accelerating && movementSemanticState.wasAccelerating && moving) {
+      emitSemanticMovementEvent('move_decelerate')
+      const specificDecelerate = getMobilitySpecificEvent(activeMode, 'move_decelerate')
+      if (specificDecelerate) {
+        emitSemanticMovementEvent(specificDecelerate)
+      }
+    }
+
+    if (moving && clampedForward < -0.12) {
+      emitSemanticMovementEvent('move_skid')
+      const specificSkid = getMobilitySpecificEvent(activeMode, 'move_skid')
+      if (specificSkid) {
+        emitSemanticMovementEvent(specificSkid)
+      }
+    }
+
+    if (accelerating && moving && clampedSpeed > 0.7) {
+      emitSemanticMovementEvent('move_boost')
+      const specificBoost = getMobilitySpecificEvent(activeMode, 'move_boost')
+      if (specificBoost) {
+        emitSemanticMovementEvent(specificBoost)
+      }
+    }
+
+    movementSemanticState.wasMoving = moving
+    movementSemanticState.wasAccelerating = accelerating
+    movementSemanticState.wasGrounded = grounded
   } // end function updatePlayerMobilityAudio
 
   const playBump = (): void => {
