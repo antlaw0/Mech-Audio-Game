@@ -64,6 +64,13 @@ const ENEMY_BACKGROUND_AI_TICK_SECONDS = 0.22
 const ENEMY_DISTANT_AI_TICK_SECONDS = 0.55
 const ENEMY_LOS_MAX_DISTANCE = 170
 
+export type IncomingDamageType = 'physical' | 'energy' | 'explosive' | 'incoming'
+
+export interface PlayerDamageEvent {
+  amount: number
+  damageType: IncomingDamageType
+}
+
 const Position = defineComponent({
   x: Types.f32,
   y: Types.f32
@@ -912,7 +919,8 @@ export function stepCombatEcsWorld(
   collisionWorld: WorldCollisionWorld,
   audio: AudioController,
   player: Player,
-  deltaSeconds: number
+  deltaSeconds: number,
+  onPlayerDamaged?: (event: PlayerDamageEvent) => void
 ): void {
   player.maxHp = Math.max(1, player.maxHp ?? 100)
   player.hp = Math.max(0, Math.min(player.maxHp, player.hp ?? player.maxHp))
@@ -1106,7 +1114,9 @@ export function stepCombatEcsWorld(
         Behavior.movementAngle[tank] = Facing.angle[tank] + (postAttackStrafeSide * Math.PI / 2)
         Behavior.movementTimer[tank] = 0.26 + (Math.random() * 0.34)
         audio.playEnemyAttack(`tank-${tank}`, enemyDefinition.id)
-        player.hp = Math.max(0, player.hp - Math.max(1, Math.round(meleeDefinition.damage)))
+        const meleeDamage = Math.max(1, Math.round(meleeDefinition.damage))
+        player.hp = Math.max(0, player.hp - meleeDamage)
+        onPlayerDamaged?.({ amount: meleeDamage, damageType: 'physical' })
         audio.playPlayerMechHit()
       } // end if melee strike landed this frame
 
@@ -1209,6 +1219,7 @@ export function stepCombatEcsWorld(
       const playerFalloff = Math.max(0, 1 - (playerDistance / Math.max(0.001, explosionRadius)))
       const playerDamage = Math.max(1, Math.round(explosionDamage * playerFalloff))
       player.hp = Math.max(0, player.hp - playerDamage)
+      onPlayerDamaged?.({ amount: playerDamage, damageType: 'explosive' })
       audio.playPlayerMechHit()
     } // end if player was inside explosion radius
 
@@ -1464,6 +1475,7 @@ export function stepCombatEcsWorld(
         const projectileDamage = Math.max(0, Math.round(getNumber(ProjectileStats.damage, entity) ?? 0))
         if (projectileDamage > 0) {
           player.hp = Math.max(0, player.hp - projectileDamage)
+          onPlayerDamaged?.({ amount: projectileDamage, damageType: 'incoming' })
         } // end if projectile has damage
         Meta.alive[entity] = 0
         ProjectileStats.nearMissPlayed[entity] = 1

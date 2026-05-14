@@ -385,5 +385,6 @@ export interface AudioController {
   playPlayerHealthStatusTone: (hpPercent: number) => void
   updatePlayerHealthStatusAudio: (dt: number, hpPercent: number) => void
   updatePlayerEnergyStatusAudio: (dt: number, epPercent: number) => void
-    prewarmEnemyAudioAssets: () => void
+  updatePlayerHeatStatusAudio: (dt: number, heatPercent: number) => void
+  prewarmEnemyAudioAssets: () => void
 } // end interface AudioController

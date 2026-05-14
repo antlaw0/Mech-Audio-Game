@@ -29,6 +29,7 @@ import {
   spawnEnemyFromConfigAtPosition,
   spawnPlayerBullet,
   spawnPlayerBulletToward,
+  type IncomingDamageType,
   spawnPlayerMissile,
   syncDynamicFlightHeights,
   stepCombatEcsWorld
@@ -107,6 +108,7 @@ interface KnownPoi {
 } // end interface KnownPoi
 
 type PauseDebugTabId = 'runtime' | 'events' | 'tuning' | 'loadout'
+type HeatState = 'NORMAL' | 'HOT' | 'CRITICAL' | 'DANGER' | 'OVERHEAT'
 
 type LoadoutViewId =
   | 'Head'
@@ -282,6 +284,7 @@ function startTestMap(): void {
   const runtimeDebugSpeechStatusElement = document.getElementById('runtimeDebugSpeechStatus')
   const hpBarLabelElement = document.getElementById('hpBarLabel')
   const epBarLabelElement = document.getElementById('epBarLabel')
+  const heatPercentLabelElement = document.getElementById('heatPercentLabel')
   const ammoResourceLabelElement = document.getElementById('ammoResourceLabel')
   const hpBarFillElement = document.getElementById('hpBarFill')
   const epBarFillElement = document.getElementById('epBarFill')
@@ -430,6 +433,7 @@ function startTestMap(): void {
   let devEventsDebugEnabled = false
   let devCurrentHeat = 0
   let devMaxHeat = 100
+  let devHeatState: HeatState = 'NORMAL'
   let devLastDamageAmount = 0
   let devLastDamageType = 'none'
   let devLastEvent = 'none'
@@ -456,7 +460,7 @@ function startTestMap(): void {
   let pauseLoadoutActiveView: LoadoutViewId = 'Head'
   let devHeatMultiplier = 1
   let devEnergyRegenRate = 1
-  let devCoolingRate = 0
+  let devCoolingRate = 1
   let devMovementScale = 1
   let devStaggerScale = 1
   let devTractionMultiplier = 1
@@ -943,6 +947,44 @@ function startTestMap(): void {
     return heatGain
   } // end function applyWeaponHeatGain
 
+  const INCOMING_HEAT_TYPE_MULTIPLIER: Record<IncomingDamageType, number> = {
+    physical: 0.8,
+    energy: 1,
+    explosive: 0.9,
+    incoming: 0.85
+  }
+
+  const normalizeIncomingDamageType = (rawType: string): IncomingDamageType => {
+    const normalized = rawType.trim().toLowerCase()
+    if (normalized === 'physical' || normalized === 'energy' || normalized === 'explosive' || normalized === 'incoming') {
+      return normalized
+    }
+    return 'incoming'
+  } // end function normalizeIncomingDamageType
+
+  const getIncomingDamageHeatGain = (damageAmount: number, damageType: IncomingDamageType): number => {
+    // TODO(Ticket 21): replace damage amount proxy with true attacker heatDamage once full combat resolution order is implemented.
+    const heatDamageProxy = Math.max(0, damageAmount)
+    const typeMultiplier = INCOMING_HEAT_TYPE_MULTIPLIER[damageType] ?? INCOMING_HEAT_TYPE_MULTIPLIER.incoming
+    return heatDamageProxy * typeMultiplier * Math.max(0, devHeatMultiplier)
+  } // end function getIncomingDamageHeatGain
+
+  const applyIncomingDamageHeatGain = (damageAmount: number, damageType: IncomingDamageType): number => {
+    const heatGain = getIncomingDamageHeatGain(damageAmount, damageType)
+    devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + heatGain)
+    return heatGain
+  } // end function applyIncomingDamageHeatGain
+
+  const getPassiveCoolingRatePerSecond = (): number => {
+    const thermalPart = getDevPartState('ThermalRegulator')
+    if (!thermalPart.online || thermalPart.integrity <= 0) {
+      return 0
+    }
+
+    const baseCooling = Math.max(0, thermalPart.heatDissipation ?? 0)
+    return baseCooling * Math.max(0, devCoolingRate)
+  } // end function getPassiveCoolingRatePerSecond
+
   const canAffordWeaponReload = (weapon: PlayerWeaponDefinition): boolean => {
     return universalAmmoResource >= getWeaponReloadCost(weapon)
   } // end function canAffordWeaponReload
@@ -1106,7 +1148,7 @@ function startTestMap(): void {
       `Energy Regen: ${formatLoadoutNumber(devEnergyRegenRate, 2)}`,
       '',
       `Max Heat: ${formatLoadoutNumber(stats.maxHeat)}`,
-      `Cooling Rate: ${formatLoadoutNumber(devCoolingRate, 2)}`,
+      `Cooling Rate: ${formatLoadoutNumber(getPassiveCoolingRatePerSecond(), 2)}`,
       '',
       `Mobility Type: ${movementProfile.mobilityType}`,
       '',
@@ -2596,18 +2638,40 @@ function startTestMap(): void {
     isRuntimeDebugOverlayVisible = visible
   } // end function setRuntimeDebugOverlayVisible
 
-  const getHeatStateLabel = (): string => {
-    const ratio = devCurrentHeat / Math.max(1, devMaxHeat)
+  const resolveHeatState = (heatValue: number, maxHeatValue: number, previousState: HeatState): HeatState => {
+    const ratio = heatValue / Math.max(1, maxHeatValue)
     if (ratio >= 1) {
-      return 'overheated'
+      return 'OVERHEAT'
     }
-    if (ratio >= 0.75) {
-      return 'high'
+
+    // Canonical overheat recovery threshold from spec: stay overheated until <= 25%.
+    if (previousState === 'OVERHEAT' && ratio > 0.25) {
+      return 'OVERHEAT'
     }
-    if (ratio >= 0.35) {
-      return 'elevated'
+
+    if (ratio >= 0.85) {
+      return 'DANGER'
     }
-    return 'stable'
+    if (ratio >= 0.65) {
+      return 'CRITICAL'
+    }
+    if (ratio >= 0.4) {
+      return 'HOT'
+    }
+    return 'NORMAL'
+  } // end function resolveHeatState
+
+  const updateHeatState = (): HeatState => {
+    const nextState = resolveHeatState(devCurrentHeat, devMaxHeat, devHeatState)
+    if (nextState !== devHeatState) {
+      devHeatState = nextState
+      nextEventTag(`Heat state changed: ${nextState}`)
+    }
+    return devHeatState
+  } // end function updateHeatState
+
+  const getHeatStateLabel = (): string => {
+    return updateHeatState()
   } // end function getHeatStateLabel
 
   const getEnergyStateLabel = (): string => {
@@ -3907,6 +3971,7 @@ function startTestMap(): void {
       } // end if value missing
       if (field === 'heat') {
         devCurrentHeat = Math.max(0, Math.min(devMaxHeat, parseFiniteNumber(value, 'player.set heat')))
+        updateHeatState()
         nextEventTag(`Heat set to ${devCurrentHeat.toFixed(1)}`)
         return [`player.heat = ${devCurrentHeat.toFixed(1)}/${devMaxHeat.toFixed(1)}`]
       } // end if setting heat
@@ -4042,13 +4107,12 @@ function startTestMap(): void {
     if (normalizedCommand.startsWith('player.damage ')) {
       const rawArgs = commandLine.trim().split(/\s+/)
       const amount = Math.max(0, parseFiniteNumber(rawArgs[1] ?? '', 'player.damage amount'))
-      const damageType = (rawArgs[2] ?? 'physical').toLowerCase()
+      const damageType = normalizeIncomingDamageType(rawArgs[2] ?? 'physical')
       player.hp = Math.max(0, player.hp - amount)
       devLastDamageAmount = amount
       devLastDamageType = damageType
       devLastHitLocation = 'center mass'
-      devLastHeatGain = amount * 0.1 * devHeatMultiplier
-      devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + devLastHeatGain)
+      devLastHeatGain = applyIncomingDamageHeatGain(amount, damageType)
       nextEventTag(`Player damaged: ${amount.toFixed(1)} ${damageType}`)
       return [`player.hp = ${player.hp.toFixed(1)}/${player.maxHp.toFixed(1)}`]
     } // end if player.damage command
@@ -4062,6 +4126,7 @@ function startTestMap(): void {
     if (normalizedCommand === 'player.overheat') {
       devLastHeatGain = Math.max(0, devMaxHeat - devCurrentHeat)
       devCurrentHeat = devMaxHeat
+      updateHeatState()
       nextEventTag('Player overheat triggered')
       return [`player.heat = ${devCurrentHeat.toFixed(1)}/${devMaxHeat.toFixed(1)}`]
     } // end if player.overheat command
@@ -4646,8 +4711,10 @@ function startTestMap(): void {
     const epDelta = (energyRegenPerSecond - energyDrainPerSecond) * deltaSeconds
     player.ep = Math.max(0, Math.min(player.maxEp, player.ep + epDelta))
     const flightHeatGain = player.isFlying ? (flightRuntimeProfile.heatGenerationPerSecond * deltaSeconds) : 0
-    devCurrentHeat = Math.max(0, devCurrentHeat - (devCoolingRate * deltaSeconds))
+    const passiveCoolingPerSecond = getPassiveCoolingRatePerSecond()
+    devCurrentHeat = Math.max(0, devCurrentHeat - (passiveCoolingPerSecond * deltaSeconds))
     devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + flightHeatGain)
+    updateHeatState()
 
     // Force landing when EP is fully depleted while in flight
     if (player.ep <= 0 && player.isFlying &&
@@ -4729,12 +4796,24 @@ function startTestMap(): void {
       spawnEnemyCloseInFront(combatWorld, collisionWorld, player, 'test-dummy')
     } // end if spawn test dummy pending
 
+    let frameIncomingDamage = 0
+    let frameIncomingHeatGain = 0
+    let frameIncomingDamageTypes = new Set<IncomingDamageType>()
+
     if (devAiEnabled) {
-      stepCombatEcsWorld(combatWorld, collisionWorld, audio, player, deltaSeconds)
+      stepCombatEcsWorld(combatWorld, collisionWorld, audio, player, deltaSeconds, (event) => {
+        const appliedAmount = Math.max(0, event.amount)
+        if (appliedAmount <= 0) {
+          return
+        }
+        const normalizedType = normalizeIncomingDamageType(event.damageType)
+        frameIncomingDamage += appliedAmount
+        frameIncomingHeatGain += applyIncomingDamageHeatGain(appliedAmount, normalizedType)
+        frameIncomingDamageTypes.add(normalizedType)
+      })
     }
     if (player.hp < hpBeforeCombat) {
       const rawIncomingDamage = hpBeforeCombat - player.hp
-      let mitigatedDamage = rawIncomingDamage
       if (
         player.isFlying
         && flightRuntimeProfile.mode === 'rotor'
@@ -4744,16 +4823,20 @@ function startTestMap(): void {
         const mitigationRatio = clampNumber((flightRuntimeProfile.rotorCount - 1) * 0.11 + ((flightRuntimeProfile.stability - 1) * 0.18), 0, 0.45)
         const recoveredHp = rawIncomingDamage * mitigationRatio
         player.hp = Math.min(player.maxHp, player.hp + recoveredHp)
-        mitigatedDamage = hpBeforeCombat - player.hp
       } // end if airborne multi-rotor stability mitigation applies
 
       audio.playPlayerHealthStatusTone(player.hp / Math.max(1, player.maxHp))
-      devLastDamageAmount = mitigatedDamage
-      devLastDamageType = 'incoming'
+      devLastDamageAmount = frameIncomingDamage > 0 ? frameIncomingDamage : rawIncomingDamage
+      devLastDamageType = frameIncomingDamageTypes.size === 1
+        ? [...frameIncomingDamageTypes][0]!
+        : frameIncomingDamageTypes.size > 1
+          ? 'incoming(mixed)'
+          : 'incoming'
       devLastHitLocation = 'front armor'
-      devLastHeatGain = devLastDamageAmount * 0.1 * devHeatMultiplier
-      devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + devLastHeatGain)
-      nextEventTag(`Player took ${devLastDamageAmount.toFixed(1)} incoming damage`)
+      devLastHeatGain = frameIncomingHeatGain > 0
+        ? frameIncomingHeatGain
+        : applyIncomingDamageHeatGain(rawIncomingDamage, 'incoming')
+      nextEventTag(`Player took ${devLastDamageAmount.toFixed(1)} incoming damage (+${devLastHeatGain.toFixed(1)} heat)`)
     } // end if player took damage this frame
 
     const combatCounts = getCombatEntityCounts(combatWorld)
@@ -4768,6 +4851,8 @@ function startTestMap(): void {
     audio.updatePlayerHealthStatusAudio(deltaSeconds, player.hp / Math.max(1, player.maxHp))
 
     audio.updatePlayerEnergyStatusAudio(deltaSeconds, player.ep / Math.max(1, player.maxEp))
+
+    audio.updatePlayerHeatStatusAudio(deltaSeconds, devCurrentHeat / Math.max(1, devMaxHeat))
 
     const combatRender = getCombatRenderState(combatWorld)
 
@@ -5044,6 +5129,7 @@ function startTestMap(): void {
 
     const hpPercent = Math.max(0, Math.min(100, Math.round((player.hp / Math.max(1, player.maxHp)) * 100)))
     const epPercent = Math.max(0, Math.min(100, Math.round((player.ep / Math.max(1, player.maxEp)) * 100)))
+    const heatPercent = Math.max(0, Math.min(100, Math.round((devCurrentHeat / Math.max(1, devMaxHeat)) * 100)))
     if (playerNameElement) {
       playerNameElement.textContent = player.name
     } // end if player name element exists
@@ -5053,6 +5139,9 @@ function startTestMap(): void {
     if (epBarLabelElement) {
       epBarLabelElement.textContent = `${Math.round(player.ep)} / ${Math.round(player.maxEp)}`
     } // end if EP label element exists
+    if (heatPercentLabelElement) {
+      heatPercentLabelElement.textContent = `${heatPercent}%`
+    } // end if heat label element exists
     if (ammoResourceLabelElement) {
       ammoResourceLabelElement.textContent = `${Math.round(universalAmmoResource)} | clip ${playerWeapon.ammoInClip}/${playerWeapon.clipSize}${isReloading ? ' | RELOADING' : ''}`
     } // end if universal ammo label exists

@@ -936,18 +936,30 @@ Heat per shot.
 ---
 
 ## Ticket 11 — Heat From Incoming Damage
+Copilot status: ready for approval
+Developer status: pending
+
+Notes: Incoming combat damage now emits typed player-damage events (physical/incoming/explosive), and runtime heat gain is computed from those events using deterministic type multipliers plus `devHeatMultiplier`.
 
 Incoming damage generates heat.
 
 ---
 
 ## Ticket 12 — Heat Dissipation
+Copilot status: Complete
+Developer status: Approved
+
+Notes: Passive cooling now applies every frame from online `ThermalRegulator.heatDissipation`, scaled by the existing runtime cooling tuning value (default 1.0). If the thermal subsystem is offline, passive cooling is 0.
 
 Passive cooling.
 
 ---
 
 ## Ticket 13 — Heat State System
+Copilot status: ready for approval
+Developer status: pending
+
+Notes: Implemented canonical runtime heat states (`NORMAL`, `HOT`, `CRITICAL`, `DANGER`, `OVERHEAT`) with deterministic thresholds and overheat recovery lockout until heat drops to 25% or lower. Added live HUD heat percentage after EP and a Tone.js heat-sizzle status layer that rises in volume and timbre intensity proportionally to heat percentage.
 
 States:
 

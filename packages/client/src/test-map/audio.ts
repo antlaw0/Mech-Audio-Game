@@ -722,6 +722,7 @@ export function createAudioController(): AudioController {
   let playerMechHitDetailVoiceCursor = 0
   let energyStatusLoopStarted = false
   let energyStatusCrackleStarted = false
+  let heatStatusSizzleStarted = false
   let lastImpactTimeSeconds = -1
   let lastTankHitConfirmTimeSeconds = -1
   let suppressObjectNavigationIndicators = false
@@ -1196,6 +1197,12 @@ export function createAudioController(): AudioController {
   const energyStatusCrackleFilter = new Tone.Filter({ type: 'highpass', frequency: 2200, Q: 0.9 }).connect(energyStatusGain)
   const energyStatusCrackleGain = new Tone.Gain(0.001).connect(energyStatusCrackleFilter)
   const energyStatusCrackleNoise = new Tone.Noise('pink').connect(energyStatusCrackleGain)
+
+  const heatStatusSizzleGain = new Tone.Gain(0.001).toDestination()
+  const heatStatusSizzleHighpass = new Tone.Filter({ type: 'highpass', frequency: 1600, Q: 0.8 }).connect(heatStatusSizzleGain)
+  const heatStatusSizzleBandpass = new Tone.Filter({ type: 'bandpass', frequency: 2500, Q: 0.8 }).connect(heatStatusSizzleHighpass)
+  const heatStatusSizzleDrive = new Tone.Distortion({ distortion: 0.08, wet: 0.05 }).connect(heatStatusSizzleBandpass)
+  const heatStatusSizzleNoise = new Tone.Noise('white').connect(heatStatusSizzleDrive)
 
   const mobilityPlaceholderMasterGain = new Tone.Gain(0).toDestination()
 
@@ -1773,6 +1780,15 @@ export function createAudioController(): AudioController {
         audioDebugWarn('Failed to load player energy status loop.', { error })
       })
   } // end function ensureEnergyStatusLoopStarted
+
+  const ensureHeatStatusSizzleStarted = (): void => {
+    if (heatStatusSizzleStarted || !audioStarted || audioPaused || !isAudioContextRunning()) {
+      return
+    } // end if heat sizzle is already running or audio graph not ready
+
+    heatStatusSizzleNoise.start()
+    heatStatusSizzleStarted = true
+  } // end function ensureHeatStatusSizzleStarted
 
   const ensureMobilityPlaceholderSourcesStarted = (): void => {
     if (mobilityPlaceholderSourcesStarted || !audioStarted || audioPaused || !isAudioContextRunning()) {
@@ -3154,6 +3170,33 @@ export function createAudioController(): AudioController {
     energyStatusCrackleGain.gain.rampTo((0.001 + (criticalFactor * 0.045)) * energyStatusVolume, 0.08)
   } // end function updatePlayerEnergyStatusAudio
 
+  const updatePlayerHeatStatusAudio = (_dt: number, heatPercent: number): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
+      heatStatusSizzleGain.gain.rampTo(0.001, 0.08)
+      return
+    } // end if audio not started
+
+    ensureHeatStatusSizzleStarted()
+
+    const normalized = clamp(heatPercent, 0, 1)
+    const shaped = smoothstep01(normalized)
+    const intensity = shaped * shaped
+
+    // Heat sizzle should be subtle when cool and aggressively noisy near overheat.
+    const sizzleGain = 0.001 + (intensity * 0.24)
+    heatStatusSizzleGain.gain.rampTo(sizzleGain, 0.08)
+
+    const highpassFrequencyHz = 1500 + (intensity * 2500)
+    const bandpassFrequencyHz = 2400 + (intensity * 4300)
+    const bandpassQ = 0.8 + (intensity * 3.8)
+    heatStatusSizzleHighpass.frequency.rampTo(highpassFrequencyHz, 0.1)
+    heatStatusSizzleBandpass.frequency.rampTo(bandpassFrequencyHz, 0.1)
+    heatStatusSizzleBandpass.Q.rampTo(bandpassQ, 0.1)
+
+    heatStatusSizzleDrive.distortion = 0.08 + (intensity * 0.64)
+    heatStatusSizzleDrive.wet.rampTo(0.05 + (intensity * 0.9), 0.08)
+  } // end function updatePlayerHeatStatusAudio
+
   const playPitchCenterConfirm = (): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
@@ -3797,6 +3840,7 @@ export function createAudioController(): AudioController {
     playPlayerHealthStatusTone,
     updatePlayerHealthStatusAudio,
     updatePlayerEnergyStatusAudio,
+    updatePlayerHeatStatusAudio,
     updateIncomingProjectileAudio,
     playProjectileNearMiss,
     isAudioStarted: () => audioStarted,
