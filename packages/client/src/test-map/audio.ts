@@ -24,6 +24,9 @@ import type {
   AudioController,
   AudioVolumeChannel,
   EnemyAudioState,
+  FlightLoopStartParams,
+  FlightLoopStopParams,
+  FlightLoopUpdateParams,
   FootstepTerrainLayer,
   IncomingProjectileAudioState,
   ObstructionAwareness,
@@ -1163,15 +1166,24 @@ export function createAudioController(): AudioController {
   const reloadServoDistortion = new Tone.Distortion({ distortion: 0.2, wet: 0 }).connect(reloadServoPitch)
   const reloadServoLowpass = new Tone.Filter({ type: 'lowpass', frequency: 18000, Q: 0.8 }).connect(reloadServoDistortion)
   const flightLoopGain = new Tone.Gain(0.78).toDestination()
-  // Boost effect chain sits between the jet player and the main gain so effects
-  // can be ramped without touching the user-configurable volume level.
+  // Boost effect chain sits between rotor players and the main gain so effects
+  // can be ramped without touching user-configurable volume levels.
   const flightBoostGain = new Tone.Gain(1).connect(flightLoopGain)
-  // Lowpass filter: bypass at 20 kHz, ramps to ~500 Hz during boost for a deep rumble.
+  // Lowpass filter: bypass at 20 kHz, ramps lower for heavier rotor/boost coloration.
   const flightBoostFilter = new Tone.Filter({ type: 'lowpass', frequency: 20000, Q: 2 }).connect(flightBoostGain)
-  // Distortion: wet=0 (dry) at idle, ramps to 0.75 during boost for afterburner grit.
+  // Distortion: wet=0 (dry) at idle, ramps up during aggressive flight.
   const flightBoostDistortion = new Tone.Distortion({ distortion: 0.45, wet: 0 }).connect(flightBoostFilter)
-  const flightLoopSound = new Tone.Player('assets/sounds/jetLoop.ogg').connect(flightBoostDistortion)
-  flightLoopSound.loop = true
+  const rotorFlightLoopPlayers: Tone.Player[] = Array.from({ length: 4 }, () => {
+    const player = new Tone.Player('assets/sounds/helicopterLoop.ogg').connect(flightBoostDistortion)
+    player.loop = true
+    return player
+  })
+  const jetFlightLoopPlayer = new Tone.Player('assets/sounds/jetLoop.ogg').connect(flightBoostDistortion)
+  jetFlightLoopPlayer.loop = true
+  let activeFlightLoopCount = 1
+  let activeFlightType: 'jet' | 'rotor' = 'jet'
+  let lastFlightSpinUpSeconds = 5
+  let flightSpinDownTimeoutId: number | null = null
   applyFlightLoopVolume()
 
   const energyStatusGain = new Tone.Gain(0.17).toDestination()
@@ -1646,6 +1658,98 @@ export function createAudioController(): AudioController {
     } // end try/catch playbackRate set
   } // end function setPlaybackRateSafely
 
+  const clearFlightSpinDownTimeout = (): void => {
+    if (flightSpinDownTimeoutId !== null) {
+      window.clearTimeout(flightSpinDownTimeoutId)
+      flightSpinDownTimeoutId = null
+    } // end if spin-down timeout exists
+  } // end function clearFlightSpinDownTimeout
+
+  const isAnyFlightLoopPlaying = (): boolean => {
+    if (jetFlightLoopPlayer.state === 'started') {
+      return true
+    }
+    return rotorFlightLoopPlayers.some((player) => player.state === 'started')
+  } // end function isAnyFlightLoopPlaying
+
+  const stopAllFlightLoopPlayers = (): void => {
+    if (jetFlightLoopPlayer.state === 'started') {
+      jetFlightLoopPlayer.stop()
+    }
+    for (const player of rotorFlightLoopPlayers) {
+      if (player.state === 'started') {
+        player.stop()
+      }
+    } // end for each rotor player
+  } // end function stopAllFlightLoopPlayers
+
+  const setActiveFlightLoopCount = (requestedCount: number, ensureStarted: boolean): void => {
+    const nextCount = Math.max(1, Math.min(rotorFlightLoopPlayers.length, Math.round(requestedCount)))
+    activeFlightLoopCount = nextCount
+
+    if (activeFlightType === 'jet') {
+      if (jetFlightLoopPlayer.loaded && ensureStarted && jetFlightLoopPlayer.state !== 'started') {
+        jetFlightLoopPlayer.start()
+      }
+      for (const player of rotorFlightLoopPlayers) {
+        if (player.state === 'started') {
+          player.stop()
+        }
+      }
+      return
+    }
+
+    if (jetFlightLoopPlayer.state === 'started') {
+      jetFlightLoopPlayer.stop()
+    }
+
+    for (let index = 0; index < rotorFlightLoopPlayers.length; index += 1) {
+      const player = rotorFlightLoopPlayers[index]
+      if (!player) {
+        continue
+      }
+      const shouldBeActive = index < nextCount
+      if (!shouldBeActive && player.state === 'started') {
+        player.stop()
+      }
+      if (shouldBeActive && ensureStarted && player.loaded && player.state !== 'started') {
+        player.start()
+      }
+    } // end for each rotor player
+  } // end function setActiveFlightLoopCount
+
+  const startActiveFlightLoopPlayers = (): void => {
+    if (activeFlightType === 'jet') {
+      if (jetFlightLoopPlayer.loaded && jetFlightLoopPlayer.state !== 'started') {
+        jetFlightLoopPlayer.start()
+      }
+      return
+    }
+
+    for (let index = 0; index < activeFlightLoopCount; index += 1) {
+      const player = rotorFlightLoopPlayers[index]
+      if (!player || !player.loaded || player.state === 'started') {
+        continue
+      }
+      player.start()
+    } // end for each active rotor player
+  } // end function startActiveFlightLoopPlayers
+
+  const setActiveFlightPlaybackRate = (playbackRate: number): void => {
+    if (activeFlightType === 'jet') {
+      setPlaybackRateSafely(jetFlightLoopPlayer, playbackRate)
+      return
+    }
+
+    for (let index = 0; index < activeFlightLoopCount; index += 1) {
+      const player = rotorFlightLoopPlayers[index]
+      if (!player) {
+        continue
+      }
+      setPlaybackRateSafely(player, playbackRate)
+    } // end for each active rotor player
+  } // end function setActiveFlightPlaybackRate
+
   const ensureEnergyStatusLoopStarted = (): void => {
     if (energyStatusLoopStarted || !audioStarted || audioPaused || !isAudioContextRunning()) {
       return
@@ -1999,9 +2103,9 @@ export function createAudioController(): AudioController {
       cityAmbienceAudio.pause()
     } // end if city ambience was playing
 
-    flightLoopWasPlayingBeforePause = flightLoopSound.state === 'started'
+    flightLoopWasPlayingBeforePause = isAnyFlightLoopPlaying()
     if (flightLoopWasPlayingBeforePause) {
-      flightLoopSound.stop()
+      stopAllFlightLoopPlayers()
     } // end if player flight loop was playing
 
     if (contextWasRunningBeforePause) {
@@ -2047,8 +2151,8 @@ export function createAudioController(): AudioController {
       void cityAmbienceAudio.play().catch(() => undefined)
     } // end if city ambience should resume
 
-    if (flightLoopWasPlayingBeforePause && flightLoopSound.loaded && flightLoopSound.state !== 'started') {
-      flightLoopSound.start()
+    if (flightLoopWasPlayingBeforePause) {
+      startActiveFlightLoopPlayers()
     } // end if player flight loop should resume
 
     servoWasPlayingBeforePause = false
@@ -2060,26 +2164,92 @@ export function createAudioController(): AudioController {
     audioPaused = false
   } // end function resumeAllAudio
 
-  const startFlightLoop = (): void => {
+  const startFlightLoop = (params?: FlightLoopStartParams): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if player flight loop cannot start
+    clearFlightSpinDownTimeout()
+    activeFlightType = params?.flightType === 'jet' ? 'jet' : 'rotor'
+    activeFlightLoopCount = Math.max(1, Math.round(params?.rotorCount ?? activeFlightLoopCount))
+    lastFlightSpinUpSeconds = Math.max(0.4, params?.spinUpSeconds ?? lastFlightSpinUpSeconds)
+
     emitSemanticMovementEvent('thruster_start')
     emitSemanticMovementEvent('thruster_loop')
-    if (!flightLoopSound.loaded) {
+    const primaryLoopLoaded = activeFlightType === 'jet'
+      ? jetFlightLoopPlayer.loaded
+      : !!rotorFlightLoopPlayers[0]?.loaded
+    if (!primaryLoopLoaded) {
       return
     } // end if loop asset missing; placeholder contract remains active
-    if (flightLoopSound.state !== 'started') {
-      flightLoopSound.start()
-    } // end if player flight loop not already running
+    setActiveFlightLoopCount(activeFlightLoopCount, false)
+    startActiveFlightLoopPlayers()
+    setActiveFlightPlaybackRate(0.56)
+    flightBoostFilter.frequency.rampTo(1900, 0.2)
+    flightBoostDistortion.wet.rampTo(0.04, 0.2)
+    flightBoostGain.gain.rampTo(0.9 + ((activeFlightLoopCount - 1) * 0.12), 0.22)
   } // end function startFlightLoop
 
-  const stopFlightLoop = (): void => {
+  const stopFlightLoop = (params?: FlightLoopStopParams): void => {
     emitSemanticMovementEvent('thruster_stop')
-    if (flightLoopSound.state === 'started') {
-      flightLoopSound.stop()
-    } // end if player flight loop should stop
+    clearFlightSpinDownTimeout()
+    if (!isAnyFlightLoopPlaying()) {
+      return
+    } // end if no flight loop voice is active
+
+    if (params?.quickSpinDown) {
+      setActiveFlightPlaybackRate(0.62)
+      flightBoostFilter.frequency.rampTo(800, 0.12)
+      flightBoostDistortion.wet.rampTo(0.18, 0.09)
+      flightBoostGain.gain.rampTo(0.55, 0.14)
+      flightSpinDownTimeoutId = window.setTimeout(() => {
+        stopAllFlightLoopPlayers()
+        flightBoostFilter.frequency.rampTo(20000, 0.26)
+        flightBoostDistortion.wet.rampTo(0, 0.22)
+        flightBoostGain.gain.rampTo(1, 0.22)
+        flightSpinDownTimeoutId = null
+      }, 170)
+      return
+    } // end if quick spin-down requested
+
+    stopAllFlightLoopPlayers()
   } // end function stopFlightLoop
+
+  const updateFlightLoopAudio = (params: FlightLoopUpdateParams): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
+      return
+    } // end if audio graph is inactive
+
+    if (!isAnyFlightLoopPlaying()) {
+      return
+    } // end if there is no active flight loop to shape
+
+    const requestedFlightType = params.flightType === 'rotor' ? 'rotor' : 'jet'
+    if (requestedFlightType !== activeFlightType) {
+      activeFlightType = requestedFlightType
+      setActiveFlightLoopCount(activeFlightLoopCount, true)
+    }
+
+    const rotorCount = Math.max(1, Math.min(rotorFlightLoopPlayers.length, Math.round(params.rotorCount ?? activeFlightLoopCount)))
+    setActiveFlightLoopCount(rotorCount, true)
+
+    const normalizedSpeed = clamp(params.normalizedSpeed, 0, 1)
+    const spinProgress = clamp(params.spinProgress ?? (params.flightState === 'grounded' ? 0 : 1), 0, 1)
+    const spinUpSeconds = Math.max(0.4, params.spinUpSeconds ?? lastFlightSpinUpSeconds)
+    lastFlightSpinUpSeconds = spinUpSeconds
+
+    const spinupSpeedBias = clamp(5 / spinUpSeconds, 0.7, 1.35)
+    const baseRate = 0.54 + (spinProgress * 0.53)
+    const movementRate = normalizedSpeed * (params.boosting ? 0.8 : 0.58)
+    const targetPlaybackRate = clamp((baseRate + movementRate) * spinupSpeedBias, 0.5, 1.85)
+
+    setActiveFlightPlaybackRate(targetPlaybackRate)
+
+    const rotorGain = 0.86 + ((rotorCount - 1) * 0.14)
+    const boostGain = params.boosting ? 0.2 : 0
+    flightBoostGain.gain.rampTo(rotorGain + boostGain + (normalizedSpeed * 0.12), 0.09)
+    flightBoostFilter.frequency.rampTo(900 + (normalizedSpeed * 4200) + (spinProgress * 1700), 0.11)
+    flightBoostDistortion.wet.rampTo((normalizedSpeed * 0.14) + (params.boosting ? 0.18 : 0.02), 0.1)
+  } // end function updateFlightLoopAudio
 
   const startBoostAudio = (): void => {
     emitSemanticMovementEvent('move_boost')
@@ -2092,8 +2262,15 @@ export function createAudioController(): AudioController {
       boostEngageSound.start()
     } // end if engage sound can play
 
-    // Ramp the jet loop to afterburner character: lower pitch, heavy rumble, louder
-    flightLoopSound.playbackRate = 0.65
+    if (activeFlightType === 'rotor') {
+      setActiveFlightPlaybackRate(1.2)
+      flightBoostFilter.frequency.rampTo(620, 0.34)
+      flightBoostDistortion.wet.rampTo(0.28, 0.32)
+      flightBoostGain.gain.rampTo(1.24 + ((activeFlightLoopCount - 1) * 0.1), 0.3)
+      return
+    }
+
+    setActiveFlightPlaybackRate(0.65)
     flightBoostFilter.frequency.rampTo(500, 0.6)
     flightBoostDistortion.wet.rampTo(0.75, 0.6)
     flightBoostGain.gain.rampTo(1.2, 0.6)
@@ -2101,8 +2278,16 @@ export function createAudioController(): AudioController {
 
   const stopBoostAudio = (): void => {
     emitSemanticMovementEvent('move_decelerate')
-    // Gradually return the jet loop to its normal sound profile
-    flightLoopSound.playbackRate = 1.0
+    if (activeFlightType === 'rotor') {
+      setActiveFlightPlaybackRate(1)
+      flightBoostFilter.frequency.rampTo(1800, 0.25)
+      flightBoostDistortion.wet.rampTo(0.04, 0.25)
+      flightBoostGain.gain.rampTo(0.94 + ((activeFlightLoopCount - 1) * 0.1), 0.25)
+      return
+    }
+
+    // Gradually return jet-profile loops to normal
+    setActiveFlightPlaybackRate(1.0)
     flightBoostFilter.frequency.rampTo(20000, 1.5)
     flightBoostDistortion.wet.rampTo(0, 1.5)
     flightBoostGain.gain.rampTo(1.0, 1.5)
@@ -3584,6 +3769,7 @@ export function createAudioController(): AudioController {
     playBump,
     startFlightLoop,
     stopFlightLoop,
+    updateFlightLoopAudio,
     startBoostAudio,
     stopBoostAudio,
     playHardLanding,

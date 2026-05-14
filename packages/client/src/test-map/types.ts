@@ -100,6 +100,28 @@ export interface PlayerAudioState {
   isFlying: boolean
 } // end interface PlayerAudioState
 
+export type FlightAudioType = 'jet' | 'rotor'
+
+export interface FlightLoopStartParams {
+  flightType?: FlightAudioType
+  rotorCount?: number
+  spinUpSeconds?: number
+} // end interface FlightLoopStartParams
+
+export interface FlightLoopStopParams {
+  quickSpinDown?: boolean
+} // end interface FlightLoopStopParams
+
+export interface FlightLoopUpdateParams {
+  flightType?: FlightAudioType
+  flightState: PlayerFlightState
+  normalizedSpeed: number
+  rotorCount?: number
+  spinProgress?: number
+  spinUpSeconds?: number
+  boosting?: boolean
+} // end interface FlightLoopUpdateParams
+
 export interface EnemyAudioState {
   id: string
   type: string
@@ -295,8 +317,9 @@ export interface AudioController {
   playPitchCenterConfirm: () => void
   fireGunshot: (soundPath?: string) => void
   playWeaponReloadSequence: (definition: WeaponReloadDefinition) => Promise<void>
-  startFlightLoop: () => void
-  stopFlightLoop: () => void
+  startFlightLoop: (params?: FlightLoopStartParams) => void
+  stopFlightLoop: (params?: FlightLoopStopParams) => void
+  updateFlightLoopAudio: (params: FlightLoopUpdateParams) => void
   startBoostAudio: () => void
   stopBoostAudio: () => void
   playHardLanding: () => void

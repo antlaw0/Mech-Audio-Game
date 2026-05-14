@@ -493,6 +493,10 @@ function startTestMap(): void {
     powerOutput?: number
     ratedLoad?: number
     liftCapacity?: number
+    flightType?: string
+    rotorCount?: number
+    verticalTakeoffTime?: number
+    flightStability?: number
     speedModifier?: number
     terrainMultiplier?: number
     groundAcceleration?: number
@@ -723,6 +727,12 @@ function startTestMap(): void {
       energyDrain: 6,
       heatGeneration: 5,
       liftCapacity: 1600,
+      flightType: 'jet',
+      rotorCount: 1,
+      verticalTakeoffTime: 3.2,
+      flightStability: 1,
+      speedModifier: 1,
+      energyUse: 2.2,
       activeAbilities: ['Flight assist enabled']
     },
     FlightSystem: {
@@ -737,7 +747,7 @@ function startTestMap(): void {
       EDEF: 0,
       energyDrain: 0,
       liftCapacity: 1600,
-      passiveBonuses: ['Linked to Utility 2 jetpack']
+      passiveBonuses: ['Linked to Utility 2 flight system']
     }
   }
 
@@ -746,6 +756,63 @@ function startTestMap(): void {
     const override = defaultPartOverrides[slot]
     return [slot, { ...basePart, ...override }]
   }))
+
+  const UTILITY2_FLIGHT_PART_PRESETS: Readonly<Record<string, Partial<DevPartState>>> = {
+    'basic.jetpack': {
+      partId: 'basic.jetpack',
+      partType: 'Utility',
+      name: 'Basic Jetpack',
+      weight: 95,
+      PDEF: 8,
+      EDEF: 10,
+      energyDrain: 6,
+      heatGeneration: 5,
+      liftCapacity: 1600,
+      flightType: 'jet',
+      rotorCount: 1,
+      verticalTakeoffTime: 3.2,
+      flightStability: 1,
+      speedModifier: 1,
+      energyUse: 2.2,
+      activeAbilities: ['Flight assist enabled']
+    },
+    'basic.rotor.basic': {
+      partId: 'basic.rotor.basic',
+      partType: 'Utility',
+      name: 'Basic Rotor Flight Pack',
+      weight: 98,
+      PDEF: 8,
+      EDEF: 10,
+      energyDrain: 5,
+      heatGeneration: 2.4,
+      liftCapacity: 1725,
+      flightType: 'rotor',
+      rotorCount: 1,
+      verticalTakeoffTime: 4.2,
+      flightStability: 1.05,
+      speedModifier: 1,
+      energyUse: 1.4,
+      activeAbilities: ['Rotor flight assist enabled']
+    },
+    'basic.rotor.dual': {
+      partId: 'basic.rotor.dual',
+      partType: 'Utility',
+      name: 'Dual-Rotor Flight Pack',
+      weight: 110,
+      PDEF: 9,
+      EDEF: 11,
+      energyDrain: 6,
+      heatGeneration: 2.2,
+      liftCapacity: 1900,
+      flightType: 'rotor',
+      rotorCount: 2,
+      verticalTakeoffTime: 3.9,
+      flightStability: 1.25,
+      speedModifier: 1.05,
+      energyUse: 1.35,
+      activeAbilities: ['Rotor flight assist enabled']
+    }
+  }
 
   const LOADOUT_SLOT_VIEWS: ReadonlyArray<{ id: LoadoutViewId; slot?: DevPartSlot }> = [
     { id: 'Head', slot: 'Head' },
@@ -938,6 +1005,13 @@ function startTestMap(): void {
     const strafeSpeed = movementProfile.maxStrafeSpeed
     const turnSpeed = (movementProfile.turnRate * 180) / Math.PI
     const liftCapacity = utility2Part?.liftCapacity ?? getDevPartState('FlightSystem').liftCapacity ?? 0
+    const rotorCount = Math.max(1, Math.round(utility2Part?.rotorCount ?? 1))
+    const verticalTakeoffTime = Math.max(0.8, utility2Part?.verticalTakeoffTime ?? 3.4)
+    const weightedTakeoffTime = clampNumber(
+      verticalTakeoffTime * clampNumber(0.75 + ((stats.totalWeight / Math.max(1, liftCapacity || 1)) * 0.7), 0.6, 1.9),
+      2.4,
+      9.5
+    )
     const flightEnabled = (utility2Part?.online ?? false) && liftCapacity >= stats.totalWeight
     const staggerResistance = stats.totalWeight / (stats.totalWeight + 1000)
 
@@ -975,6 +1049,8 @@ function startTestMap(): void {
       '',
       `Flight Enabled: ${flightEnabled ? 'Yes' : 'No'}`,
       `Lift Capacity: ${formatLoadoutNumber(liftCapacity)} kg`,
+      `Rotor Count: ${rotorCount}`,
+      `Takeoff Time (Weighted): ${formatLoadoutNumber(weightedTakeoffTime, 2)} s`,
       '',
       `Stagger Resistance: ${formatLoadoutNumber(staggerResistance, 3)}`,
       '',
@@ -1022,6 +1098,18 @@ function startTestMap(): void {
     }
     if (part.liftCapacity !== undefined) {
       lines.push(`Lift Capacity: ${formatLoadoutNumber(part.liftCapacity, 1)} kg`)
+    }
+    if (part.flightType) {
+      lines.push(`Flight Type: ${part.flightType}`)
+    }
+    if (part.rotorCount !== undefined) {
+      lines.push(`Rotor Count: ${Math.max(1, Math.round(part.rotorCount))}`)
+    }
+    if (part.verticalTakeoffTime !== undefined) {
+      lines.push(`Vertical Takeoff Time: ${formatLoadoutNumber(part.verticalTakeoffTime, 2)} s`)
+    }
+    if (part.flightStability !== undefined) {
+      lines.push(`Flight Stability: ${formatLoadoutNumber(part.flightStability, 2)}`)
     }
     if (part.speedModifier !== undefined) {
       lines.push(`Speed Modifier: ${formatLoadoutNumber(part.speedModifier, 2)}`)
@@ -2122,6 +2210,10 @@ function startTestMap(): void {
       powerOutput: safeSource.powerOutput === undefined ? undefined : readNumber(safeSource.powerOutput, 0),
       ratedLoad: safeSource.ratedLoad === undefined ? undefined : readNumber(safeSource.ratedLoad, 0),
       liftCapacity: safeSource.liftCapacity === undefined ? undefined : readNumber(safeSource.liftCapacity, 0),
+      flightType: typeof safeSource.flightType === 'string' ? safeSource.flightType : undefined,
+      rotorCount: safeSource.rotorCount === undefined ? undefined : readNumber(safeSource.rotorCount, 1),
+      verticalTakeoffTime: safeSource.verticalTakeoffTime === undefined ? undefined : readNumber(safeSource.verticalTakeoffTime, 0),
+      flightStability: safeSource.flightStability === undefined ? undefined : readNumber(safeSource.flightStability, 1),
       speedModifier: safeSource.speedModifier === undefined ? undefined : readNumber(safeSource.speedModifier, 1),
       terrainMultiplier: safeSource.terrainMultiplier === undefined ? undefined : readNumber(safeSource.terrainMultiplier, 1),
       groundAcceleration: safeSource.groundAcceleration === undefined ? undefined : readNumber(safeSource.groundAcceleration, 0),
@@ -2195,6 +2287,56 @@ function startTestMap(): void {
 
   const canUseFlightSubsystem = (): boolean => areDevPartsOperational('Utility2', 'FlightSystem')
 
+  interface FlightRuntimeProfile {
+    mode: 'jet' | 'rotor'
+    rotorCount: number
+    speedMultiplier: number
+    takeoffDurationSeconds: number
+    energyUsePerSecond: number
+    heatGenerationPerSecond: number
+    stability: number
+    liftCapacity: number
+  } // end interface FlightRuntimeProfile
+
+  const clampNumber = (value: number, min: number, max: number): number => {
+    return Math.max(min, Math.min(max, value))
+  } // end function clampNumber
+
+  const getFlightRuntimeProfile = (): FlightRuntimeProfile => {
+    const utilityPart = getDevPartState('Utility2')
+    const linkedFlightPart = getDevPartState('FlightSystem')
+    const totalWeight = getDevTotalWeight()
+    const liftCapacity = Math.max(0, utilityPart.liftCapacity ?? linkedFlightPart.liftCapacity ?? 0)
+    const flightTypeNormalized = (utilityPart.flightType ?? '').trim().toLowerCase()
+    const mode: 'jet' | 'rotor' = flightTypeNormalized === 'rotor' || flightTypeNormalized === 'helicopter' ? 'rotor' : 'jet'
+    const rotorCount = mode === 'rotor'
+      ? Math.max(1, Math.round(utilityPart.rotorCount ?? 1))
+      : 1
+
+    const baseTakeoffSeconds = Math.max(0.8, utilityPart.verticalTakeoffTime ?? 3.4)
+    const loadRatio = liftCapacity > 0 ? totalWeight / liftCapacity : 2
+    const weightPenalty = clampNumber(0.75 + (loadRatio * 0.7), 0.6, 1.9)
+    const takeoffDurationSeconds = clampNumber(baseTakeoffSeconds * weightPenalty, 2.4, 9.5)
+    const speedMultiplier = clampNumber(utilityPart.speedModifier ?? 1, 0.7, 1.8)
+    const baseEnergyUse = Math.max(0.2, utilityPart.energyUse ?? (mode === 'rotor' ? 1.4 : 2.2))
+    const energyUsePerSecond = baseEnergyUse * (mode === 'rotor' ? (1 + ((rotorCount - 1) * 0.35)) : 1)
+    const baseHeat = Math.max(0, utilityPart.heatGeneration ?? (mode === 'rotor' ? 2.1 : 4.6))
+    const heatGenerationPerSecond = baseHeat * (mode === 'rotor' ? (1 + ((rotorCount - 1) * 0.28)) : 1)
+    const baseStability = Math.max(0.6, utilityPart.flightStability ?? 1)
+    const rotorStabilityBonus = mode === 'rotor' ? ((rotorCount - 1) * 0.22) : 0
+
+    return {
+      mode,
+      rotorCount,
+      speedMultiplier,
+      takeoffDurationSeconds,
+      energyUsePerSecond,
+      heatGenerationPerSecond,
+      stability: baseStability + rotorStabilityBonus,
+      liftCapacity
+    }
+  } // end function getFlightRuntimeProfile
+
   const canUseRangedSubsystem = (): boolean => areDevPartsOperational('RightArm', 'RightHand')
 
   const canUseMeleeSubsystem = (): boolean => areDevPartsOperational('LeftArm', 'LeftHand')
@@ -2242,7 +2384,7 @@ function startTestMap(): void {
         player.z = 0
         syncTrackedPlayerPosition()
         if (audio.isAudioStarted()) {
-          audio.stopFlightLoop()
+          audio.stopFlightLoop({ quickSpinDown: true })
         }
       }
     }
@@ -2408,7 +2550,10 @@ function startTestMap(): void {
     const ratedLoad = 100
     const weightFactor = stats.totalWeight / Math.max(1, ratedLoad)
     const movementProfile = getCurrentMovementArchetypeProfile()
-    const movementSpeedLimit = player.isFlying ? PLAYER_FLIGHT_SPEED : movementProfile.maxForwardSpeed
+    const flightRuntimeProfile = getFlightRuntimeProfile()
+    const movementSpeedLimit = player.isFlying
+      ? PLAYER_FLIGHT_SPEED * flightRuntimeProfile.speedMultiplier
+      : movementProfile.maxForwardSpeed
     const turnSpeedDegrees = (movementProfile.turnRate * 180) / Math.PI
     const activeTimers = Array.from(devTimers.entries()).filter((entry) => Math.abs(entry[1]) > 0.0001).length
     const audioVoicesEstimate = Math.max(2, devEnemyCount + devProjectileCount + (player.isFlying ? 1 : 0) + (audio.isServoPlaying() ? 1 : 0))
@@ -2442,7 +2587,7 @@ function startTestMap(): void {
       `Strafe Speed: ${movementProfile.maxStrafeSpeed.toFixed(2)}`,
       `Turn Speed: ${turnSpeedDegrees.toFixed(2)} deg/s`,
       `Acceleration: ${devApproxAcceleration.toFixed(2)} m/s^2 (sampled)`,
-      `Flight Thrust: ${PLAYER_FLIGHT_SPEED.toFixed(2)} (baseline)`,
+      `Flight Thrust: ${(PLAYER_FLIGHT_SPEED * flightRuntimeProfile.speedMultiplier).toFixed(2)} (dynamic)`,
       `Lift Capacity: ${getSharedFlightHeight().toFixed(2)} (placeholder)`,
       `Terrain Multiplier: ${movementProfile.terrainPenaltyMultiplier.toFixed(3)}`,
       '',
@@ -3004,7 +3149,7 @@ function startTestMap(): void {
       syntax: 'part.attach <partId> <slot>',
       description: 'Attach a placeholder part identifier to the specified slot (Movement infers mobility by partId text).',
       helpPath: ['Gameplay', 'Session'],
-      examples: ['part.attach Wheels Movement', 'part.attach Treads Movement', 'part.attach basic.left-arm LeftArm']
+      examples: ['part.attach Wheels Movement', 'part.attach basic.jetpack Utility2', 'part.attach basic.rotor.basic Utility2', 'part.attach basic.rotor.dual Utility2']
     },
     {
       syntax: 'part.detach <slot>',
@@ -3668,6 +3813,13 @@ function startTestMap(): void {
       if (slot === 'Movement') {
         applyMovementArchetypeToPart(part, partId)
       }
+      if (slot === 'Utility2') {
+        const preset = UTILITY2_FLIGHT_PART_PRESETS[partId.toLowerCase()]
+        if (preset) {
+          const updatedPart = normalizeDevPartState(slot, { ...part, ...preset, online: true })
+          devParts.set(slot, updatedPart)
+        }
+      }
       applySubsystemIntegrityState()
       nextEventTag(`Attached ${partId} to ${slot}`)
       return [`attached ${partId} to ${slot}`]
@@ -3696,6 +3848,10 @@ function startTestMap(): void {
       part.powerOutput = undefined
       part.ratedLoad = undefined
       part.liftCapacity = undefined
+      part.flightType = undefined
+      part.rotorCount = undefined
+      part.verticalTakeoffTime = undefined
+      part.flightStability = undefined
       part.speedModifier = undefined
       part.terrainMultiplier = undefined
       part.groundAcceleration = undefined
@@ -3747,7 +3903,7 @@ function startTestMap(): void {
       player.flightState = 'grounded'
       if (audio.isAudioStarted()) {
         audio.stopBoostAudio()
-        audio.stopFlightLoop()
+        audio.stopFlightLoop({ quickSpinDown: true })
       }
       nextEventTag('Player shutdown triggered')
       return ['player shutdown applied: ep=0, flight disabled, boost disabled.']
@@ -4220,6 +4376,8 @@ function startTestMap(): void {
       * Math.max(0, devMovementScale)
       * Math.max(0.1, devTractionMultiplier)
       / Math.max(0.1, devDriftMultiplier)
+    const flightRuntimeProfile = getFlightRuntimeProfile()
+    const flightSpeedLimit = PLAYER_FLIGHT_SPEED * flightRuntimeProfile.speedMultiplier
 
     updateFrame(
       {
@@ -4228,6 +4386,12 @@ function startTestMap(): void {
         audio,
         state: updateState,
         flightAltitude: getSharedFlightHeight(),
+        flightConfig: {
+          mode: flightRuntimeProfile.mode,
+          rotorCount: flightRuntimeProfile.rotorCount,
+          spinUpSeconds: flightRuntimeProfile.takeoffDurationSeconds,
+          maxHorizontalSpeed: flightSpeedLimit
+        },
         collisionWorld,
         movementProfile: getCurrentMovementArchetypeProfile()
       },
@@ -4250,11 +4414,14 @@ function startTestMap(): void {
     const hpBeforeCombat = Math.max(0, player.hp)
 
     const energyRegenPerSecond = devEnergyRegenRate
-    const energyDrainPerSecond = (player.isFlying ? 2 : 0) + ((player.isBoosting ?? false) ? BOOST_EP_DRAIN_PER_SECOND : 0)
+    const flightEnergyDrainPerSecond = player.isFlying ? flightRuntimeProfile.energyUsePerSecond : 0
+    const energyDrainPerSecond = flightEnergyDrainPerSecond + ((player.isBoosting ?? false) ? BOOST_EP_DRAIN_PER_SECOND : 0)
     devLastEnergyDrain = Math.max(0, energyDrainPerSecond)
     const epDelta = (energyRegenPerSecond - energyDrainPerSecond) * deltaSeconds
     player.ep = Math.max(0, Math.min(player.maxEp, player.ep + epDelta))
+    const flightHeatGain = player.isFlying ? (flightRuntimeProfile.heatGenerationPerSecond * deltaSeconds) : 0
     devCurrentHeat = Math.max(0, devCurrentHeat - (devCoolingRate * deltaSeconds))
+    devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + flightHeatGain)
 
     // Force landing when EP is fully depleted while in flight
     if (player.ep <= 0 && player.isFlying &&
@@ -4267,7 +4434,7 @@ function startTestMap(): void {
       } // end if was boosting
       player.flightState = 'descending'
       if (audio.isAudioStarted()) {
-        audio.stopFlightLoop()
+        audio.stopFlightLoop({ quickSpinDown: true })
       } // end if stopping flight loop on EP depletion
     } // end if EP depleted while flying
 
@@ -4339,8 +4506,22 @@ function startTestMap(): void {
       stepCombatEcsWorld(combatWorld, collisionWorld, audio, player, deltaSeconds)
     }
     if (player.hp < hpBeforeCombat) {
+      const rawIncomingDamage = hpBeforeCombat - player.hp
+      let mitigatedDamage = rawIncomingDamage
+      if (
+        player.isFlying
+        && flightRuntimeProfile.mode === 'rotor'
+        && flightRuntimeProfile.rotorCount >= 2
+        && rawIncomingDamage >= 20
+      ) {
+        const mitigationRatio = clampNumber((flightRuntimeProfile.rotorCount - 1) * 0.11 + ((flightRuntimeProfile.stability - 1) * 0.18), 0, 0.45)
+        const recoveredHp = rawIncomingDamage * mitigationRatio
+        player.hp = Math.min(player.maxHp, player.hp + recoveredHp)
+        mitigatedDamage = hpBeforeCombat - player.hp
+      } // end if airborne multi-rotor stability mitigation applies
+
       audio.playPlayerHealthStatusTone(player.hp / Math.max(1, player.maxHp))
-      devLastDamageAmount = hpBeforeCombat - player.hp
+      devLastDamageAmount = mitigatedDamage
       devLastDamageType = 'incoming'
       devLastHitLocation = 'front armor'
       devLastHeatGain = devLastDamageAmount * 0.1 * devHeatMultiplier
@@ -4452,7 +4633,7 @@ function startTestMap(): void {
         } // end if empty clip sound has not played for this trigger pull
       } else {
       const playerSpeed = Math.hypot(player.x - previousPlayerX, player.y - previousPlayerY) / Math.max(deltaSeconds, 0.0001)
-      const maxMoveSpeed = player.isFlying ? PLAYER_FLIGHT_SPEED : PLAYER_SPEED
+      const maxMoveSpeed = player.isFlying ? flightSpeedLimit : PLAYER_SPEED
       const speedFraction = Math.min(1, playerSpeed / maxMoveSpeed)
 
       if (playerWeapon.weaponType === 'missile') {

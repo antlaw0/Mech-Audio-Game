@@ -27,7 +27,16 @@ export interface UpdateState {
   verticalVelocityZ: number
   groundForwardVelocity: number
   groundStrafeVelocity: number
+  rotorSpinupElapsedSeconds: number
+  rotorSpinNormalized: number
 } // end interface UpdateState
+
+export interface FlightRuntimeConfig {
+  mode: 'jet' | 'rotor'
+  rotorCount: number
+  spinUpSeconds: number
+  maxHorizontalSpeed: number
+} // end interface FlightRuntimeConfig
 
 export type MobilityType = 'Wheels' | 'Treads' | 'Hover' | 'Walker' | 'Flight' | 'Placeholder'
 
@@ -50,6 +59,7 @@ export interface UpdateEnvironment {
   audio: AudioController
   state: UpdateState
   flightAltitude: number
+  flightConfig: FlightRuntimeConfig
   collisionWorld: WorldCollisionWorld
   movementProfile: MovementArchetypeProfile
 } // end interface UpdateEnvironment
@@ -61,7 +71,9 @@ export function createUpdateState(): UpdateState {
     muzzleFlashTimer: 0,
     verticalVelocityZ: 0,
     groundForwardVelocity: 0,
-    groundStrafeVelocity: 0
+    groundStrafeVelocity: 0,
+    rotorSpinupElapsedSeconds: 0,
+    rotorSpinNormalized: 0
   } // end object update state
 } // end function createUpdateState
 
@@ -74,6 +86,10 @@ function moveToward(current: number, target: number, maxDelta: number): number {
   }
   return target
 } // end function moveToward
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+} // end function clamp
 
 function isPointInsideZone(
   x: number,
@@ -106,12 +122,13 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   } // end if strafe velocity is uninitialized
 
   const movementProfile = environment.movementProfile
+  const flightConfig = environment.flightConfig
   const { input, player, audio, state } = environment
   const moveSpeed = (environment.player.isBoosting ?? false)
     ? PLAYER_BOOST_SPEED
     : environment.player.flightState === 'grounded'
       ? PLAYER_SPEED
-      : PLAYER_FLIGHT_SPEED
+      : flightConfig.maxHorizontalSpeed
   const moveAmount = moveSpeed * deltaSeconds
   const lookAmount = LOOK_SPEED * deltaSeconds
   const turnInput = (input.turnRight ? 1 : 0) - (input.turnLeft ? 1 : 0)
@@ -151,10 +168,16 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   if (input.flightTogglePending) {
     input.flightTogglePending = false
     if (player.flightState === 'grounded') {
+      state.rotorSpinupElapsedSeconds = 0
+      state.rotorSpinNormalized = 0
       player.flightState = 'ascending'
       player.isFlying = true
       if (audio.isAudioStarted()) {
-        audio.startFlightLoop()
+        audio.startFlightLoop({
+          flightType: flightConfig.mode,
+          rotorCount: flightConfig.rotorCount,
+          spinUpSeconds: flightConfig.spinUpSeconds
+        })
       } // end if flight loop should start
     } else {
       // Cancel boost before descent begins
@@ -167,7 +190,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
       player.flightState = 'descending'
       player.isFlying = true
       if (audio.isAudioStarted()) {
-        audio.stopFlightLoop()
+        audio.stopFlightLoop({ quickSpinDown: true })
       } // end if flight loop should stop immediately
     } // end if toggle entering or exiting flight
   } // end if flight toggle requested
@@ -200,23 +223,50 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   let justLanded = false
 
   if (player.flightState === 'ascending') {
-    if (playerAltitude >= targetFlightAltitude - LANDING_EPSILON) {
-      player.flightState = 'airborne'
+    if (flightConfig.mode === 'rotor') {
+      const clampedSpinUpSeconds = Math.max(0.4, flightConfig.spinUpSeconds)
+      state.rotorSpinupElapsedSeconds = Math.min(clampedSpinUpSeconds, state.rotorSpinupElapsedSeconds + deltaSeconds)
+      const takeoffProgress = clamp(state.rotorSpinupElapsedSeconds / clampedSpinUpSeconds, 0, 1)
+      const spinupPhase = 0.72
+      const spinProgress = clamp(takeoffProgress / spinupPhase, 0, 1)
+      state.rotorSpinNormalized = spinProgress
+
+      const liftProgress = clamp((takeoffProgress - spinupPhase) / (1 - spinupPhase), 0, 1)
+      if (liftProgress <= 0) {
+        playerAltitude = supportHeight
+      } else {
+        playerAltitude = supportHeight + ((targetFlightAltitude - supportHeight) * liftProgress)
+      }
+
+      state.verticalVelocityZ = 0
       player.isFlying = true
-      state.verticalVelocityZ = 0
-    } else {
-      playerAltitude = Math.min(targetFlightAltitude, playerAltitude + verticalStep)
-      state.verticalVelocityZ = 0
-      if (playerAltitude >= targetFlightAltitude - LANDING_EPSILON) {
+      if (takeoffProgress >= 1 - LANDING_EPSILON) {
         playerAltitude = targetFlightAltitude
         player.flightState = 'airborne'
         player.isFlying = true
+        state.rotorSpinNormalized = 1
+      } // end if rotor reached flight altitude
+    } else {
+      if (playerAltitude >= targetFlightAltitude - LANDING_EPSILON) {
+        player.flightState = 'airborne'
+        player.isFlying = true
+        state.verticalVelocityZ = 0
+      } else {
+        playerAltitude = Math.min(targetFlightAltitude, playerAltitude + verticalStep)
+        state.verticalVelocityZ = 0
+        if (playerAltitude >= targetFlightAltitude - LANDING_EPSILON) {
+          playerAltitude = targetFlightAltitude
+          player.flightState = 'airborne'
+          player.isFlying = true
+        } // end if reached flight altitude
       } // end if reached flight altitude
-    } // end if reached flight altitude
+      state.rotorSpinNormalized = player.flightState === 'airborne' ? 1 : state.rotorSpinNormalized
+    }
   } else if (player.flightState === 'airborne') {
     playerAltitude = Math.max(playerAltitude, targetFlightAltitude)
     state.verticalVelocityZ = 0
     player.isFlying = true
+    state.rotorSpinNormalized = 1
   } else {
     const wasDescendingFromFlight = player.flightState === 'descending'
     const shouldFall = wasDescendingFromFlight || playerAltitude > supportHeight + LANDING_EPSILON
@@ -236,14 +286,19 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
         if (player.isBoosting) {
           player.isBoosting = false
         } // end if resetting boost on landing
+        state.rotorSpinupElapsedSeconds = 0
+        state.rotorSpinNormalized = 0
       } else {
         player.isFlying = wasDescendingFromFlight
+        state.rotorSpinNormalized = clamp(state.rotorSpinNormalized - (deltaSeconds * 2.6), 0, 1)
       } // end if landed this frame
     } else {
       playerAltitude = supportHeight
       state.verticalVelocityZ = 0
       player.flightState = 'grounded'
       player.isFlying = false
+      state.rotorSpinupElapsedSeconds = 0
+      state.rotorSpinNormalized = 0
     } // end if player should fall toward support
   } // end if flight state update
   player.z = playerAltitude
@@ -340,6 +395,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
 
   const forwardAxis = (input.moveForward ? 1 : 0) + (input.moveBack ? -1 : 0)
   const strafeAxis = (input.strafeRight ? 1 : 0) + (input.strafeLeft ? -1 : 0)
+  const flightInputAxisMagnitude = Math.min(1, Math.hypot(forwardAxis, strafeAxis))
 
   if (player.flightState === 'grounded') {
     const terrainPenalty = Math.max(0.1, movementProfile.terrainPenaltyMultiplier)
@@ -465,6 +521,22 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     Math.abs(targetForwardVelocity) > Math.abs(state.groundForwardVelocity) + 0.05
     || Math.abs(targetStrafeVelocity) > Math.abs(state.groundStrafeVelocity) + 0.05
   )
+
+  const normalizedFlightSpeed = player.flightState === 'grounded'
+    ? 0
+    : clamp(Math.max(flightInputAxisMagnitude, normalizedGroundSpeed), 0, 1)
+
+  if (audio.isAudioStarted()) {
+    audio.updateFlightLoopAudio({
+      flightType: flightConfig.mode,
+      flightState: player.flightState ?? 'grounded',
+      normalizedSpeed: normalizedFlightSpeed,
+      rotorCount: flightConfig.rotorCount,
+      spinProgress: state.rotorSpinNormalized,
+      spinUpSeconds: flightConfig.spinUpSeconds,
+      boosting: !!player.isBoosting
+    })
+  } // end if flight loop audio should update
 
   if (audio.isAudioStarted()) {
     audio.updatePlayerMobilityAudio(

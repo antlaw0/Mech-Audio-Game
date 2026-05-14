@@ -871,6 +871,10 @@ Apply to:
 ---
 
 ## Ticket 8 — Flight Weight Restriction
+Copilot status: ready for approval
+Developer status: pending
+
+Notes: Rotor/helicopter flight part prototype now uses weighted lift checks, weighted vertical takeoff timing, and rotor-count scaling for stability and energy/heat usage.
 
 * overweight disables flight
 

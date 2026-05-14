@@ -1,0 +1,6 @@
+# Fetch the latest changes from the remote
+git fetch origin
+#clean untracked files
+git clean -fd
+# Reset your current branch to match the remote main branch
+git reset --hard origin/main
