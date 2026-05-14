@@ -1,19 +1,179 @@
 {
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "Open Master Docs",
-      "type": "shell",
-      "command": "code",
-      "args": [
-        "-r",
-        "MasterSpecDoc.md",
-        "ImplementationRoadMap.md"
-      ],
-      "runOptions": {
-        "runOn": "folderOpen"
-      },
-      "problemMatcher": []
-    }
-  ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Open Master Docs",
+			"type": "shell",
+			"command": "code",
+			"args": [
+				"-r",
+				"MasterSpecDoc.md",
+				"ImplementationRoadMap.md"
+			],
+			"runOptions": {
+				"runOn": "folderOpen"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Build Client Dist",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"build:client"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Build Client Dist",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"build:client"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Build Client Dist",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"build:client"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Build Client Dist",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"build:client"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Build Client Dist",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"build:client"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Typecheck Workspace",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"typecheck"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Build Client Dist",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"build:client"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Typecheck Workspace",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"typecheck"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Build Client Dist",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"build:client"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Typecheck Workspace",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"typecheck"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Build Client Dist",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"build:client"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Typecheck Workspace",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"typecheck"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Git Branch",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"branch",
+				"--show-current"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Git Status Short",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"status",
+				"--short"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Git Status Before Commit",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"status",
+				"--short"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Git Add All",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"add",
+				"-A"
+			],
+			"problemMatcher": []
+		}
+	]
 }

@@ -40,6 +40,12 @@ export function bindInput(
       return
     } // end if typing in editable field
 
+    if (event.code === 'F2' && !event.repeat) {
+      input.toggleWorldMapPending = true
+      event.preventDefault()
+      return
+    } // end if world map toggle key
+
     if (isInputBlocked()) {
       if (shouldPreventDefault(event.code)) {
         event.preventDefault()

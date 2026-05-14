@@ -552,6 +552,25 @@ For any part stat category not implemented yet, use placeholder values that are 
 
 ---
 
+## Ticket 0E — Fullscreen World Map Overlay (F2)
+Copilot status: ready for approval
+Developer status:
+
+### Implementation Notes
+
+Implemented a fullscreen world map overlay toggle on F2 that renders above all other visuals.
+
+Delivered behavior:
+
+* F2 toggles map on and off at runtime
+* Map covers full viewport with opaque black ground for contrast
+* Player renders as a green directional arrow in real time
+* Enemies render as red directional arrows in real time
+* City and town labels render as text on the map
+* Overlay takes visual precedence while active and returns to underlying gameplay view when closed
+
+---
+
 # 🧱 PHASE 1 — CORE WORLD TRUTH
 
 ---
@@ -848,6 +867,10 @@ Never throw missing-audio errors.
 ---
 
 ## Ticket 6 — Weight Factor Calculation
+Copilot status: Complete
+Developer status: Approved
+
+Notes: Implemented authoritative Ticket 6 formula in runtime UI/debug paths using movement.ratedLoad from the current movement archetype profile.
 
 Implement:
 
@@ -859,6 +882,10 @@ weightFactor = 1 / (1 + loadRatio)
 ---
 
 ## Ticket 7 — Apply Weight to Ground Movement
+Copilot status: Complete
+Developer status: Approved
+
+Notes: Applied Ticket 6 weightFactor to grounded turn rate, acceleration/deceleration response, and reverse/strafe velocity caps in runtime movement update.
 
 Apply to:
 
@@ -871,16 +898,20 @@ Apply to:
 ---
 
 ## Ticket 8 — Flight Weight Restriction
-Copilot status: ready for approval
-Developer status: pending
+Copilot status: Complete
+Developer status: Approved
 
-Notes: Rotor/helicopter flight part prototype now uses weighted lift checks, weighted vertical takeoff timing, and rotor-count scaling for stability and energy/heat usage.
+Notes: Rotor/helicopter flight part prototype now uses weighted lift checks, weighted vertical takeoff timing, and rotor-count scaling for stability and energy/heat usage. Runtime now blocks takeoff and forces grounded state when current total weight exceeds lift capacity.
 
 * overweight disables flight
 
 ---
 
 ## Ticket 9 — Stagger Resistance from Weight
+Copilot status: Complete
+Developer status: Approved
+
+Notes: Added authoritative weight resistance formula helper and surfaced live stagger resistance values in runtime debug and player.stagger command output.
 
 Implement:
 
@@ -895,6 +926,10 @@ weightResistance = totalWeight / (totalWeight + 1000)
 ---
 
 ## Ticket 10 — Weapon Heat Generation
+Copilot status: ready for approval
+Developer status: pending
+
+Notes: Added per-shot weapon heat generation with an explicit `heatPerShot` override path and a runtime-derived fallback formula when the override is omitted.
 
 Heat per shot.
 

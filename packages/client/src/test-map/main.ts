@@ -48,6 +48,7 @@ import { TEST_MAP_NAVIGATION_POIS } from './scene-layout.js'
 import { createSprites } from './sprites.js'
 import { createThreeRenderSystem } from './three-render.js'
 import { createUpdateState, updateFrame } from './update.js'
+import { createWorldMapOverlay } from './world-map-overlay.js'
 import { createWorldCollisionWorld, isPlayerBlocked, PLAYER_COLLISION_HEIGHT } from './world-collision.js'
 import type { AudioCategory, AudioVolumeChannel } from './types.js'
 import type { WorldPosition } from './types.js'
@@ -378,6 +379,13 @@ function startTestMap(): void {
     mapData,
     sprites
   })
+  const worldMapOverlay = createWorldMapOverlay({
+    mapData,
+    sprites,
+    pois: TEST_MAP_NAVIGATION_POIS,
+    mapWidth: MAP_WIDTH,
+    mapHeight: MAP_HEIGHT
+  })
   const player = createPlayer()
   const input = createInputState()
   const updateState = createUpdateState()
@@ -387,6 +395,7 @@ function startTestMap(): void {
   let isPaused = false
   let isConsoleOpen = false
   let isNavigationMenuOpen = false
+  let isWorldMapVisible = false
   let consoleResumeOnClose = false
   let queuedEnemySpawn: EnemyDefinitionConfig | null = null
   let isEditorModalOpen = false
@@ -811,6 +820,24 @@ function startTestMap(): void {
       speedModifier: 1.05,
       energyUse: 1.35,
       activeAbilities: ['Rotor flight assist enabled']
+    },
+    'basic.rotor.tri': {
+      partId: 'basic.rotor.tri',
+      partType: 'Utility',
+      name: 'Tri-Rotor Flight Pack',
+      weight: 126,
+      PDEF: 10,
+      EDEF: 12,
+      energyDrain: 6.5,
+      heatGeneration: 2,
+      liftCapacity: 2125,
+      flightType: 'rotor',
+      rotorCount: 3,
+      verticalTakeoffTime: 3.6,
+      flightStability: 1.45,
+      speedModifier: 1.08,
+      energyUse: 1.3,
+      activeAbilities: ['Rotor flight assist enabled']
     }
   }
 
@@ -899,27 +926,48 @@ function startTestMap(): void {
     return Math.ceil(Math.max(0, weapon.clipSize) * Math.max(0, weapon.ammoResourcePerRound))
   } // end function getWeaponReloadCost
 
+  const getWeaponHeatPerShot = (weapon: PlayerWeaponDefinition): number => {
+    if (Number.isFinite(weapon.heatPerShot)) {
+      return Math.max(0, Number(weapon.heatPerShot))
+    }
+
+    const baseShotPower = Math.max(1, weapon.damagePerShot * Math.max(1, weapon.projectileCount))
+    const weaponTypeMultiplier = weapon.weaponType === 'missile' ? 0.24 : 0.12
+    return Math.max(0.5, baseShotPower * weaponTypeMultiplier)
+  } // end function getWeaponHeatPerShot
+
+  const applyWeaponHeatGain = (weapon: PlayerWeaponDefinition): number => {
+    const heatGain = getWeaponHeatPerShot(weapon) * Math.max(0, devHeatMultiplier)
+    devLastHeatGain = heatGain
+    devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + heatGain)
+    return heatGain
+  } // end function applyWeaponHeatGain
+
   const canAffordWeaponReload = (weapon: PlayerWeaponDefinition): boolean => {
     return universalAmmoResource >= getWeaponReloadCost(weapon)
   } // end function canAffordWeaponReload
 
   const tryStartWeaponReload = (): void => {
     if (isReloading) {
+      announceBlockedAction('reload-in-progress', 'Reload already in progress.')
       return
     } // end if already reloading
 
     if (!canUseRangedSubsystem()) {
       audio.playNegativeActionTone()
+      announceBlockedAction('reload-ranged-offline', 'Cannot reload. Right arm or right hand is offline.')
       return
     } // end if ranged subsystem is offline
 
     if (playerWeapon.ammoInClip >= playerWeapon.clipSize) {
+      announceBlockedAction('reload-clip-full', 'Clip already full.')
       return
     } // end if clip already full
 
     const reloadCost = getWeaponReloadCost(playerWeapon)
     if (reloadCost <= 0 || !canAffordWeaponReload(playerWeapon)) {
       audio.playNegativeActionTone()
+      announceBlockedAction('reload-ammo-low', 'Cannot reload. Not enough universal ammo.')
       return
     } // end if not enough universal ammo for reload
 
@@ -984,6 +1032,24 @@ function startTestMap(): void {
     return value.toFixed(fractionDigits)
   } // end function formatLoadoutNumber
 
+  const calculateWeightFactor = (totalWeight: number, ratedLoadRaw: number): {
+    ratedLoad: number
+    loadRatio: number
+    weightFactor: number
+  } => {
+    const ratedLoad = Math.max(1, ratedLoadRaw)
+    const loadRatio = totalWeight / ratedLoad
+    return {
+      ratedLoad,
+      loadRatio,
+      weightFactor: 1 / (1 + loadRatio)
+    }
+  } // end function calculateWeightFactor
+
+  const calculateWeightResistance = (totalWeight: number): number => {
+    return totalWeight / (totalWeight + 1000)
+  } // end function calculateWeightResistance
+
   const getLoadoutPartByView = (viewId: LoadoutViewId): DevPartState | null => {
     const view = LOADOUT_SLOT_VIEWS.find((entry) => entry.id === viewId)
     if (!view?.slot) {
@@ -997,9 +1063,11 @@ function startTestMap(): void {
     const movementPart = getDevPartState('Movement')
     const utility2Part = getDevPartState('Utility2')
     const movementProfile = getCurrentMovementArchetypeProfile()
-    const ratedLoad = Math.max(1, movementProfile.ratedLoad)
-    const loadRatio = stats.totalWeight / ratedLoad
-    const weightFactor = 1 / (1 + loadRatio)
+    const {
+      ratedLoad,
+      loadRatio,
+      weightFactor
+    } = calculateWeightFactor(stats.totalWeight, movementProfile.ratedLoad)
     const forwardSpeed = movementProfile.maxForwardSpeed
     const reverseSpeed = movementProfile.maxReverseSpeed
     const strafeSpeed = movementProfile.maxStrafeSpeed
@@ -1012,8 +1080,8 @@ function startTestMap(): void {
       2.4,
       9.5
     )
-    const flightEnabled = (utility2Part?.online ?? false) && liftCapacity >= stats.totalWeight
-    const staggerResistance = stats.totalWeight / (stats.totalWeight + 1000)
+    const flightEnabled = canEngageFlightSubsystem()
+    const staggerResistance = calculateWeightResistance(stats.totalWeight)
 
     let totalPassiveBonuses = 0
     let totalActiveSystems = 0
@@ -1670,7 +1738,21 @@ function startTestMap(): void {
     await pauseGame()
   } // end function togglePause
 
-  bindInput(input, audio, () => isPaused || isWeaponEditorOpen || isConsoleOpen || isNavigationMenuOpen)
+  bindInput(input, audio, () => isPaused || isWeaponEditorOpen || isConsoleOpen || isNavigationMenuOpen || isWorldMapVisible)
+
+  const primeAudioFromUserGesture = (): void => {
+    const unlock = (): void => {
+      void audio.ensureAudio().catch(() => undefined)
+      document.removeEventListener('pointerdown', unlock)
+      document.removeEventListener('keydown', unlock)
+      document.removeEventListener('touchstart', unlock)
+    }
+    document.addEventListener('pointerdown', unlock, { passive: true })
+    document.addEventListener('keydown', unlock)
+    document.addEventListener('touchstart', unlock, { passive: true })
+  } // end function primeAudioFromUserGesture
+
+  primeAudioFromUserGesture()
 
   const categoryToggleBindings: Array<[NavigationCategoryId, HTMLElement | null]> = [
     ['cities', navCategoryCitiesButtonElement],
@@ -1759,7 +1841,7 @@ function startTestMap(): void {
   updateNavigationOverlayVisibility(false)
 
   document.addEventListener('keydown', (event) => {
-    if (event.code !== 'KeyM' || event.repeat || isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen) {
+    if (event.code !== 'KeyM' || event.repeat || isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen || isWorldMapVisible) {
       return
     } // end if not menu toggle key or conflicting modal state
 
@@ -1768,7 +1850,7 @@ function startTestMap(): void {
   })
 
   document.addEventListener('keydown', (event) => {
-    if (event.code !== 'Escape' || event.repeat) {
+    if (event.code !== 'Escape' || event.repeat || isWorldMapVisible) {
       return
     } // end if not pause toggle key
 
@@ -1798,7 +1880,7 @@ function startTestMap(): void {
   })
 
   document.addEventListener('keydown', (event) => {
-    if (event.code !== 'Backquote' || event.repeat || isEditorModalOpen || isWeaponEditorOpen || isNavigationMenuOpen) {
+    if (event.code !== 'Backquote' || event.repeat || isEditorModalOpen || isWeaponEditorOpen || isNavigationMenuOpen || isWorldMapVisible) {
       return
     } // end if not developer console key or another editor is open
 
@@ -1812,7 +1894,7 @@ function startTestMap(): void {
   })
 
   document.addEventListener('keydown', (event) => {
-    if (event.repeat || isEditorModalOpen || isWeaponEditorOpen) {
+    if (event.repeat || isEditorModalOpen || isWeaponEditorOpen || isWorldMapVisible) {
       return
     } // end if editor modal blocks debug overlay shortcuts
 
@@ -1953,6 +2035,58 @@ function startTestMap(): void {
     return nextHeight
   } // end function applySharedFlightHeight
 
+  const setPlayerAltitude = (value: number): number => {
+    const nextAltitude = Math.max(0, value)
+    player.z = nextAltitude
+
+    if (nextAltitude <= 0.0001) {
+      player.z = 0
+      player.flightState = 'grounded'
+      player.isFlying = false
+      if (player.isBoosting) {
+        player.isBoosting = false
+        if (audio.isAudioStarted()) {
+          audio.stopBoostAudio()
+        }
+      }
+    } else {
+      if (player.flightState === 'grounded') {
+        player.flightState = 'airborne'
+      }
+      player.isFlying = true
+    }
+
+    syncTrackedPlayerPosition()
+    return player.z ?? 0
+  } // end function setPlayerAltitude
+
+  const setPlayerFlightState = (rawValue: string): string => {
+    const normalized = rawValue.trim().toLowerCase()
+    if (normalized === 'grounded') {
+      setPlayerAltitude(0)
+      player.flightState = 'grounded'
+      player.isFlying = false
+      player.isBoosting = false
+      if (audio.isAudioStarted()) {
+        audio.stopBoostAudio()
+        audio.stopFlightLoop({ quickSpinDown: true })
+      }
+      return player.flightState
+    }
+
+    if (normalized === 'ascending' || normalized === 'airborne' || normalized === 'descending') {
+      player.flightState = normalized
+      player.isFlying = true
+      if ((player.z ?? 0) <= 0) {
+        player.z = Math.max(0.1, getSharedFlightHeight())
+      }
+      syncTrackedPlayerPosition()
+      return player.flightState
+    }
+
+    throw new Error('player.flightState must be grounded, ascending, airborne, or descending.')
+  } // end function setPlayerFlightState
+
   const syncTrackedPlayerPosition = (): void => {
     previousPlayerX = player.x
     previousPlayerY = player.y
@@ -1977,6 +2111,30 @@ function startTestMap(): void {
     } // end if falsy token
     throw new Error(`Expected boolean value, received "${rawValue}".`)
   } // end function parseBooleanValue
+
+  const blockedActionSpeechTimestamps = new Map<string, number>()
+
+  const announceBlockedAction = (id: string, message: string, minIntervalMs = 900): void => {
+    if (!('speechSynthesis' in window)) {
+      return
+    } // end if speech synthesis unavailable
+
+    const now = performance.now()
+    const lastSpokenAt = blockedActionSpeechTimestamps.get(id) ?? Number.NEGATIVE_INFINITY
+    if ((now - lastSpokenAt) < minIntervalMs) {
+      return
+    } // end if announcement is still cooling down
+
+    blockedActionSpeechTimestamps.set(id, now)
+    if (runtimeDebugSpeechStatusElement instanceof HTMLElement) {
+      runtimeDebugSpeechStatusElement.textContent = `Action blocked: ${message}`
+    } // end if screen-reader status element exists
+    const utterance = new SpeechSynthesisUtterance(message)
+    utterance.rate = 1
+    utterance.pitch = 1
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utterance)
+  } // end function announceBlockedAction
 
   const speakPercent = (label: string, value: number, maxValue: number): void => {
     if (!('speechSynthesis' in window)) {
@@ -2060,42 +2218,23 @@ function startTestMap(): void {
 
   const formatConsoleValue = (value: unknown): string => {
     if (typeof value === 'number') {
-      return Number.isInteger(value) ? String(value) : value.toFixed(3)
-    } // end if numeric value
+      return Number.isFinite(value) ? value.toString() : 'NaN'
+    }
     if (typeof value === 'boolean') {
       return value ? 'true' : 'false'
-    } // end if boolean value
+    }
     if (typeof value === 'string') {
       return value
-    } // end if string value
-    return JSON.stringify(value, null, 2)
+    }
+    if (value === null || value === undefined) {
+      return String(value)
+    }
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return String(value)
+    }
   } // end function formatConsoleValue
-
-  const setPlayerAltitude = (value: number): number => {
-    const nextAltitude = Math.max(0, value)
-    player.z = nextAltitude
-    player.isFlying = nextAltitude > 0
-    player.flightState = nextAltitude > 0 ? 'airborne' : 'grounded'
-    syncTrackedPlayerPosition()
-    return nextAltitude
-  } // end function setPlayerAltitude
-
-  const setPlayerFlightState = (value: string): string => {
-    const normalized = value.trim().toLowerCase()
-    if (!['grounded', 'ascending', 'airborne', 'descending'].includes(normalized)) {
-      throw new Error('player.flightState must be grounded, ascending, airborne, or descending.')
-    } // end if invalid flight state
-
-    player.flightState = normalized as typeof player.flightState
-    player.isFlying = normalized !== 'grounded'
-    if (!player.isFlying) {
-      player.z = 0
-    } else if ((player.z ?? 0) <= 0) {
-      player.z = getSharedFlightHeight()
-    } // end if state requires airborne altitude
-    syncTrackedPlayerPosition()
-    return player.flightState ?? 'grounded'
-  } // end function setPlayerFlightState
 
   const placePlayer = (nextX: number, nextY: number, nextZ: number = player.z ?? 0): string => {
     const clampedX = Math.max(PLAYER_RADIUS + 0.01, Math.min(MAP_WIDTH - PLAYER_RADIUS - 0.01, nextX))
@@ -2287,6 +2426,14 @@ function startTestMap(): void {
 
   const canUseFlightSubsystem = (): boolean => areDevPartsOperational('Utility2', 'FlightSystem')
 
+  const canEngageFlightSubsystem = (): boolean => {
+    if (!canUseFlightSubsystem()) {
+      return false
+    }
+    const flightRuntimeProfile = getFlightRuntimeProfile()
+    return flightRuntimeProfile.liftCapacity >= getDevTotalWeight()
+  } // end function canEngageFlightSubsystem
+
   interface FlightRuntimeProfile {
     mode: 'jet' | 'rotor'
     rotorCount: number
@@ -2368,9 +2515,13 @@ function startTestMap(): void {
           audio.stopBoostAudio()
         }
       }
+      if (input.boostTogglePending) {
+        announceBlockedAction('boost-movement-offline', 'Cannot boost. Movement subsystem offline.')
+      }
     }
 
-    if (!canUseFlightSubsystem()) {
+    if (!canEngageFlightSubsystem()) {
+      const attemptedFlightToggle = input.flightTogglePending
       input.flightTogglePending = false
       if (player.isBoosting) {
         player.isBoosting = false
@@ -2378,11 +2529,17 @@ function startTestMap(): void {
           audio.stopBoostAudio()
         }
       }
+      if (attemptedFlightToggle && canUseFlightSubsystem()) {
+        announceBlockedAction('flight-overweight', 'Cannot fly. Mech weight exceeds lift capacity.')
+      } else if (attemptedFlightToggle) {
+        announceBlockedAction('flight-offline', 'Cannot fly. Flight subsystem offline.')
+      }
       if (player.isFlying || player.flightState !== 'grounded' || (player.z ?? 0) > 0) {
         player.isFlying = false
         player.flightState = 'grounded'
         player.z = 0
         syncTrackedPlayerPosition()
+        announceBlockedAction('flight-grounded', 'Flight disabled. Returning to ground.')
         if (audio.isAudioStarted()) {
           audio.stopFlightLoop({ quickSpinDown: true })
         }
@@ -2547,9 +2704,13 @@ function startTestMap(): void {
   const getRuntimeDebugOverlayLines = (): string[] => {
     const headingDegrees = normalizeDegrees((player.angle * 180) / Math.PI)
     const stats = syncAuthoritativeMechStats()
-    const ratedLoad = 100
-    const weightFactor = stats.totalWeight / Math.max(1, ratedLoad)
     const movementProfile = getCurrentMovementArchetypeProfile()
+    const {
+      ratedLoad,
+      loadRatio,
+      weightFactor
+    } = calculateWeightFactor(stats.totalWeight, movementProfile.ratedLoad)
+    const staggerResistance = calculateWeightResistance(stats.totalWeight)
     const flightRuntimeProfile = getFlightRuntimeProfile()
     const movementSpeedLimit = player.isFlying
       ? PLAYER_FLIGHT_SPEED * flightRuntimeProfile.speedMultiplier
@@ -2575,7 +2736,9 @@ function startTestMap(): void {
       `Current Heat / Max Heat: ${devCurrentHeat.toFixed(1)} / ${stats.maxHeat.toFixed(1)}`,
       `Current Energy / Max Energy: ${player.ep.toFixed(1)} / ${stats.maxEP.toFixed(1)}`,
       `Total Weight: ${stats.totalWeight.toFixed(1)}`,
-      `Weight Factor: ${weightFactor.toFixed(3)} (TODO Ticket 6 formula)`,
+      `Rated Load: ${ratedLoad.toFixed(1)}`,
+      `Load Ratio: ${loadRatio.toFixed(3)}`,
+      `Weight Factor: ${weightFactor.toFixed(3)}`,
       `Heat State: ${getHeatStateLabel()}`,
       `Energy State: ${getEnergyStateLabel()}`,
       `Movement State: ${getPlayerMovementStateLabel()}`,
@@ -2594,7 +2757,7 @@ function startTestMap(): void {
       'DEFENSE',
       `Total PDEF: ${stats.totalPDEF.toFixed(1)}`,
       `Total EDEF: ${stats.totalEDEF.toFixed(1)}`,
-      'Stagger Resistance: TODO (Ticket 9)',
+      `Stagger Resistance: ${staggerResistance.toFixed(3)}`,
       '',
       'PERFORMANCE',
       `FPS: ${devFps.toFixed(1)}`,
@@ -3149,7 +3312,13 @@ function startTestMap(): void {
       syntax: 'part.attach <partId> <slot>',
       description: 'Attach a placeholder part identifier to the specified slot (Movement infers mobility by partId text).',
       helpPath: ['Gameplay', 'Session'],
-      examples: ['part.attach Wheels Movement', 'part.attach basic.jetpack Utility2', 'part.attach basic.rotor.basic Utility2', 'part.attach basic.rotor.dual Utility2']
+      examples: [
+        'part.attach Wheels Movement',
+        'part.attach basic.jetpack Utility2',
+        'part.attach basic.rotor.basic Utility2',
+        'part.attach basic.rotor.dual Utility2',
+        'part.attach basic.rotor.tri Utility2'
+      ]
     },
     {
       syntax: 'part.detach <slot>',
@@ -3885,8 +4054,9 @@ function startTestMap(): void {
     } // end if player.damage command
 
     if (normalizedCommand === 'player.stagger') {
+      const staggerResistance = calculateWeightResistance(getDevTotalWeight())
       nextEventTag('Player stagger triggered (placeholder)')
-      return [`player.stagger: triggered with scale ${devStaggerScale.toFixed(2)} (TODO hook for stagger system).`]
+      return [`player.stagger: triggered with scale ${devStaggerScale.toFixed(2)}, resistance ${staggerResistance.toFixed(3)} (TODO hook for stagger system).`]
     } // end if player.stagger command
 
     if (normalizedCommand === 'player.overheat') {
@@ -4284,6 +4454,9 @@ function startTestMap(): void {
       'window.mechDev.execute("set audio.enemies.volume 0.4")',
       'window.mechDev.execute("set audio.energy.volume 1.6")',
       'window.mechDev.execute("set audio.music.volume 0.2")',
+      'window.mechDev.execute("part.attach basic.rotor.basic Utility2")',
+      'window.mechDev.execute("part.attach basic.rotor.dual Utility2")',
+      'window.mechDev.execute("part.attach basic.rotor.tri Utility2")',
       'window.mechDev.execute("set player.hp 150")',
       'window.mechDev.execute("set player.ep 75")',
       'window.mechDev.execute("music suspense")',
@@ -4334,9 +4507,23 @@ function startTestMap(): void {
       devFps = devFps <= 0 ? sampledFps : (devFps * 0.9) + (sampledFps * 0.1)
     } // end if FPS sample is valid
 
+    if (input.toggleWorldMapPending) {
+      input.toggleWorldMapPending = false
+      isWorldMapVisible = !isWorldMapVisible
+      worldMapOverlay.setVisible(isWorldMapVisible)
+    } // end if world map visibility changed
+
     if (isPaused) {
       updateRuntimeDebugOverlay()
       updatePauseDebugTabs()
+      if (isWorldMapVisible) {
+        const pausedCombatRender = getCombatRenderState(combatWorld)
+        worldMapOverlay.renderFrame({
+          player,
+          enemies: pausedCombatRender.enemies,
+          tanks: pausedCombatRender.tanks
+        })
+      } // end if world map remains visible while paused
       requestAnimationFrame(gameLoop)
       return
     } // end if game paused
@@ -4376,7 +4563,44 @@ function startTestMap(): void {
       * Math.max(0, devMovementScale)
       * Math.max(0.1, devTractionMultiplier)
       / Math.max(0.1, devDriftMultiplier)
+    const movementProfile = getCurrentMovementArchetypeProfile()
+    const currentTotalWeight = getDevMechStatsSnapshot().totalWeight
+    const movementWeightFactor = calculateWeightFactor(currentTotalWeight, movementProfile.ratedLoad).weightFactor
     const flightRuntimeProfile = getFlightRuntimeProfile()
+    const canEngageFlight = canUseFlightSubsystem() && flightRuntimeProfile.liftCapacity >= currentTotalWeight
+    const minFlightEngageEnergy = Math.max(1, flightRuntimeProfile.energyUsePerSecond * 0.5)
+    const minBoostEnergy = Math.max(1, (flightRuntimeProfile.energyUsePerSecond + BOOST_EP_DRAIN_PER_SECOND) * 0.25)
+
+    if (input.flightTogglePending && player.flightState === 'grounded') {
+      if (!canUseFlightSubsystem()) {
+        input.flightTogglePending = false
+        audio.playNegativeActionTone()
+        announceBlockedAction('flight-offline', 'Cannot fly. Flight subsystem offline.')
+      } else if (flightRuntimeProfile.liftCapacity < currentTotalWeight) {
+        input.flightTogglePending = false
+        audio.playNegativeActionTone()
+        announceBlockedAction('flight-overweight', 'Cannot fly. Mech weight exceeds lift capacity.')
+      } else if (player.ep < minFlightEngageEnergy) {
+        input.flightTogglePending = false
+        audio.playNegativeActionTone()
+        announceBlockedAction('flight-energy-low', 'Cannot fly. Not enough energy.')
+      }
+    } // end if takeoff was requested while grounded
+
+    if (input.boostTogglePending && !player.isBoosting) {
+      const canToggleBoost = player.isFlying
+        && (player.flightState === 'ascending' || player.flightState === 'airborne')
+      if (!canToggleBoost) {
+        input.boostTogglePending = false
+        audio.playNegativeActionTone()
+        announceBlockedAction('boost-unavailable', 'Cannot boost while grounded.')
+      } else if (player.ep < minBoostEnergy) {
+        input.boostTogglePending = false
+        audio.playNegativeActionTone()
+        announceBlockedAction('boost-energy-low', 'Cannot boost. Not enough energy.')
+      }
+    } // end if boost toggle-on was requested
+
     const flightSpeedLimit = PLAYER_FLIGHT_SPEED * flightRuntimeProfile.speedMultiplier
 
     updateFrame(
@@ -4385,6 +4609,8 @@ function startTestMap(): void {
         input,
         audio,
         state: updateState,
+        weightFactor: movementWeightFactor,
+        canEngageFlight,
         flightAltitude: getSharedFlightHeight(),
         flightConfig: {
           mode: flightRuntimeProfile.mode,
@@ -4393,7 +4619,7 @@ function startTestMap(): void {
           maxHorizontalSpeed: flightSpeedLimit
         },
         collisionWorld,
-        movementProfile: getCurrentMovementArchetypeProfile()
+        movementProfile
       },
       movementDeltaSeconds
     )
@@ -4433,6 +4659,7 @@ function startTestMap(): void {
         } // end if stopping boost audio on EP depletion
       } // end if was boosting
       player.flightState = 'descending'
+      announceBlockedAction('flight-energy-depleted', 'Energy depleted. Landing.')
       if (audio.isAudioStarted()) {
         audio.stopFlightLoop({ quickSpinDown: true })
       } // end if stopping flight loop on EP depletion
@@ -4623,12 +4850,18 @@ function startTestMap(): void {
       hasPlayedEmptyClipForCurrentTriggerPull = false
     } // end if trigger is released
 
+    if (shouldAttemptShot && isReloading) {
+      announceBlockedAction('fire-reloading', 'Cannot fire while reloading.')
+    }
+
     if (shouldAttemptShot && !isReloading && playerFireCooldownSeconds <= 0) {
       if (!canUseRangedSubsystem()) {
         audio.playNegativeActionTone()
+        announceBlockedAction('fire-ranged-offline', 'Cannot fire. Right arm or right hand is offline.')
       } else if (playerWeapon.ammoInClip <= 0) {
         if (!hasPlayedEmptyClipForCurrentTriggerPull) {
           audio.fireGunshot(EMPTY_CLIP_SOUND_PATH)
+          announceBlockedAction('fire-empty-clip', 'Cannot fire. Clip is empty.')
           hasPlayedEmptyClipForCurrentTriggerPull = true
         } // end if empty clip sound has not played for this trigger pull
       } else {
@@ -4640,6 +4873,7 @@ function startTestMap(): void {
         const lockedTargetId = lockUpdate.lockedTank?.id ?? null
         if (missileRequiresLock && (!missileLockConfirmed || lockedTargetId === null)) {
           audio.playNegativeActionTone()
+          announceBlockedAction('fire-missile-lock', 'Cannot fire missile. Lock is not confirmed.')
         } else {
           audio.fireGunshot(playerWeapon.fireSoundPath)
           updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
@@ -4666,6 +4900,7 @@ function startTestMap(): void {
             )
           } // end for each missile in shot
           playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
+          applyWeaponHeatGain(playerWeapon)
         } // end if missile shot blocked or fired
       } else {
         audio.fireGunshot(playerWeapon.fireSoundPath)
@@ -4704,6 +4939,7 @@ function startTestMap(): void {
           )
         } // end if locked target for accuracy cone
         playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
+        applyWeaponHeatGain(playerWeapon)
       } // end if missile or ballistic firing mode
       } // end if weapon has ammo in clip and subsystem is online
     } // end if fire input and cooldown allow
@@ -4712,6 +4948,13 @@ function startTestMap(): void {
       input.meleePending = false
       if (!canUseMeleeSubsystem()) {
         audio.playNegativeActionTone()
+        announceBlockedAction('melee-offline', 'Cannot use melee. Left arm or left hand is offline.')
+      } else if (isReloading) {
+        announceBlockedAction('melee-reloading', 'Cannot use melee while reloading.')
+      } else if (!equippedMeleeWeapon) {
+        announceBlockedAction('melee-unequipped', 'No melee weapon equipped.')
+      } else if (playerMeleeCooldownSeconds > 0) {
+        announceBlockedAction('melee-cooldown', 'Melee is cooling down.')
       } else if (!isReloading && equippedMeleeWeapon && playerMeleeCooldownSeconds <= 0) {
         const soundPath = equippedMeleeWeapon.swingSoundPaths[Math.floor(Math.random() * equippedMeleeWeapon.swingSoundPaths.length)]
           ?? equippedMeleeWeapon.swingSoundPaths[0]
@@ -4827,15 +5070,23 @@ function startTestMap(): void {
     previousPlayerZ = player.z ?? 0
     const muzzleFlashAlpha = updateState.muzzleFlashTimer / MUZZLE_FLASH_DURATION
 
-    threeRenderer.renderFrame({
-      enemies: combatRender.enemies,
-      tanks: combatRender.tanks,
-      bullets: combatRender.bullets,
+    if (!isWorldMapVisible) {
+      threeRenderer.renderFrame({
+        enemies: combatRender.enemies,
+        tanks: combatRender.tanks,
+        bullets: combatRender.bullets,
+        player,
+        muzzleFlashAlpha,
+        lockedTankId: targetLockState.lockedTankId,
+        lockOnWindowWidthPercent: playerWeapon.lockOnWindowWidthPercent,
+        lockOnWindowHeightPercent: playerWeapon.lockOnWindowHeightPercent
+      })
+    } // end if map overlay is hidden
+
+    worldMapOverlay.renderFrame({
       player,
-      muzzleFlashAlpha,
-      lockedTankId: targetLockState.lockedTankId,
-      lockOnWindowWidthPercent: playerWeapon.lockOnWindowWidthPercent,
-      lockOnWindowHeightPercent: playerWeapon.lockOnWindowHeightPercent
+      enemies: combatRender.enemies,
+      tanks: combatRender.tanks
     })
 
     requestAnimationFrame(gameLoop)

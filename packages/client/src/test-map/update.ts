@@ -58,6 +58,8 @@ export interface UpdateEnvironment {
   input: InputState
   audio: AudioController
   state: UpdateState
+  weightFactor: number
+  canEngageFlight: boolean
   flightAltitude: number
   flightConfig: FlightRuntimeConfig
   collisionWorld: WorldCollisionWorld
@@ -122,6 +124,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   } // end if strafe velocity is uninitialized
 
   const movementProfile = environment.movementProfile
+  const weightFactor = clamp(environment.weightFactor, 0, 1)
   const flightConfig = environment.flightConfig
   const { input, player, audio, state } = environment
   const moveSpeed = (environment.player.isBoosting ?? false)
@@ -155,7 +158,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
         turnScale = 0.95
       }
 
-      player.angle += turnInput * movementProfile.turnRate * turnScale * deltaSeconds
+      player.angle += turnInput * movementProfile.turnRate * weightFactor * turnScale * deltaSeconds
     }
   } // end if turn input
 
@@ -168,17 +171,24 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   if (input.flightTogglePending) {
     input.flightTogglePending = false
     if (player.flightState === 'grounded') {
-      state.rotorSpinupElapsedSeconds = 0
-      state.rotorSpinNormalized = 0
-      player.flightState = 'ascending'
-      player.isFlying = true
-      if (audio.isAudioStarted()) {
-        audio.startFlightLoop({
-          flightType: flightConfig.mode,
-          rotorCount: flightConfig.rotorCount,
-          spinUpSeconds: flightConfig.spinUpSeconds
-        })
-      } // end if flight loop should start
+      if (environment.canEngageFlight) {
+        state.rotorSpinupElapsedSeconds = 0
+        state.rotorSpinNormalized = 0
+        player.flightState = 'ascending'
+        player.isFlying = true
+        if (audio.isAudioStarted()) {
+          audio.startFlightLoop({
+            flightType: flightConfig.mode,
+            rotorCount: flightConfig.rotorCount,
+            spinUpSeconds: flightConfig.spinUpSeconds
+          })
+        } // end if flight loop should start
+      } else {
+        player.flightState = 'grounded'
+        player.isFlying = false
+        state.rotorSpinupElapsedSeconds = 0
+        state.rotorSpinNormalized = 0
+      }
     } else {
       // Cancel boost before descent begins
       if (player.isBoosting) {
@@ -396,15 +406,17 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   const forwardAxis = (input.moveForward ? 1 : 0) + (input.moveBack ? -1 : 0)
   const strafeAxis = (input.strafeRight ? 1 : 0) + (input.strafeLeft ? -1 : 0)
   const flightInputAxisMagnitude = Math.min(1, Math.hypot(forwardAxis, strafeAxis))
+  const effectiveMaxReverseSpeed = movementProfile.maxReverseSpeed * weightFactor
+  const effectiveMaxStrafeSpeed = movementProfile.maxStrafeSpeed * weightFactor
 
   if (player.flightState === 'grounded') {
     const terrainPenalty = Math.max(0.1, movementProfile.terrainPenaltyMultiplier)
-    const effectiveAcceleration = movementProfile.groundAcceleration / terrainPenalty
-    const effectiveDeceleration = movementProfile.groundDeceleration / terrainPenalty
+    const effectiveAcceleration = (movementProfile.groundAcceleration * weightFactor) / terrainPenalty
+    const effectiveDeceleration = (movementProfile.groundDeceleration * weightFactor) / terrainPenalty
     const targetForwardVelocity = forwardAxis >= 0
       ? forwardAxis * movementProfile.maxForwardSpeed
-      : forwardAxis * movementProfile.maxReverseSpeed
-    const targetStrafeVelocity = strafeAxis * movementProfile.maxStrafeSpeed
+      : forwardAxis * effectiveMaxReverseSpeed
+    const targetStrafeVelocity = strafeAxis * effectiveMaxStrafeSpeed
     const accelerationStep = effectiveAcceleration * deltaSeconds
     const decelerationStep = effectiveDeceleration * deltaSeconds
 
@@ -506,17 +518,17 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   const maxGroundSpeed = Math.max(
     0.1,
     movementProfile.maxForwardSpeed,
-    movementProfile.maxReverseSpeed,
-    movementProfile.maxStrafeSpeed
+    effectiveMaxReverseSpeed,
+    effectiveMaxStrafeSpeed
   )
   const normalizedGroundSpeed = Math.min(1, groundedHorizontalSpeed / maxGroundSpeed)
   const normalizedForward = state.groundForwardVelocity >= 0
     ? Math.min(1, state.groundForwardVelocity / Math.max(0.1, movementProfile.maxForwardSpeed))
-    : -Math.min(1, Math.abs(state.groundForwardVelocity) / Math.max(0.1, movementProfile.maxReverseSpeed))
+    : -Math.min(1, Math.abs(state.groundForwardVelocity) / Math.max(0.1, effectiveMaxReverseSpeed))
   const targetForwardVelocity = forwardAxis >= 0
     ? forwardAxis * movementProfile.maxForwardSpeed
-    : forwardAxis * movementProfile.maxReverseSpeed
-  const targetStrafeVelocity = strafeAxis * movementProfile.maxStrafeSpeed
+    : forwardAxis * effectiveMaxReverseSpeed
+  const targetStrafeVelocity = strafeAxis * effectiveMaxStrafeSpeed
   const accelerating = (
     Math.abs(targetForwardVelocity) > Math.abs(state.groundForwardVelocity) + 0.05
     || Math.abs(targetStrafeVelocity) > Math.abs(state.groundStrafeVelocity) + 0.05

@@ -24,6 +24,7 @@ export function createInputState(): InputState {
     moveBack: false,
     strafeLeft: false,
     strafeRight: false,
+    toggleWorldMapPending: false,
     turnLeft: false,
     turnRight: false,
     lookUp: false,

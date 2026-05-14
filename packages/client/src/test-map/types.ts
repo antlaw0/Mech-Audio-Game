@@ -23,6 +23,7 @@ export interface InputState {
   moveBack: boolean
   strafeLeft: boolean
   strafeRight: boolean
+  toggleWorldMapPending: boolean
   turnLeft: boolean
   turnRight: boolean
   lookUp: boolean
@@ -200,6 +201,8 @@ export interface WeaponStats {
   ammoInClip: number
   /** Universal ammo resource consumed per round loaded into this weapon's clip. */
   ammoResourcePerRound: number
+  /** Optional explicit heat generated per trigger pull. Falls back to runtime-derived value when omitted. */
+  heatPerShot?: number
   /** Reload timeline that defines clip audio sequencing and synchronized servo automation. */
   reloadDefinition: WeaponReloadDefinition
 } // end interface WeaponStats
