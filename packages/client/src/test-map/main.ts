@@ -495,6 +495,7 @@ function startTestMap(): void {
   let devLastHitLocation = 'none'
   let devLastHeatGain = 0
   let devLastEnergyDrain = 0
+  let devLastActiveEnergyUseTimeMs = Number.NEGATIVE_INFINITY
   let devFps = 0
   let devPreviousSpeed = 0
   let devApproxAcceleration = 0
@@ -546,6 +547,10 @@ function startTestMap(): void {
     EDEF: number
     energyDrain: number
     energyCapacity?: number
+    idleEnergyRegen?: number
+    movingEnergyRegen?: number
+    flyingEnergyRegen?: number
+    regenDelay?: number
     heatCapacity?: number
     mobilityType?: string
     heatGeneration?: number
@@ -636,6 +641,10 @@ function startTestMap(): void {
       EDEF: 14,
       energyDrain: -6,
       energyCapacity: player.maxEp,
+      idleEnergyRegen: 6,
+      movingEnergyRegen: 4.2,
+      flyingEnergyRegen: 2.6,
+      regenDelay: 1500,
       powerOutput: player.maxEp,
       passiveBonuses: ['Idle EP regeneration enabled']
     },
@@ -1038,6 +1047,97 @@ function startTestMap(): void {
     return baseCooling * Math.max(0, devCoolingRate)
   } // end function getPassiveCoolingRatePerSecond
 
+  const getPassiveEnergyDrainPerSecond = (): number => {
+    let totalDrain = 0
+    for (const { slot, part } of getAllDevParts()) {
+      if (!part.online || !AGGREGATE_PART_SLOTS.has(slot)) {
+        continue
+      }
+      totalDrain += Math.max(0, part.energyDrain)
+    }
+    return totalDrain
+  } // end function getPassiveEnergyDrainPerSecond
+
+  const getEnergyRegenDelayMs = (): number => {
+    const generatorPart = getDevPartState('Generator')
+    if (!generatorPart.online || generatorPart.integrity <= 0) {
+      return Number.POSITIVE_INFINITY
+    }
+    return Math.max(0, generatorPart.regenDelay ?? 1500)
+  } // end function getEnergyRegenDelayMs
+
+  const getGeneratorEnergyRegenProfile = (): {
+    idle: number
+    moving: number
+    flying: number
+  } => {
+    const generatorPart = getDevPartState('Generator')
+    if (!generatorPart.online || generatorPart.integrity <= 0) {
+      return { idle: 0, moving: 0, flying: 0 }
+    }
+
+    const fallbackIdleRegen = Math.max(0, -(generatorPart.energyDrain ?? 0))
+    return {
+      idle: Math.max(0, generatorPart.idleEnergyRegen ?? fallbackIdleRegen),
+      moving: Math.max(0, generatorPart.movingEnergyRegen ?? (fallbackIdleRegen * 0.7)),
+      flying: Math.max(0, generatorPart.flyingEnergyRegen ?? (fallbackIdleRegen * 0.45))
+    }
+  } // end function getGeneratorEnergyRegenProfile
+
+  const isPlayerUsingMovingEnergyRegenMode = (): boolean => {
+    if (player.isFlying) {
+      return false
+    }
+
+    const planarSpeed = Math.hypot(devVelocityX, devVelocityY)
+    return planarSpeed > 0.2
+      || input.moveForward
+      || input.moveBack
+      || input.strafeLeft
+      || input.strafeRight
+      || input.turnLeft
+      || input.turnRight
+  } // end function isPlayerUsingMovingEnergyRegenMode
+
+  const getEnergyHeatMultiplier = (): number => {
+    const heatState = resolveHeatState(devCurrentHeat, devMaxHeat, devHeatState)
+    if (heatState === 'HOT') {
+      return 0.8
+    }
+    if (heatState === 'CRITICAL') {
+      return 0.55
+    }
+    if (heatState === 'DANGER') {
+      return 0.25
+    }
+    if (heatState === 'OVERHEAT') {
+      return 0
+    }
+    return 1
+  } // end function getEnergyHeatMultiplier
+
+  const getCurrentBaseEnergyRegenPerSecond = (): number => {
+    if (isOverheatShutdownActive()) {
+      return 0
+    }
+
+    const profile = getGeneratorEnergyRegenProfile()
+    if (player.isFlying) {
+      return profile.flying
+    }
+    if (isPlayerUsingMovingEnergyRegenMode()) {
+      return profile.moving
+    }
+    return profile.idle
+  } // end function getCurrentBaseEnergyRegenPerSecond
+
+  const getCurrentEnergyRegenPerSecond = (totalWeight: number, ratedLoad: number): number => {
+    const baseRegen = getCurrentBaseEnergyRegenPerSecond()
+    const weightFactor = calculateWeightFactor(totalWeight, ratedLoad).weightFactor
+    const heatMultiplier = getEnergyHeatMultiplier()
+    return baseRegen * weightFactor * heatMultiplier * Math.max(0, devEnergyRegenRate)
+  } // end function getCurrentEnergyRegenPerSecond
+
   const canAffordWeaponReload = (weapon: PlayerWeaponDefinition): boolean => {
     return universalAmmoResource >= getWeaponReloadCost(weapon)
   } // end function canAffordWeaponReload
@@ -1218,6 +1318,7 @@ function startTestMap(): void {
     )
     const flightEnabled = canEngageFlightSubsystem()
     const staggerResistance = calculateWeightResistance(stats.totalWeight)
+    const generatorRegenProfile = getGeneratorEnergyRegenProfile()
 
     let totalPassiveBonuses = 0
     let totalActiveSystems = 0
@@ -1239,7 +1340,8 @@ function startTestMap(): void {
       `Total EDEF: ${formatLoadoutNumber(stats.totalEDEF)}`,
       '',
       `Max Energy: ${formatLoadoutNumber(stats.maxEP)}`,
-      `Energy Regen: ${formatLoadoutNumber(devEnergyRegenRate, 2)}`,
+      `Generator Regen: idle ${formatLoadoutNumber(generatorRegenProfile.idle, 2)} move ${formatLoadoutNumber(generatorRegenProfile.moving, 2)} fly ${formatLoadoutNumber(generatorRegenProfile.flying, 2)}`,
+      `Energy Regen Multiplier: ${formatLoadoutNumber(devEnergyRegenRate, 2)}`,
       '',
       `Max Heat: ${formatLoadoutNumber(stats.maxHeat)}`,
       `Cooling Rate: ${formatLoadoutNumber(getPassiveCoolingRatePerSecond(), 2)}`,
@@ -2512,6 +2614,10 @@ function startTestMap(): void {
       EDEF: readNumber(safeSource.EDEF, fallback.EDEF),
       energyDrain: readNumber(safeSource.energyDrain, fallback.energyDrain),
       energyCapacity: safeSource.energyCapacity === undefined ? undefined : readNumber(safeSource.energyCapacity, 0),
+      idleEnergyRegen: safeSource.idleEnergyRegen === undefined ? undefined : readNumber(safeSource.idleEnergyRegen, 0),
+      movingEnergyRegen: safeSource.movingEnergyRegen === undefined ? undefined : readNumber(safeSource.movingEnergyRegen, 0),
+      flyingEnergyRegen: safeSource.flyingEnergyRegen === undefined ? undefined : readNumber(safeSource.flyingEnergyRegen, 0),
+      regenDelay: safeSource.regenDelay === undefined ? undefined : readNumber(safeSource.regenDelay, 0),
       heatCapacity: safeSource.heatCapacity === undefined ? undefined : readNumber(safeSource.heatCapacity, 0),
       mobilityType: typeof safeSource.mobilityType === 'string' ? safeSource.mobilityType : undefined,
       heatGeneration: safeSource.heatGeneration === undefined ? undefined : readNumber(safeSource.heatGeneration, 0),
@@ -2799,6 +2905,34 @@ function startTestMap(): void {
     return devHeatState
   } // end function updateHeatState
 
+  const isOverheatShutdownActive = (): boolean => {
+    return resolveHeatState(devCurrentHeat, devMaxHeat, devHeatState) === 'OVERHEAT'
+  } // end function isOverheatShutdownActive
+
+  const applyOverheatShutdown = (): void => {
+    if (!isOverheatShutdownActive()) {
+      return
+    }
+
+    input.flightTogglePending = false
+    input.boostTogglePending = false
+
+    if (player.isBoosting) {
+      player.isBoosting = false
+      if (audio.isAudioStarted()) {
+        audio.stopBoostAudio()
+      }
+    }
+
+    if (player.isFlying && player.flightState !== 'descending' && player.flightState !== 'grounded') {
+      player.flightState = 'descending'
+      announceBlockedAction('flight-overheat', 'Overheat. Flight disabled until heat recovers.')
+      if (audio.isAudioStarted()) {
+        audio.stopFlightLoop({ quickSpinDown: true })
+      }
+    }
+  } // end function applyOverheatShutdown
+
   const getHeatStateLabel = (): string => {
     return updateHeatState()
   } // end function getHeatStateLabel
@@ -3083,6 +3217,7 @@ function startTestMap(): void {
       loadRatio,
       weightFactor
     } = calculateWeightFactor(stats.totalWeight, movementProfile.ratedLoad)
+    const currentEnergyRegenPerSecond = getCurrentEnergyRegenPerSecond(stats.totalWeight, movementProfile.ratedLoad)
     const staggerResistance = calculateWeightResistance(stats.totalWeight)
     const flightRuntimeProfile = getFlightRuntimeProfile()
     const movementSpeedLimit = player.isFlying
@@ -3108,6 +3243,7 @@ function startTestMap(): void {
       'CORE STATS',
       `Current Heat / Max Heat: ${devCurrentHeat.toFixed(1)} / ${stats.maxHeat.toFixed(1)}`,
       `Current Energy / Max Energy: ${player.ep.toFixed(1)} / ${stats.maxEP.toFixed(1)}`,
+      `Energy Regen: ${currentEnergyRegenPerSecond.toFixed(2)} /s`,
       `Total Weight: ${stats.totalWeight.toFixed(1)}`,
       `Rated Load: ${ratedLoad.toFixed(1)}`,
       `Load Ratio: ${loadRatio.toFixed(3)}`,
@@ -4959,12 +5095,19 @@ function startTestMap(): void {
     const currentTotalWeight = getDevMechStatsSnapshot().totalWeight
     const movementWeightFactor = calculateWeightFactor(currentTotalWeight, movementProfile.ratedLoad).weightFactor
     const flightRuntimeProfile = getFlightRuntimeProfile()
-    const canEngageFlight = canUseFlightSubsystem() && flightRuntimeProfile.liftCapacity >= currentTotalWeight
+    const overheatShutdownActive = isOverheatShutdownActive()
+    const canEngageFlight = !overheatShutdownActive && canUseFlightSubsystem() && flightRuntimeProfile.liftCapacity >= currentTotalWeight
     const minFlightEngageEnergy = Math.max(1, flightRuntimeProfile.energyUsePerSecond * 0.5)
     const minBoostEnergy = Math.max(1, (flightRuntimeProfile.energyUsePerSecond + BOOST_EP_DRAIN_PER_SECOND) * 0.25)
 
+    applyOverheatShutdown()
+
     if (input.flightTogglePending && player.flightState === 'grounded') {
-      if (!canUseFlightSubsystem()) {
+      if (overheatShutdownActive) {
+        input.flightTogglePending = false
+        audio.playNegativeActionTone()
+        announceBlockedAction('flight-overheat', 'Cannot fly. Overheated.')
+      } else if (!canUseFlightSubsystem()) {
         input.flightTogglePending = false
         audio.playNegativeActionTone()
         announceBlockedAction('flight-offline', 'Cannot fly. Flight subsystem offline.')
@@ -4980,9 +5123,14 @@ function startTestMap(): void {
     } // end if takeoff was requested while grounded
 
     if (input.boostTogglePending && !player.isBoosting) {
-      const canToggleBoost = player.isFlying
+      const canToggleBoost = !overheatShutdownActive
+        && player.isFlying
         && (player.flightState === 'ascending' || player.flightState === 'airborne')
-      if (!canToggleBoost) {
+      if (overheatShutdownActive) {
+        input.boostTogglePending = false
+        audio.playNegativeActionTone()
+        announceBlockedAction('boost-overheat', 'Cannot boost. Overheated.')
+      } else if (!canToggleBoost) {
         input.boostTogglePending = false
         audio.playNegativeActionTone()
         announceBlockedAction('boost-unavailable', 'Cannot boost while grounded.')
@@ -5031,10 +5179,21 @@ function startTestMap(): void {
 
     const hpBeforeCombat = Math.max(0, player.hp)
 
-    const energyRegenPerSecond = devEnergyRegenRate
+    const baseEnergyRegenPerSecond = getCurrentEnergyRegenPerSecond(currentTotalWeight, movementProfile.ratedLoad)
+    const passiveEnergyDrainPerSecond = getPassiveEnergyDrainPerSecond()
     const flightEnergyDrainPerSecond = player.isFlying ? flightRuntimeProfile.energyUsePerSecond : 0
-    const energyDrainPerSecond = flightEnergyDrainPerSecond + ((player.isBoosting ?? false) ? BOOST_EP_DRAIN_PER_SECOND : 0)
-    devLastEnergyDrain = Math.max(0, energyDrainPerSecond)
+    const activeEnergyDrainPerSecond = flightEnergyDrainPerSecond
+      + ((player.isBoosting ?? false) ? BOOST_EP_DRAIN_PER_SECOND : 0)
+    if (activeEnergyDrainPerSecond > 0) {
+      devLastActiveEnergyUseTimeMs = timestampMs
+    }
+    const energyRegenDelayMs = getEnergyRegenDelayMs()
+    const energyRegenPerSecond = (timestampMs - devLastActiveEnergyUseTimeMs) >= energyRegenDelayMs
+      ? baseEnergyRegenPerSecond
+      : 0
+    const trackedEnergyDrainPerSecond = passiveEnergyDrainPerSecond + activeEnergyDrainPerSecond
+    const energyDrainPerSecond = activeEnergyDrainPerSecond
+    devLastEnergyDrain = Math.max(0, trackedEnergyDrainPerSecond)
     const epDelta = (energyRegenPerSecond - energyDrainPerSecond) * deltaSeconds
     player.ep = Math.max(0, Math.min(player.maxEp, player.ep + epDelta))
     const flightHeatGain = player.isFlying ? (flightRuntimeProfile.heatGenerationPerSecond * deltaSeconds) : 0
@@ -5042,6 +5201,7 @@ function startTestMap(): void {
     devCurrentHeat = Math.max(0, devCurrentHeat - (passiveCoolingPerSecond * deltaSeconds))
     devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + flightHeatGain)
     updateHeatState()
+    applyOverheatShutdown()
 
     // Force landing when EP is fully depleted while in flight
     if (player.ep <= 0 && player.isFlying &&
@@ -5268,7 +5428,10 @@ function startTestMap(): void {
     }
 
     if (shouldAttemptShot && !isReloading && playerFireCooldownSeconds <= 0) {
-      if (!canUseRangedSubsystem()) {
+      if (isOverheatShutdownActive()) {
+        audio.playNegativeActionTone()
+        announceBlockedAction('fire-overheat', 'Cannot fire. Overheated.')
+      } else if (!canUseRangedSubsystem()) {
         audio.playNegativeActionTone()
         announceBlockedAction('fire-ranged-offline', 'Cannot fire. Right arm or right hand is offline.')
       } else if (playerWeapon.ammoInClip <= 0) {
@@ -5359,7 +5522,10 @@ function startTestMap(): void {
 
     if (input.meleePending) {
       input.meleePending = false
-      if (!canUseMeleeSubsystem()) {
+      if (isOverheatShutdownActive()) {
+        audio.playNegativeActionTone()
+        announceBlockedAction('melee-overheat', 'Cannot use melee. Overheated.')
+      } else if (!canUseMeleeSubsystem()) {
         audio.playNegativeActionTone()
         announceBlockedAction('melee-offline', 'Cannot use melee. Left arm or left hand is offline.')
       } else if (isReloading) {

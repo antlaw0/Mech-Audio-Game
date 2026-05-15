@@ -32,6 +32,10 @@ export type PartDefinition = {
   activeAbilities?: string[]
   specialEffects?: string[]
   energyCapacity?: number
+  idleEnergyRegen?: number
+  movingEnergyRegen?: number
+  flyingEnergyRegen?: number
+  regenDelay?: number
   powerOutput?: number
   heatGeneration?: number
   heatDissipation?: number

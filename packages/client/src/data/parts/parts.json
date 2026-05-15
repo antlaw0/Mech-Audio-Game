@@ -117,6 +117,10 @@
     "activeAbilities": [],
     "specialEffects": [],
     "energyCapacity": 100,
+    "idleEnergyRegen": 6,
+    "movingEnergyRegen": 4.2,
+    "flyingEnergyRegen": 2.6,
+    "regenDelay": 1500,
     "powerOutput": 100
   },
   {
@@ -135,6 +139,10 @@
     "activeAbilities": [],
     "specialEffects": [],
     "energyCapacity": 144,
+    "idleEnergyRegen": 9,
+    "movingEnergyRegen": 6.3,
+    "flyingEnergyRegen": 4,
+    "regenDelay": 1100,
     "powerOutput": 144
   },
   {

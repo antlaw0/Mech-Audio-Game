@@ -1002,6 +1002,10 @@ States:
 ---
 
 ## Ticket 14 — Overheat Shutdown
+Copilot status: Complete
+Developer status: Approved
+
+Notes: `OVERHEAT` now hard-disables player weapon use, blocks takeoff/boost attempts, forces an in-air mech into descending shutdown, and sets energy regeneration to 0 until heat recovers to the spec-defined recovery threshold.
 
 Disable:
 
@@ -1016,18 +1020,30 @@ Disable:
 ---
 
 ## Ticket 15 — Energy Consumption
+Copilot status: Complete
+Developer status: Approved
+
+Notes: Equipped online subsystem `energyDrain` values are tracked as live energy load for debug/runtime accounting, while direct EP depletion currently comes from active runtime drains already implemented (flight/boost). This avoids idle EP lockout until the canonical generator regen model is added in later energy tickets.
 
 Track usage.
 
 ---
 
 ## Ticket 16 — Regen Delay
+Copilot status: Complete
+Developer status: Approved
+
+Notes: Energy regeneration now waits for a generator-scoped `regenDelay` window after the last active energy use currently implemented in runtime (flight or boost). Passive subsystem upkeep remains continuous drain but does not perpetually reset the delay, preserving recovery until Ticket 17 adds canonical generator regen formulas.
 
 Delayed regeneration.
 
 ---
 
 ## Ticket 17 — Regen Calculation
+Copilot status: Complete
+Developer status: Approved
+
+Notes: Generator regen now uses explicit idle/moving/flying stats with deterministic fallback from legacy generator data, then scales the active regen rate by existing weight factor and a heat-state multiplier. Regen remains delayed by Ticket 16 before the calculated rate is applied.
 
 Use:
 
