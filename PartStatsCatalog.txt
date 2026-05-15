@@ -1,0 +1,687 @@
+
+# MECH PART STAT CATALOG
+
+Source Snapshot: `main.ts + weapons.ts + constants.ts`
+Date: `2026-05-15`
+
+---
+
+# CATEGORY: Head
+
+## Part 1
+
+Part ID: `basic.head`
+Name: `Basic Head`
+
+Integrity: `120 / 120`
+Online: `true`
+
+Weight: `70`
+
+PDEF: `18`
+EDEF: `24`
+
+Energy Drain: `1`
+
+---
+
+# CATEGORY: Computer
+
+## Part 1
+
+Part ID: `basic.computer`
+Name: `Basic Computer`
+
+Integrity: `90 / 90`
+Online: `true`
+
+Weight: `40`
+
+PDEF: `4`
+EDEF: `8`
+
+Energy Drain: `1`
+
+---
+
+# CATEGORY: Core / ExoShell
+
+## Part 1
+
+Part ID: `basic.exoshell`
+Name: `Basic ExoShell`
+
+Integrity: `420 / 420`
+Online: `true`
+
+Weight: `460`
+
+PDEF: `140`
+EDEF: `105`
+
+Energy Drain: `0`
+
+---
+
+# CATEGORY: Generator
+
+## Part 1
+
+Part ID: `basic.generator`
+Name: `Basic Generator`
+
+Integrity: `180 / 180`
+Online: `true`
+
+Weight: `170`
+
+PDEF: `12`
+EDEF: `14`
+
+Energy Drain: `-6`
+
+Energy Capacity: `1000`
+
+Power Output: `1000`
+
+Regen Rate: `1.0`
+
+---
+
+# CATEGORY: Thermal Regulator
+
+## Part 1
+
+Part ID: `basic.thermal`
+Name: `Basic Thermal Regulator`
+
+Integrity: `140 / 140`
+Online: `true`
+
+Weight: `95`
+
+PDEF: `10`
+EDEF: `12`
+
+Energy Drain: `2`
+
+Heat Capacity: `100`
+
+Heat Dissipation: `12`
+
+---
+
+# CATEGORY: Movement
+
+## Part 1
+
+Part ID: `basic.legs`
+Name: `Basic Legs`
+
+Integrity: `260 / 260`
+Online: `true`
+
+Weight: `290`
+
+PDEF: `22`
+EDEF: `16`
+
+Energy Drain: `4`
+
+Mobility Type: `Walker`
+
+Rated Load: `1600`
+
+Speed Modifier: `1`
+
+Terrain Multiplier: `1`
+
+Ground Acceleration: `4.9`
+
+Ground Deceleration: `5.2`
+
+Max Forward Speed: `6.4`
+
+Max Reverse Speed: `4.6`
+
+Max Strafe Speed: `4.2`
+
+Turn Rate: `1.8`
+
+Terrain Penalty Multiplier: `1`
+
+Energy Use: `3.6`
+
+---
+
+# CATEGORY: Arm
+
+## Part 1
+
+Part ID: `basic.left-arm`
+Name: `Basic Left Arm`
+
+Integrity: `160 / 160`
+Online: `true`
+
+Weight: `120`
+
+PDEF: `18`
+EDEF: `12`
+
+Energy Drain: `1`
+
+---
+
+## Part 2
+
+Part ID: `basic.right-arm`
+Name: `Basic Right Arm`
+
+Integrity: `160 / 160`
+Online: `true`
+
+Weight: `120`
+
+PDEF: `18`
+EDEF: `12`
+
+Energy Drain: `1`
+
+---
+
+# CATEGORY: Shoulder Mount
+
+## Part 1
+
+Part ID: `empty.left-shoulder`
+Name: `Empty`
+
+Integrity: `0 / 100`
+Online: `false`
+
+Weight: `0`
+
+PDEF: `0`
+EDEF: `0`
+
+Energy Drain: `0`
+
+---
+
+## Part 2
+
+Part ID: `empty.right-shoulder`
+Name: `Empty`
+
+Integrity: `0 / 100`
+Online: `false`
+
+Weight: `0`
+
+PDEF: `0`
+EDEF: `0`
+
+Energy Drain: `0`
+
+---
+
+# CATEGORY: Hand Weapon
+
+## Part 1
+
+Part ID: `basic.sword`
+Name: `Basic Sword`
+
+Integrity: `130 / 130`
+Online: `true`
+
+Weight: `85`
+
+PDEF: `7`
+EDEF: `6`
+
+Energy Drain: `2`
+
+Heat Generation: `1`
+
+---
+
+## Part 2
+
+Part ID: `basic.pistol`
+Name: `Basic Pistol`
+
+Integrity: `130 / 130`
+Online: `true`
+
+Weight: `72`
+
+PDEF: `7`
+EDEF: `6`
+
+Energy Drain: `2`
+
+Heat Generation: `2`
+
+---
+
+# CATEGORY: Utility
+
+## Part 1
+
+Part ID: `basic.utility1`
+Name: `Basic Utility 1`
+
+Integrity: `100 / 100`
+
+Online: `true`
+
+Weight: `55`
+
+PDEF: `4`
+
+EDEF: `5`
+
+Energy Drain: `1`
+
+---
+
+## Part 2
+
+Part ID: `basic.jetpack`
+
+Name: `Basic Jetpack`
+
+Integrity: `115 / 115`
+
+Online: `true`
+
+Weight: `95`
+
+PDEF: `8`
+
+EDEF: `10`
+
+Energy Drain: `6`
+
+Heat Generation: `5`
+
+Lift Capacity: `1600`
+
+Flight Type: `Jet`
+
+Rotor Count: `1`
+
+Vertical Takeoff Time: `3.2`
+
+Flight Stability: `1`
+
+Speed Modifier: `1`
+
+Energy Use: `2.2`
+
+---
+
+## Part 3
+
+Part ID: `basic.rotor.basic`
+
+Name: `Basic Rotor Flight Pack`
+
+Integrity: `115 / 115`
+
+Online: `true`
+
+Weight: `98`
+
+PDEF: `8`
+
+EDEF: `10`
+
+Energy Drain: `5`
+
+Heat Generation: `2.4`
+
+Lift Capacity: `1725`
+
+Flight Type: `Rotor`
+
+Rotor Count: `1`
+
+Vertical Takeoff Time: `4.2`
+
+Flight Stability: `1.05`
+
+Speed Modifier: `1`
+
+Energy Use: `1.4`
+
+---
+
+## Part 4
+
+Part ID: `basic.rotor.dual`
+
+Name: `Dual-Rotor Flight Pack`
+
+Integrity: `115 / 115`
+
+Online: `true`
+
+Weight: `110`
+
+PDEF: `9`
+
+EDEF: `11`
+
+Energy Drain: `6`
+
+Heat Generation: `2.2`
+
+Lift Capacity: `1900`
+
+Flight Type: `Rotor`
+
+Rotor Count: `2`
+
+Vertical Takeoff Time: `3.9`
+
+Flight Stability: `1.25`
+
+Speed Modifier: `1.05`
+
+Energy Use: `1.35`
+
+---
+
+## Part 5
+
+Part ID: `basic.rotor.tri`
+
+Name: `Tri-Rotor Flight Pack`
+
+Integrity: `115 / 115`
+
+Online: `true`
+
+Weight: `126`
+
+PDEF: `10`
+
+EDEF: `12`
+
+Energy Drain: `6.5`
+
+Heat Generation: `2`
+
+Lift Capacity: `2125`
+
+Flight Type: `Rotor`
+
+Rotor Count: `3`
+
+Vertical Takeoff Time: `3.6`
+
+Flight Stability: `1.45`
+
+Speed Modifier: `1.08`
+
+Energy Use: `1.3`
+
+---
+
+# WEAPON CATEGORY: Ranged Weapons
+
+## Pistol
+
+---
+
+# WEAPON CATEGORY: Ranged Weapons
+
+## Weapon 1
+
+Weapon ID: `pistol`
+
+Name: `Pistol`
+
+Weapon Type: `Ballistic`
+
+Accuracy: `0.94`
+
+Damage Per Shot: `18`
+
+Max Range: `48`
+
+Projectile Count: `1`
+
+Spread Degrees: `1.4`
+
+Bullet Speed: `40`
+
+Fire Rate Cooldown Seconds: `0.33`
+
+Lock-On Range: `20`
+
+Lock-On Time Milliseconds: `0`
+
+Tracking Rating: `0`
+
+Explosion Radius: `0`
+
+Explosion Damage: `0`
+
+Clip Size: `10`
+
+Ammo Resource Per Round: `1`
+
+---
+
+## Weapon 2
+
+Weapon ID: `shotgun`
+
+Name: `Shotgun`
+
+Weapon Type: `Ballistic`
+
+Accuracy: `0.82`
+
+Damage Per Shot: `11`
+
+Max Range: `27.84`
+
+Projectile Count: `8`
+
+Spread Degrees: `9.5`
+
+Bullet Speed: `31.2`
+
+Fire Rate Cooldown Seconds: `0.9`
+
+Lock-On Range: `20`
+
+Lock-On Time Milliseconds: `0`
+
+Tracking Rating: `0`
+
+Explosion Radius: `0`
+
+Explosion Damage: `0`
+
+Clip Size: `8`
+
+Ammo Resource Per Round: `5`
+
+---
+
+## Weapon 3
+
+Weapon ID: `assault-rifle`
+
+Name: `Assault Rifle`
+
+Weapon Type: `Ballistic`
+
+Accuracy: `0.88`
+
+Damage Per Shot: `9`
+
+Max Range: `51.84`
+
+Projectile Count: `1`
+
+Spread Degrees: `2.2`
+
+Bullet Speed: `43.2`
+
+Fire Rate Cooldown Seconds: `0.09`
+
+Lock-On Range: `20`
+
+Lock-On Time Milliseconds: `0`
+
+Tracking Rating: `0`
+
+Explosion Radius: `0`
+
+Explosion Damage: `0`
+
+Clip Size: `30`
+
+Ammo Resource Per Round: `2`
+
+---
+
+## Weapon 4
+
+Weapon ID: `missile-launcher`
+
+Name: `Missile Launcher`
+
+Weapon Type: `Missile`
+
+Accuracy: `1`
+
+Damage Per Shot: `20`
+
+Max Range: `48`
+
+Projectile Count: `1`
+
+Spread Degrees: `0`
+
+Bullet Speed: `8`
+
+Fire Rate Cooldown Seconds: `1.1`
+
+Lock-On Range: `20`
+
+Lock-On Time Milliseconds: `1200`
+
+Tracking Rating: `0.9`
+
+Explosion Radius: `2.3`
+
+Explosion Damage: `42`
+
+Clip Size: `1`
+
+Ammo Resource Per Round: `50`
+
+---
+
+## Weapon 5
+
+Weapon ID: `rocket-launcher`
+
+Name: `Rocket Launcher`
+
+Weapon Type: `Missile`
+
+Accuracy: `0.72`
+
+Damage Per Shot: `20`
+
+Max Range: `48`
+
+Projectile Count: `1`
+
+Spread Degrees: `0`
+
+Bullet Speed: `7.04`
+
+Fire Rate Cooldown Seconds: `1.7`
+
+Lock-On Range: `20`
+
+Lock-On Time Milliseconds: `0`
+
+Tracking Rating: `0`
+
+Explosion Radius: `2.3`
+
+Explosion Damage: `20`
+
+Clip Size: `1`
+
+Ammo Resource Per Round: `25`
+
+---
+
+## Weapon 6
+
+Weapon ID: `sniper-rifle`
+
+Name: `Sniper Rifle`
+
+Weapon Type: `Ballistic`
+
+Accuracy: `0.995`
+
+Damage Per Shot: `52`
+
+Max Range: `86.4`
+
+Projectile Count: `1`
+
+Spread Degrees: `0.2`
+
+Bullet Speed: `60`
+
+Fire Rate Cooldown Seconds: `1.35`
+
+Lock-On Range: `29`
+
+Lock-On Time Milliseconds: `0`
+
+Tracking Rating: `0`
+
+Explosion Radius: `0`
+
+Explosion Damage: `0`
+
+Clip Size: `5`
+
+Ammo Resource Per Round: `10`
+
+---
+
+# WEAPON CATEGORY: Melee Weapons
+
+## Weapon 1
+
+Weapon ID: `sword`
+
+Name: `Sword`
+
+Damage Per Swing: `26`
+
+Reach: `2.5`
+
+Cone Angle Degrees: `78`
+
+Melee Cooldown Seconds: `0.8`
+
+---
+

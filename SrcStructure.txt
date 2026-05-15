@@ -1,0 +1,91 @@
+﻿SRC FOLDER AND FILE STRUCTURE
+Generated: 2026-05-15
+
+=== packages/client/src ===
+Folder PATH listing for volume OS
+Volume serial number is B62F-0CE0
+C:\USERS\ALAWL\DESKTOP\GAME DEV PROJECTS\MECHAUDIO\MECH-AUDIO-GAME\PACKAGES\CLIENT\SRC
++---net
+|       ws-client.ts
+|       
+\---test-map
+    |   audio-config.ts
+    |   audio-utils.ts
+    |   audio.ts
+    |   awareness.ts
+    |   combat-ecs.ts
+    |   constants.ts
+    |   dev-console.ts
+    |   input.ts
+    |   main.ts
+    |   map-data.ts
+    |   player-state.ts
+    |   runtime-config.ts
+    |   scene-layout.ts
+    |   sprites.ts
+    |   target-lock.ts
+    |   three-render.ts
+    |   types.ts
+    |   update.ts
+    |   weapons.ts
+    |   world-collision.ts
+    |   world-map-overlay.ts
+    |   
+    \---enemies
+            bruiserEnemy.ts
+            bruteEnemy.ts
+            enemyBase.ts
+            enemyTypes.ts
+            helicopterEnemy.ts
+            index.ts
+            README.md
+            strikerEnemy.ts
+            tankEnemy.ts
+            testDummyEnemy.ts
+            
+
+=== packages/server/src ===
+Folder PATH listing for volume OS
+Volume serial number is B62F-0CE0
+C:\USERS\ALAWL\DESKTOP\GAME DEV PROJECTS\MECHAUDIO\MECH-AUDIO-GAME\PACKAGES\SERVER\SRC
+|   config.ts
+|   index.ts
+|   
++---colyseus
+|       index.ts
+|       mech-room.ts
+|       start-colyseus.ts
+|       
++---net
+|       client-session.ts
+|       protocol.ts
+|       ws-server.ts
+|       
++---simulation
+|       apply-input.ts
+|       tick-world.ts
+|       
+\---state
+        create-world-state.ts
+        
+
+=== packages/shared/src ===
+Folder PATH listing for volume OS
+Volume serial number is B62F-0CE0
+C:\USERS\ALAWL\DESKTOP\GAME DEV PROJECTS\MECHAUDIO\MECH-AUDIO-GAME\PACKAGES\SHARED\SRC
+|   index.ts
+|   
++---constants
+|       world-constants.ts
+|       
++---schemas
+|       network.ts
+|       
++---types
+|       network.ts
+|       world.ts
+|       
+\---utils
+        rng.ts
+        
+

@@ -1,0 +1,318 @@
+## 0. NON-NEGOTIABLE ARCHITECTURE RULES
+
+* Part definitions and part instances are ALWAYS separate.
+* The Garage system is CLIENT-SIDE ONLY.
+* Server simulation and ECS must NOT be modified for Garage functionality.
+* No gameplay system (combat, movement, world tick) may depend on Garage UI.
+* Shared code in `packages/shared` must NOT contain UI logic or inventory UI logic.
+
+---
+
+## 1. DATA MODEL (MANDATORY)
+
+### PartDefinition (catalog, static)
+
+Represents design-time part data loaded from JSON.
+
+```ts
+type PartDefinition = {
+  id: string; // stable key, e.g. "basic.generator"
+  name: string;
+  category: PartCategory;
+
+  integrity: number;
+  weight: number;
+
+  PDEF: number;
+  EDEF: number;
+  energyDrain: number;
+
+  // optional category-specific fields allowed via extension
+};
+```
+
+---
+
+### PartInstance (runtime owned item)
+
+Represents a unique owned item.
+
+```ts
+type PartInstance = {
+  instanceId: string; // unique runtime ID
+  definitionId: string;
+
+  currentIntegrity: number;
+
+  modifiers: PartModifier[];
+
+  installedChips: string[];
+
+  rngSeed: number;
+};
+```
+
+---
+
+### PartModifier
+
+Used for Diablo-style effects.
+
+```ts
+type PartModifier = {
+  id: string;
+  type: "stat_mult" | "stat_add" | "special";
+  stat: string;
+  value: number;
+};
+```
+
+---
+
+### MechLoadout
+
+```ts
+type MechLoadout = {
+  Head?: string;
+  Computer?: string;
+  Core?: string;
+  Generator?: string;
+
+  LeftArm?: string;
+  RightArm?: string;
+
+  Utility1?: string;
+  Utility2?: string;
+};
+```
+
+Values reference `instanceId`.
+
+---
+
+## 2. PART CATALOG SYSTEM
+
+### Location
+
+Create:
+
+```
+packages/client/src/data/parts/
+```
+
+### Structure
+
+* `parts.json` → authoritative catalog
+* loaded at runtime into memory
+
+### Rules
+
+* JSON is the ONLY runtime source of truth for definitions
+* TS types define structure only
+* Dev mode can modify JSON live (client-side persistence)
+
+---
+
+## 3. GARAGE SYSTEM (CLIENT ONLY)
+
+### Location
+
+Create:
+
+```
+packages/client/src/ui/garage/
+```
+
+---
+
+### Responsibilities
+
+Garage must:
+
+* display owned PartInstances
+* filter by category
+* allow equip/unequip
+* handle swap confirmation
+* enforce compatibility checks
+* show warnings (weight, slot mismatch)
+
+---
+
+### UI Layout
+
+Left panel:
+
+* category list (Head, Computer, Core, etc.)
+
+Center panel:
+
+* list of PartCards for selected category
+
+PartCard:
+
+* reusable UI component across game
+
+---
+
+## 4. PART CARD COMPONENT (REUSABLE)
+
+### Location
+
+```
+src/ui/components/PartCard.ts
+```
+
+Must support:
+
+* display PartInstance OR PartDefinition
+* show relevant stats based on category
+* optional action buttons:
+
+  * Equip
+  * Edit (dev mode only)
+  * Delete (dev mode only)
+
+---
+
+## 5. EQUIP SYSTEM
+
+### Rules
+
+* Equip uses instanceId
+* Slot must match category
+* Swap moves previous instance back to garage
+* Must show confirmation modal
+
+### Validation checks:
+
+* weight limits (ground + flight)
+* slot compatibility
+* missing required slots
+* warnings do NOT block equip unless explicitly invalid
+
+---
+
+## 6. DEV MODE (GARAGE EXTENSION)
+
+### Activation
+
+Triggered by dev console:
+
+```
+dev mode on
+dev mode off
+```
+
+---
+
+### Behavior changes:
+
+* Center list switches from PartInstances → PartDefinitions
+* Adds:
+
+  * Add Part button
+  * Edit button per part
+  * Delete button per part
+
+---
+
+### Editing rules:
+
+* edits modify JSON catalog in real time
+* changes persist immediately (debounced save)
+* no runtime simulation impact until reload OR hot reload hook
+
+---
+
+### Delete rules:
+
+* must show confirmation modal
+* deletion marks part as "deprecated" rather than hard removal if referenced
+
+---
+
+## 7. SAVE SYSTEM RULES
+
+* Garage inventory persists locally on client
+* Part catalog persists in JSON file
+* PartInstances must never be merged into catalog
+
+---
+
+## 8. STAT RESOLUTION SYSTEM (MANDATORY NEW MODULE)
+
+Create:
+
+```
+src/systems/parts/statResolver.ts
+```
+
+Function:
+
+```ts
+getFinalPartStats(instanceId): ResolvedStats
+```
+
+Rules:
+
+* base definition stats
+* * modifiers
+* * chips
+* * damage penalties
+* NEVER mutate original instance or definition
+
+---
+
+## 9. INTEGRATION RULES
+
+Garage may read:
+
+* player inventory store
+* player loadout state
+
+Garage may NOT:
+
+* directly modify ECS systems
+* directly modify server state
+* directly mutate world simulation
+
+All changes flow:
+
+```
+Garage → Player Loadout State → Simulation reads it
+```
+
+NOT:
+
+```
+Garage → ECS directly ❌
+```
+
+---
+
+## 10. IMPLEMENTATION PHASES
+
+### Phase 1 — Garage UI foundation
+
+* category list
+* part list
+* PartCard component
+* view-only mode
+
+### Phase 2 — Inventory + equip system
+
+* instance system
+* equip/unequip
+* swap modal
+
+### Phase 3 — Stat resolution system
+
+* modifiers
+* chips
+* derived stats
+
+### Phase 4 — Dev mode editor
+
+* catalog JSON editing
+* add/delete/edit parts
+* live persistence
