@@ -8,13 +8,12 @@
     "PDEF": 18,
     "EDEF": 24,
     "energyDrain": 1,
-    "deprecated": false,
+    "range": 100,
     "passiveBonuses": [
       "Targeting stability +2%"
     ],
     "activeAbilities": [],
-    "specialEffects": [],
-    "range": 100
+    "specialEffects": []
   },
   {
     "id": "scout.head",
@@ -25,13 +24,12 @@
     "PDEF": 12,
     "EDEF": 26,
     "energyDrain": 1.4,
-    "deprecated": false,
+    "range": 132,
     "passiveBonuses": [
       "Recon sweep refresh -12%"
     ],
     "activeAbilities": [],
-    "specialEffects": [],
-    "range": 132
+    "specialEffects": []
   },
   {
     "id": "basic.computer",
@@ -42,13 +40,12 @@
     "PDEF": 4,
     "EDEF": 8,
     "energyDrain": 1,
-    "deprecated": false,
+    "lockOn": 1,
     "passiveBonuses": [
       "Navigation assist enabled"
     ],
     "activeAbilities": [],
-    "specialEffects": [],
-    "lockOn": 1
+    "specialEffects": []
   },
   {
     "id": "tactical.computer",
@@ -59,13 +56,12 @@
     "PDEF": 5,
     "EDEF": 11,
     "energyDrain": 2.4,
-    "deprecated": false,
+    "lockOn": 1.25,
     "passiveBonuses": [
       "Target reacquisition +15%"
     ],
     "activeAbilities": [],
-    "specialEffects": [],
-    "lockOn": 1.25
+    "specialEffects": []
   },
   {
     "id": "basic.exoshell",
@@ -76,13 +72,12 @@
     "PDEF": 140,
     "EDEF": 105,
     "energyDrain": 0,
-    "deprecated": false,
+    "stability": 1,
     "passiveBonuses": [
       "Core chassis stabilization"
     ],
     "activeAbilities": [],
-    "specialEffects": [],
-    "stability": 1
+    "specialEffects": []
   },
   {
     "id": "heavy.exoshell",
@@ -93,13 +88,12 @@
     "PDEF": 198,
     "EDEF": 128,
     "energyDrain": 0.8,
-    "deprecated": false,
+    "stability": 1.12,
     "passiveBonuses": [
       "Impact dampers +18%"
     ],
     "activeAbilities": [],
-    "specialEffects": [],
-    "stability": 1.12
+    "specialEffects": []
   },
   {
     "id": "basic.generator",
@@ -110,14 +104,13 @@
     "PDEF": 12,
     "EDEF": 14,
     "energyDrain": -6,
-    "deprecated": false,
+    "energyCapacity": 100,
+    "powerOutput": 100,
     "passiveBonuses": [
       "Idle EP regeneration enabled"
     ],
     "activeAbilities": [],
-    "specialEffects": [],
-    "energyCapacity": 100,
-    "powerOutput": 100
+    "specialEffects": []
   },
   {
     "id": "high.output.generator",
@@ -128,14 +121,13 @@
     "PDEF": 10,
     "EDEF": 16,
     "energyDrain": -9,
-    "deprecated": false,
+    "energyCapacity": 144,
+    "powerOutput": 144,
     "passiveBonuses": [
       "Peak output +44%"
     ],
     "activeAbilities": [],
-    "specialEffects": [],
-    "energyCapacity": 144,
-    "powerOutput": 144
+    "specialEffects": []
   },
   {
     "id": "basic.left-arm",
@@ -146,13 +138,12 @@
     "PDEF": 18,
     "EDEF": 12,
     "energyDrain": 1,
-    "deprecated": false,
+    "meleePower": 1,
     "passiveBonuses": [
       "Melee actuator stability"
     ],
     "activeAbilities": [],
-    "specialEffects": [],
-    "meleePower": 1
+    "specialEffects": []
   },
   {
     "id": "reinforced.left-arm",
@@ -163,13 +154,12 @@
     "PDEF": 26,
     "EDEF": 14,
     "energyDrain": 1.6,
-    "deprecated": false,
+    "meleePower": 1.22,
     "passiveBonuses": [
       "Guard break force +22%"
     ],
     "activeAbilities": [],
-    "specialEffects": [],
-    "meleePower": 1.22
+    "specialEffects": []
   },
   {
     "id": "basic.right-arm",
@@ -180,13 +170,12 @@
     "PDEF": 18,
     "EDEF": 12,
     "energyDrain": 1,
-    "deprecated": false,
+    "accuracy": 1,
     "passiveBonuses": [
       "Recoil dampening +5%"
     ],
     "activeAbilities": [],
-    "specialEffects": [],
-    "accuracy": 1
+    "specialEffects": []
   },
   {
     "id": "stabilized.right-arm",
@@ -197,13 +186,12 @@
     "PDEF": 16,
     "EDEF": 13,
     "energyDrain": 1.5,
-    "deprecated": false,
+    "accuracy": 1.18,
     "passiveBonuses": [
       "Burst spread -18%"
     ],
     "activeAbilities": [],
-    "specialEffects": [],
-    "accuracy": 1.18
+    "specialEffects": []
   },
   {
     "id": "basic.utility1",
@@ -214,13 +202,12 @@
     "PDEF": 4,
     "EDEF": 5,
     "energyDrain": 1,
-    "deprecated": false,
+    "sensorStrength": 1,
     "passiveBonuses": [
       "Auxiliary sensor burst"
     ],
     "activeAbilities": [],
-    "specialEffects": [],
-    "sensorStrength": 1
+    "specialEffects": []
   },
   {
     "id": "sensor.utility1",
@@ -231,13 +218,12 @@
     "PDEF": 4,
     "EDEF": 6,
     "energyDrain": 1.8,
-    "deprecated": false,
+    "sensorStrength": 1.35,
     "passiveBonuses": [
       "POI ping radius +35%"
     ],
     "activeAbilities": [],
-    "specialEffects": [],
-    "sensorStrength": 1.35
+    "specialEffects": []
   },
   {
     "id": "basic.jetpack",
@@ -248,20 +234,19 @@
     "PDEF": 8,
     "EDEF": 10,
     "energyDrain": 6,
-    "deprecated": false,
-    "passiveBonuses": [],
-    "activeAbilities": [
-      "Flight assist enabled"
-    ],
-    "specialEffects": [],
     "heatGeneration": 5,
     "liftCapacity": 1680,
+    "flightType": "jet",
     "rotorCount": 1,
     "verticalTakeoffTime": 3.2,
     "flightStability": 1,
     "speedModifier": 1,
     "energyUse": 2.2,
-    "flightType": "jet"
+    "activeAbilities": [
+      "Flight assist enabled"
+    ],
+    "passiveBonuses": [],
+    "specialEffects": []
   },
   {
     "id": "basic.rotor.dual",
@@ -272,20 +257,19 @@
     "PDEF": 9,
     "EDEF": 11,
     "energyDrain": 6,
-    "deprecated": false,
-    "passiveBonuses": [],
-    "activeAbilities": [
-      "Rotor flight assist enabled"
-    ],
-    "specialEffects": [],
     "heatGeneration": 2.2,
     "liftCapacity": 1900,
+    "flightType": "rotor",
     "rotorCount": 2,
     "verticalTakeoffTime": 3.9,
     "flightStability": 1.25,
     "speedModifier": 1.05,
     "energyUse": 1.35,
-    "flightType": "rotor"
+    "activeAbilities": [
+      "Rotor flight assist enabled"
+    ],
+    "passiveBonuses": [],
+    "specialEffects": []
   },
   {
     "id": "HeavyHead",
@@ -296,7 +280,6 @@
     "PDEF": 25,
     "EDEF": 25,
     "energyDrain": 0,
-    "deprecated": false,
     "passiveBonuses": [],
     "activeAbilities": [],
     "specialEffects": [],

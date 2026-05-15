@@ -45,6 +45,7 @@ import { bindInput } from './input.js'
 import { createDeveloperConsole } from './dev-console.js'
 import { createMapData } from './map-data.js'
 import { createInputState, createPlayer } from './player-state.js'
+import { isTypingContextActive } from './keyboard-focus.js'
 import { TEST_MAP_NAVIGATION_POIS } from './scene-layout.js'
 import { createSprites } from './sprites.js'
 import { configurePartStatResolver, getFinalPartStats } from '../systems/parts/statResolver.js'
@@ -1905,6 +1906,10 @@ function startTestMap(): void {
   updateNavigationOverlayVisibility(false)
 
   document.addEventListener('keydown', (event) => {
+    if (isTypingContextActive(event)) {
+      return
+    } // end if typing in editable field
+
     if (event.code !== 'KeyM' || event.repeat || isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen || isWorldMapVisible) {
       return
     } // end if not menu toggle key or conflicting modal state
@@ -1914,6 +1919,10 @@ function startTestMap(): void {
   })
 
   document.addEventListener('keydown', (event) => {
+    if (isTypingContextActive(event)) {
+      return
+    } // end if typing in editable field
+
     if (event.code !== 'Escape' || event.repeat || isWorldMapVisible) {
       return
     } // end if not pause toggle key
@@ -1944,6 +1953,10 @@ function startTestMap(): void {
   })
 
   document.addEventListener('keydown', (event) => {
+    if (isTypingContextActive(event)) {
+      return
+    } // end if typing in editable field
+
     if (event.code !== 'Backquote' || event.repeat || isEditorModalOpen || isWeaponEditorOpen || isNavigationMenuOpen || isWorldMapVisible) {
       return
     } // end if not developer console key or another editor is open
@@ -1958,6 +1971,10 @@ function startTestMap(): void {
   })
 
   document.addEventListener('keydown', (event) => {
+    if (isTypingContextActive(event)) {
+      return
+    } // end if typing in editable field
+
     if (event.repeat || isEditorModalOpen || isWeaponEditorOpen || isWorldMapVisible) {
       return
     } // end if editor modal blocks debug overlay shortcuts
@@ -2024,6 +2041,10 @@ function startTestMap(): void {
   } // end if weapon cancel button exists
 
   document.addEventListener('keydown', (event) => {
+    if (isTypingContextActive(event)) {
+      return
+    } // end if typing in editable field
+
     if (!isPaused || isConsoleOpen || isEditorModalOpen || event.repeat) {
       return
     } // end if not in pause-only editor trigger state
@@ -2050,6 +2071,10 @@ function startTestMap(): void {
   })
 
   document.addEventListener('keydown', (event) => {
+    if (isTypingContextActive(event)) {
+      return
+    } // end if typing in editable field
+
     if (event.code !== 'Numpad0' || event.repeat || isEditorModalOpen || isWeaponEditorOpen || isConsoleOpen) {
       return
     } // end if not weapon editor key or already open
@@ -2071,6 +2096,11 @@ function startTestMap(): void {
       return
     }
 
+    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    if (activeElement && !pausePanelDialogElement.contains(activeElement)) {
+      return
+    }
+
     const focusableElements = getPauseModalFocusableElements()
     if (focusableElements.length === 0) {
       event.preventDefault()
@@ -2080,7 +2110,6 @@ function startTestMap(): void {
 
     const firstElement = focusableElements[0]
     const lastElement = focusableElements[focusableElements.length - 1]
-    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const activeInsideDialog = activeElement ? pausePanelDialogElement.contains(activeElement) : false
 
     if (event.shiftKey) {

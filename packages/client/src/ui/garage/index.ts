@@ -12,6 +12,24 @@ const createDefinitionPreviewStats = (definition: PartDefinition) => ({
   installedChips: []
 })
 
+const buildCatalogExportFileName = (): string => {
+  const stamp = new Date().toISOString().slice(0, 10)
+  return `garage-catalog-${stamp}.json`
+}
+
+const downloadTextFile = (fileName: string, content: string): void => {
+  const blob = new Blob([content], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = fileName
+  anchor.style.display = 'none'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
 export type GarageViewElements = {
   root: HTMLElement
   slotList: HTMLElement
@@ -552,6 +570,58 @@ export const createGarageView = (options: GarageViewOptions): GarageViewControll
   const renderDeveloperMode = (category: PartCategory): void => {
     const content = options.elements.content
     content.innerHTML = ''
+
+    const actionsRow = document.createElement('div')
+    actionsRow.className = 'garage-pane-header'
+
+    const exportButton = document.createElement('button')
+    exportButton.type = 'button'
+    exportButton.className = 'garage-action-button neutral'
+    exportButton.textContent = 'Export Catalog JSON'
+    exportButton.addEventListener('click', () => {
+      const rawCatalog = options.store.exportCatalogJson()
+      downloadTextFile(buildCatalogExportFileName(), rawCatalog)
+    })
+    actionsRow.appendChild(exportButton)
+
+    const importInput = document.createElement('input')
+    importInput.type = 'file'
+    importInput.accept = '.json,application/json'
+    importInput.hidden = true
+
+    const importButton = document.createElement('button')
+    importButton.type = 'button'
+    importButton.className = 'garage-action-button neutral'
+    importButton.textContent = 'Import Catalog JSON'
+    importButton.addEventListener('click', () => {
+      importInput.value = ''
+      importInput.click()
+    })
+
+    importInput.addEventListener('change', async () => {
+      const selectedFile = importInput.files?.[0]
+      if (!selectedFile) {
+        return
+      }
+
+      try {
+        const rawText = await selectedFile.text()
+        const result = options.store.importCatalogJson(rawText)
+        const slotSummary = result.clearedLoadoutSlots.length > 0
+          ? `Cleared loadout slots: ${result.clearedLoadoutSlots.join(', ')}.`
+          : 'No loadout slots were cleared.'
+        window.alert(
+          `Catalog imported: ${result.definitionCount} definitions. Removed inventory items: ${result.removedInventoryCount}. ${slotSummary}`
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Import failed.'
+        window.alert(message)
+      }
+    })
+
+    actionsRow.appendChild(importButton)
+    actionsRow.appendChild(importInput)
+    content.appendChild(actionsRow)
 
     const addButton = document.createElement('button')
     addButton.type = 'button'

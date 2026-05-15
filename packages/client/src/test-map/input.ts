@@ -1,20 +1,9 @@
 import type { AudioController, InputState } from './types.js'
+import { isEditableEventTarget, isTypingContextActive } from './keyboard-focus.js'
 
 function shouldPreventDefault(code: string): boolean {
   return ['Space'].includes(code)
 } // end function shouldPreventDefault
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false
-  } // end if target is not a DOM element
-
-  if (target.isContentEditable) {
-    return true
-  } // end if contenteditable target
-
-  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
-} // end function isEditableTarget
 
 export function bindInput(
   input: InputState,
@@ -36,7 +25,7 @@ export function bindInput(
   document.addEventListener('keydown', async (event) => {
     void audio.ensureAudio()
 
-    if (isEditableTarget(event.target)) {
+    if (isTypingContextActive(event)) {
       return
     } // end if typing in editable field
 
@@ -245,7 +234,7 @@ export function bindInput(
   }) // end keydown listener
 
   document.addEventListener('keyup', (event) => {
-    if (isEditableTarget(event.target)) {
+    if (isEditableEventTarget(event)) {
       return
     } // end if typing in editable field
 

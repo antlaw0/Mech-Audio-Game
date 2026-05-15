@@ -397,6 +397,22 @@ Changes apply instantly.
 * Return to combat
 * Observe immediate difference
 
+### Regression Note — Global Form Keyboard Safety
+
+This is a project-wide non-regression requirement for every current and future form/modal/editor UI.
+
+Required behavior:
+
+* While focus is inside any editable control (`input`, `textarea`, `select`, or `contenteditable`), gameplay/global hotkeys must not fire.
+* `Tab` and `Shift+Tab` must move focus normally through actionable elements in the active form/modal.
+* Focus traps are allowed only within the currently active dialog, and must never steal focus from another open form/modal.
+
+Minimum regression check after any keyboard/focus/hotkey change:
+
+* Open a form (garage/editor/console-adjacent UI), type letters used by hotkeys (`M`, `F2`, `` ` ``, `Esc`) and confirm no unintended global action occurs while typing.
+* Use `Tab` and `Shift+Tab` to traverse the full form and confirm focus does not jump to pause menu or unrelated overlays.
+* Repeat the same checks while paused and while developer overlays are visible.
+
 ---
 
 ## Ticket 0D — In-Game Loadout HTML UI

@@ -30,7 +30,9 @@
 
     "start:colyseus": "npm run start:colyseus -w @mech-audio/server",
 
-    "typecheck": "npm run typecheck -ws"
+    "typecheck": "npm run typecheck -ws",
+
+    "catalog:apply": "node ./scripts/apply-catalog-export.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

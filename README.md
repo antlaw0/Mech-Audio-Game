@@ -65,6 +65,16 @@ npm run dev
 npm run dev:playtest
 ```
 
+## Promote Garage Catalog Edits To Source
+
+Use Garage developer mode export to download a catalog JSON, then apply it to source:
+
+```bash
+npm run catalog:apply -- ./path/to/garage-catalog-YYYY-MM-DD.json
+```
+
+This command validates schema, writes a timestamped backup under `packages/client/src/data/parts/backups/`, and then updates `packages/client/src/data/parts/parts.json`.
+
 ## Notes
 
 - The current client implementation preserves prototype gameplay and rendering behavior while splitting into focused modules under 250 lines.
