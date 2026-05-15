@@ -37,7 +37,8 @@ export function updateTargetLock(
   collisionWorld: WorldCollisionWorld,
   lockOnRange: number,
   lockOnWindowWidthPercent = 100,
-  lockOnWindowHeightPercent = 100
+  lockOnWindowHeightPercent = 100,
+  halfHorizontalFovRadians = HALF_FOV
 ): TargetLockUpdate {
   const previousLockedId = state.lockedTankId
 
@@ -68,7 +69,7 @@ export function updateTargetLock(
     while (angleDelta < -Math.PI) {
       angleDelta += 2 * Math.PI
     } // end while normalize negative overshoot
-    const maxHorizontalAngle = HALF_FOV * (lockOnWindowWidthPercent / 100)
+    const maxHorizontalAngle = halfHorizontalFovRadians * (lockOnWindowWidthPercent / 100)
     if (Math.abs(angleDelta) > maxHorizontalAngle) {
       continue
     } // end if target not within horizontal lock-on window

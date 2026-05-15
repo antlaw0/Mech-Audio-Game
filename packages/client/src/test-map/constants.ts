@@ -1,5 +1,5 @@
-export const CANVAS_WIDTH_LIMIT = 1280
-export const CANVAS_HEIGHT_LIMIT = 1024
+export const CANVAS_WIDTH_LIMIT = 3440
+export const CANVAS_HEIGHT_LIMIT = 1440
 export const CANVAS_VERTICAL_MARGIN = 40
 export const FOV = Math.PI / 3
 export const HALF_FOV = FOV / 2

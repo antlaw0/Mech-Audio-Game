@@ -234,10 +234,29 @@ declare global {
   }
 } // end declare global
 
+const TARGET_VIEWPORT_ASPECT_RATIO = 3440 / 1440
+const CAMERA_VERTICAL_FOV_RADIANS = (70 * Math.PI) / 180
+
+function getHalfHorizontalFovRadians(aspectRatio: number): number {
+  const safeAspectRatio = Math.max(0.1, aspectRatio)
+  const verticalHalfFov = CAMERA_VERTICAL_FOV_RADIANS * 0.5
+  return Math.atan(Math.tan(verticalHalfFov) * safeAspectRatio)
+} // end function getHalfHorizontalFovRadians
+
 function getCanvasDimensions(): { width: number; height: number } {
+  const maxWidth = Math.max(1, Math.min(window.innerWidth, CANVAS_WIDTH_LIMIT))
+  const maxHeight = Math.max(1, Math.min(window.innerHeight, CANVAS_HEIGHT_LIMIT))
+
+  let width = maxWidth
+  let height = Math.floor(width / TARGET_VIEWPORT_ASPECT_RATIO)
+  if (height > maxHeight) {
+    height = maxHeight
+    width = Math.floor(height * TARGET_VIEWPORT_ASPECT_RATIO)
+  } // end if width-constrained result exceeded max height
+
   return {
-    width: Math.min(window.innerWidth, CANVAS_WIDTH_LIMIT),
-    height: Math.min(window.innerHeight, CANVAS_HEIGHT_LIMIT)
+    width: Math.max(1, width),
+    height: Math.max(1, height)
   } // end object dimensions
 } // end function getCanvasDimensions
 
@@ -261,6 +280,8 @@ function setupCanvas(): {
 function startTestMap(): void {
   const EMPTY_CLIP_SOUND_PATH = 'assets/sounds/weapons/emptyClip.ogg'
   const { canvas, width, height } = setupCanvas()
+  let currentCanvasWidth = width
+  let currentCanvasHeight = height
 
   const getInput = (id: string): HTMLInputElement | null => {
     const el = document.getElementById(id)
@@ -289,10 +310,11 @@ function startTestMap(): void {
   const runtimeDebugSpeechStatusElement = document.getElementById('runtimeDebugSpeechStatus')
   const hpBarLabelElement = document.getElementById('hpBarLabel')
   const epBarLabelElement = document.getElementById('epBarLabel')
-  const heatPercentLabelElement = document.getElementById('heatPercentLabel')
+  const heatBarLabelElement = document.getElementById('heatBarLabel')
   const ammoResourceLabelElement = document.getElementById('ammoResourceLabel')
   const hpBarFillElement = document.getElementById('hpBarFill')
   const epBarFillElement = document.getElementById('epBarFill')
+  const heatBarFillElement = document.getElementById('heatBarFill')
   const playerNameElement = document.getElementById('playerName')
   const pauseOverlayElement = document.getElementById('pauseOverlay')
   const pausePanelDialogElement = document.getElementById('pausePanelDialog')
@@ -385,11 +407,26 @@ function startTestMap(): void {
   const collisionWorld = createWorldCollisionWorld(mapData, sprites)
   const threeRenderer = createThreeRenderSystem({
     canvas,
-    canvasWidth: width,
-    canvasHeight: height,
+    canvasWidth: currentCanvasWidth,
+    canvasHeight: currentCanvasHeight,
     mapData,
     sprites
   })
+
+  const resizeViewport = (): void => {
+    const { width: nextWidth, height: nextHeight } = getCanvasDimensions()
+    if (nextWidth === currentCanvasWidth && nextHeight === currentCanvasHeight) {
+      return
+    } // end if viewport size unchanged
+
+    currentCanvasWidth = nextWidth
+    currentCanvasHeight = nextHeight
+    canvas.width = currentCanvasWidth
+    canvas.height = currentCanvasHeight
+    threeRenderer.resize(currentCanvasWidth, currentCanvasHeight)
+  } // end function resizeViewport
+
+  window.addEventListener('resize', resizeViewport)
   const worldMapOverlay = createWorldMapOverlay({
     mapData,
     sprites,
@@ -5154,7 +5191,8 @@ function startTestMap(): void {
       collisionWorld,
       playerWeapon.lockOnRange,
       playerWeapon.lockOnWindowWidthPercent,
-      playerWeapon.lockOnWindowHeightPercent
+      playerWeapon.lockOnWindowHeightPercent,
+      getHalfHorizontalFovRadians(currentCanvasWidth / Math.max(1, currentCanvasHeight))
     )
 
     if (lockUpdate.justLost || lockUpdate.switchedTarget) {
@@ -5429,8 +5467,8 @@ function startTestMap(): void {
     if (epBarLabelElement) {
       epBarLabelElement.textContent = `${Math.round(player.ep)} / ${Math.round(player.maxEp)}`
     } // end if EP label element exists
-    if (heatPercentLabelElement) {
-      heatPercentLabelElement.textContent = `${heatPercent}%`
+    if (heatBarLabelElement) {
+      heatBarLabelElement.textContent = `${Math.round(devCurrentHeat)} / ${Math.round(devMaxHeat)}`
     } // end if heat label element exists
     if (ammoResourceLabelElement) {
       ammoResourceLabelElement.textContent = `${Math.round(universalAmmoResource)} | clip ${playerWeapon.ammoInClip}/${playerWeapon.clipSize}${isReloading ? ' | RELOADING' : ''}`
@@ -5441,6 +5479,9 @@ function startTestMap(): void {
     if (epBarFillElement instanceof HTMLElement) {
       epBarFillElement.style.width = `${epPercent}%`
     } // end if EP fill element exists
+    if (heatBarFillElement instanceof HTMLElement) {
+      heatBarFillElement.style.width = `${heatPercent}%`
+    } // end if heat fill element exists
 
     updateRuntimeDebugOverlay()
 
