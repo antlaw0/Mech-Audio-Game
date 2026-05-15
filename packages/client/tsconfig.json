@@ -14,8 +14,7 @@
     { "path": "../shared" }
   ],
   "include": [
-    "src/test-map/**/*.ts",
-    "src/test-map/**/*.json",
-    "src/net/**/*.ts"
+    "src/**/*.ts",
+    "src/**/*.json"
   ]
 }

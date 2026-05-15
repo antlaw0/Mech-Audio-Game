@@ -47,10 +47,14 @@ import { createMapData } from './map-data.js'
 import { createInputState, createPlayer } from './player-state.js'
 import { TEST_MAP_NAVIGATION_POIS } from './scene-layout.js'
 import { createSprites } from './sprites.js'
+import { configurePartStatResolver, getFinalPartStats } from '../systems/parts/statResolver.js'
+import { type GarageViewController, createGarageView } from '../ui/garage/index.js'
+import { createGarageStore } from '../ui/garage/store.js'
 import { createThreeRenderSystem } from './three-render.js'
 import { createUpdateState, updateFrame } from './update.js'
 import { createWorldMapOverlay } from './world-map-overlay.js'
 import { createWorldCollisionWorld, isPlayerBlocked, PLAYER_COLLISION_HEIGHT } from './world-collision.js'
+import type { GarageSnapshot, PartCategory } from '../data/parts/types.js'
 import type { AudioCategory, AudioVolumeChannel } from './types.js'
 import type { WorldPosition } from './types.js'
 
@@ -290,6 +294,8 @@ function startTestMap(): void {
   const epBarFillElement = document.getElementById('epBarFill')
   const playerNameElement = document.getElementById('playerName')
   const pauseOverlayElement = document.getElementById('pauseOverlay')
+  const pausePanelDialogElement = document.getElementById('pausePanelDialog')
+  const pauseMenuTitleElement = document.getElementById('pauseMenuTitle')
   const pauseDebugTabRuntimeButtonElement = document.getElementById('pauseDebugTabRuntimeButton')
   const pauseDebugTabEventsButtonElement = document.getElementById('pauseDebugTabEventsButton')
   const pauseDebugTabTuningButtonElement = document.getElementById('pauseDebugTabTuningButton')
@@ -302,7 +308,8 @@ function startTestMap(): void {
   const pauseDebugEventsContentElement = document.getElementById('pauseDebugEventsContent')
   const pauseLoadoutSlotListElement = document.getElementById('pauseLoadoutSlotList')
   const pauseLoadoutTitleElement = document.getElementById('pauseLoadoutTitle')
-  const pauseLoadoutDetailsContentElement = document.getElementById('pauseLoadoutDetailsContent')
+  const pauseLoadoutContentElement = document.getElementById('pauseLoadoutContent')
+  const pauseLoadoutSummaryElement = document.getElementById('pauseLoadoutSummary')
   const pauseTuneHeatMultiplierInput = getInput('pauseTuneHeatMultiplier')
   const pauseTuneEnergyRegenInput = getInput('pauseTuneEnergyRegen')
   const pauseTuneCoolingRateInput = getInput('pauseTuneCoolingRate')
@@ -404,6 +411,7 @@ function startTestMap(): void {
   let isEditorModalOpen = false
   let editorCurrentEnemyId: EnemyId = 'tank'
   let isWeaponEditorOpen = false
+  let pausePreviouslyFocusedElement: HTMLElement | null = null
   let playerFireCooldownSeconds = 0
   let playerMeleeCooldownSeconds = 0
   let universalAmmoResource = 1200
@@ -458,6 +466,7 @@ function startTestMap(): void {
   let isRuntimeDebugOverlayVisible = false
   let pauseDebugActiveTab: PauseDebugTabId = 'runtime'
   let pauseLoadoutActiveView: LoadoutViewId = 'Head'
+  let garageView: GarageViewController | null = null
   let devHeatMultiplier = 1
   let devEnergyRegenRate = 1
   let devCoolingRate = 1
@@ -769,6 +778,12 @@ function startTestMap(): void {
     const override = defaultPartOverrides[slot]
     return [slot, { ...basePart, ...override }]
   }))
+  const garageStore = createGarageStore()
+
+  configurePartStatResolver({
+    getDefinition: garageStore.getDefinition,
+    getInstance: garageStore.getInstance
+  })
 
   const UTILITY2_FLIGHT_PART_PRESETS: Readonly<Record<string, Partial<DevPartState>>> = {
     'basic.jetpack': {
@@ -1055,16 +1070,57 @@ function startTestMap(): void {
 
   } // end function equipWeaponAtIndex
 
+  const getPauseModalFocusableElements = (): HTMLElement[] => {
+    if (!(pausePanelDialogElement instanceof HTMLElement)) {
+      return []
+    }
+
+    const selector = [
+      'button:not([disabled])',
+      '[href]',
+      'input:not([disabled])',
+      'select:not([disabled])',
+      'textarea:not([disabled])',
+      '[tabindex]:not([tabindex="-1"])'
+    ].join(',')
+
+    return Array.from(pausePanelDialogElement.querySelectorAll<HTMLElement>(selector)).filter((element) => {
+      return !element.hasAttribute('disabled') && !element.getAttribute('aria-hidden') && element.offsetParent !== null
+    })
+  } // end function getPauseModalFocusableElements
+
   const setPauseOverlayVisible = (visible: boolean): void => {
     if (!(pauseOverlayElement instanceof HTMLDivElement)) {
       return
     } // end if pause overlay element missing
 
+    if (visible && document.activeElement instanceof HTMLElement) {
+      pausePreviouslyFocusedElement = document.activeElement
+    }
+
     pauseOverlayElement.style.display = visible ? 'flex' : 'none'
     pauseOverlayElement.setAttribute('aria-hidden', visible ? 'false' : 'true')
     if (visible) {
       updatePauseDebugTabs()
+      if (pauseDebugActiveTab === 'loadout') {
+        renderPauseLoadoutTab()
+      }
+      window.requestAnimationFrame(() => {
+        const initialFocusTarget = pauseMenuTitleElement instanceof HTMLElement
+          ? pauseMenuTitleElement
+          : (getPauseModalFocusableElements()[0] ?? pausePanelDialogElement)
+        initialFocusTarget?.focus()
+      })
+      return
     } // end if pause overlay became visible
+
+    const restoreTarget = pausePreviouslyFocusedElement
+    pausePreviouslyFocusedElement = null
+    if (restoreTarget instanceof HTMLElement) {
+      window.requestAnimationFrame(() => {
+        restoreTarget.focus()
+      })
+    }
   } // end function setPauseOverlayVisible
 
   const formatLoadoutNumber = (value: number, fractionDigits = 1): string => {
@@ -1266,46 +1322,14 @@ function startTestMap(): void {
   } // end function getLoadoutPartDetailLines
 
   const renderPauseLoadoutTab = (): void => {
-    if (!(pauseLoadoutSlotListElement instanceof HTMLUListElement)) {
+    if (!garageView) {
       return
     }
-
-    if (pauseLoadoutSlotListElement.childElementCount === 0) {
-      for (const view of LOADOUT_SLOT_VIEWS) {
-        const listItem = document.createElement('li')
-        const button = document.createElement('button')
-        button.type = 'button'
-        button.className = 'pause-loadout-slot-button'
-        button.textContent = view.id
-        button.dataset.viewId = view.id
-        button.setAttribute('aria-selected', view.id === pauseLoadoutActiveView ? 'true' : 'false')
-        button.addEventListener('click', () => {
-          pauseLoadoutActiveView = view.id
-          renderPauseLoadoutTab()
-        })
-        listItem.appendChild(button)
-        pauseLoadoutSlotListElement.appendChild(listItem)
-      } // end for each loadout view
-    }
-
-    const slotButtons = pauseLoadoutSlotListElement.querySelectorAll('button.pause-loadout-slot-button')
-    slotButtons.forEach((button) => {
-      if (!(button instanceof HTMLButtonElement)) {
-        return
-      }
-      button.setAttribute('aria-selected', button.dataset.viewId === pauseLoadoutActiveView ? 'true' : 'false')
-    })
-
-    const detailLines = getLoadoutPartDetailLines(pauseLoadoutActiveView)
-    if (pauseLoadoutTitleElement instanceof HTMLElement) {
-      pauseLoadoutTitleElement.textContent = pauseLoadoutActiveView
-    }
-    if (pauseLoadoutDetailsContentElement instanceof HTMLElement) {
-      pauseLoadoutDetailsContentElement.textContent = detailLines.join('\n')
-    }
+    garageView.render()
   } // end function renderPauseLoadoutTab
 
-  const setPauseDebugActiveTab = (nextTab: PauseDebugTabId): void => {
+  const setPauseDebugActiveTab = (nextTab: PauseDebugTabId, forceLoadoutRender = false): void => {
+    const tabChanged = pauseDebugActiveTab !== nextTab
     pauseDebugActiveTab = nextTab
     const buttonState = [
       { button: pauseDebugTabRuntimeButtonElement, selected: nextTab === 'runtime' },
@@ -1333,7 +1357,7 @@ function startTestMap(): void {
       entry.panel.classList.toggle('active', entry.active)
     } // end for each tab panel
 
-    if (nextTab === 'loadout') {
+    if (nextTab === 'loadout' && (tabChanged || forceLoadoutRender)) {
       renderPauseLoadoutTab()
     }
   } // end function setPauseDebugActiveTab
@@ -1380,8 +1404,6 @@ function startTestMap(): void {
         ? devEventLog.join('\n')
         : 'No events yet.'
     } // end if event tab content exists
-
-    renderPauseLoadoutTab()
 
     setPauseDebugActiveTab(pauseDebugActiveTab)
   } // end function updatePauseDebugTabs
@@ -2035,6 +2057,46 @@ function startTestMap(): void {
     openWeaponEditor()
   })
 
+  document.addEventListener('keydown', (event) => {
+    if (event.code !== 'Tab' || event.repeat) {
+      return
+    }
+    if (!isPaused || isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen || isNavigationMenuOpen || isWorldMapVisible) {
+      return
+    }
+    if (!(pauseOverlayElement instanceof HTMLDivElement) || pauseOverlayElement.style.display === 'none') {
+      return
+    }
+    if (!(pausePanelDialogElement instanceof HTMLElement)) {
+      return
+    }
+
+    const focusableElements = getPauseModalFocusableElements()
+    if (focusableElements.length === 0) {
+      event.preventDefault()
+      pausePanelDialogElement.focus()
+      return
+    }
+
+    const firstElement = focusableElements[0]
+    const lastElement = focusableElements[focusableElements.length - 1]
+    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const activeInsideDialog = activeElement ? pausePanelDialogElement.contains(activeElement) : false
+
+    if (event.shiftKey) {
+      if (!activeInsideDialog || activeElement === firstElement) {
+        event.preventDefault()
+        lastElement?.focus()
+      }
+      return
+    }
+
+    if (!activeInsideDialog || activeElement === lastElement) {
+      event.preventDefault()
+      firstElement?.focus()
+    }
+  })
+
   const combatWorld = createCombatEcsWorld()
 
   // Radar test cluster: 2 tanks + 1 striker placed ~70 units east of player spawn (200, 500),
@@ -2447,6 +2509,7 @@ function startTestMap(): void {
   } // end function getDevMechStatsSnapshot
 
   const syncAuthoritativeMechStats = (): DevMechStatsSnapshot => {
+    syncGarageLoadoutToDevParts()
     const snapshot = getDevMechStatsSnapshot()
     player.maxEp = snapshot.maxEP
     player.ep = Math.max(0, Math.min(player.maxEp, player.ep))
@@ -2764,6 +2827,186 @@ function startTestMap(): void {
     part.terrainPenaltyMultiplier = profile.terrainPenaltyMultiplier
     part.energyUse = profile.energyUse
   } // end function applyMovementArchetypeToPart
+
+  const GARAGE_CATEGORY_TO_DEV_SLOT: Record<PartCategory, DevPartSlot> = {
+    Head: 'Head',
+    Computer: 'Computer',
+    Core: 'ExoShell',
+    Generator: 'Generator',
+    LeftArm: 'LeftArm',
+    RightArm: 'RightArm',
+    Utility1: 'Utility1',
+    Utility2: 'Utility2'
+  }
+
+  const getManagedGarageCategories = (): PartCategory[] => {
+    return ['Head', 'Computer', 'Core', 'Generator', 'LeftArm', 'RightArm', 'Utility1', 'Utility2']
+  } // end function getManagedGarageCategories
+
+  const getManagedGarageWeight = (snapshot: GarageSnapshot): number => {
+    return getManagedGarageCategories().reduce((total, category) => {
+      const instanceId = snapshot.loadout[category]
+      if (!instanceId) {
+        return total
+      }
+      try {
+        return total + getFinalPartStats(instanceId).weight
+      } catch {
+        return total
+      }
+    }, 0)
+  } // end function getManagedGarageWeight
+
+  const syncGarageLoadoutToDevParts = (): void => {
+    const snapshot = garageStore.getSnapshot()
+    for (const category of getManagedGarageCategories()) {
+      const slot = GARAGE_CATEGORY_TO_DEV_SLOT[category]
+      const instanceId = snapshot.loadout[category]
+      if (!instanceId) {
+        devParts.set(slot, normalizeDevPartState(slot, {
+          ...createPlaceholderPart(slot),
+          partType: category === 'Core' ? 'Core/ExoShell' : category,
+          name: `${category} Empty`,
+          online: false,
+          integrity: 0,
+          maxIntegrity: 100
+        }))
+        continue
+      }
+
+      const instance = garageStore.getInstance(instanceId)
+      const definition = instance ? garageStore.getDefinition(instance.definitionId) : null
+      if (!instance || !definition) {
+        continue
+      }
+
+      const resolved = getFinalPartStats(instanceId)
+      const partType = category === 'Core'
+        ? 'Core/ExoShell'
+        : category.replace('LeftArm', 'Left Arm').replace('RightArm', 'Right Arm').replace('Utility1', 'Utility 1').replace('Utility2', 'Utility 2')
+
+      devParts.set(slot, normalizeDevPartState(slot, {
+        ...createPlaceholderPart(slot),
+        partId: definition.id,
+        partType,
+        name: definition.name,
+        integrity: resolved.currentIntegrity,
+        maxIntegrity: definition.integrity,
+        online: resolved.currentIntegrity > 0,
+        weight: resolved.weight,
+        PDEF: resolved.PDEF,
+        EDEF: resolved.EDEF,
+        energyDrain: resolved.energyDrain,
+        energyCapacity: resolved.energyCapacity,
+        heatGeneration: resolved.heatGeneration,
+        heatDissipation: resolved.heatDissipation,
+        powerOutput: resolved.powerOutput,
+        liftCapacity: resolved.liftCapacity,
+        flightType: resolved.flightType,
+        rotorCount: resolved.rotorCount,
+        verticalTakeoffTime: resolved.verticalTakeoffTime,
+        flightStability: resolved.flightStability,
+        speedModifier: resolved.speedModifier,
+        energyUse: resolved.energyUse,
+        passiveBonuses: [
+          ...(definition.passiveBonuses ?? []),
+          ...resolved.modifierSummary.map((entry) => `Modified: ${entry}`)
+        ],
+        activeAbilities: [...(definition.activeAbilities ?? [])],
+        specialEffects: [...(definition.specialEffects ?? []), ...resolved.installedChips.map((chip) => `Chip: ${chip}`)]
+      }))
+    }
+
+    const utility2 = garageStore.getEquippedInstance('Utility2')
+    const utility2Resolved = utility2 ? getFinalPartStats(utility2.instanceId) : null
+    devParts.set('FlightSystem', normalizeDevPartState('FlightSystem', {
+      ...getDevPartState('FlightSystem'),
+      partId: utility2Resolved?.id ?? 'basic.flight',
+      name: utility2Resolved ? `${utility2Resolved.name} Link` : 'Flight Link',
+      online: !!utility2Resolved && utility2Resolved.currentIntegrity > 0,
+      liftCapacity: utility2Resolved?.liftCapacity ?? 0
+    }))
+  } // end function syncGarageLoadoutToDevParts
+
+  const getGarageEquipValidation = (category: PartCategory, instanceId: string, preview: GarageSnapshot) => {
+    const warnings: string[] = []
+    const instance = garageStore.getInstance(instanceId)
+    const definition = instance ? garageStore.getDefinition(instance.definitionId) : null
+    if (!instance || !definition) {
+      return { valid: false, warnings: ['Selected part no longer exists.'] }
+    }
+    if (definition.category !== category) {
+      return { valid: false, warnings: [`${definition.name} is incompatible with ${category}.`] }
+    }
+
+    const currentManagedWeight = getManagedGarageWeight(garageStore.getSnapshot())
+    const predictedManagedWeight = getManagedGarageWeight(preview)
+    const unmanagedWeight = Math.max(0, getDevTotalWeight() - currentManagedWeight)
+    const predictedWeight = unmanagedWeight + predictedManagedWeight
+    const movementProfile = getCurrentMovementArchetypeProfile()
+    if (predictedWeight > movementProfile.ratedLoad) {
+      warnings.push(`Ground carry limit exceeded: ${predictedWeight.toFixed(1)} / ${movementProfile.ratedLoad.toFixed(1)} kg.`)
+    }
+
+    const predictedUtilityInstanceId = preview.loadout.Utility2
+    let predictedFlightLiftCapacity = 0
+    if (predictedUtilityInstanceId) {
+      try {
+        predictedFlightLiftCapacity = getFinalPartStats(predictedUtilityInstanceId).liftCapacity ?? 0
+      } catch {
+        predictedFlightLiftCapacity = 0
+      }
+    }
+    if (predictedFlightLiftCapacity > 0 && predictedWeight > predictedFlightLiftCapacity) {
+      warnings.push(`Flight carry limit exceeded: ${predictedWeight.toFixed(1)} / ${predictedFlightLiftCapacity.toFixed(1)} kg.`)
+    }
+
+    const missingCriticalSlots = getManagedGarageCategories().filter((slot) => !preview.loadout[slot])
+    if (missingCriticalSlots.length > 0) {
+      warnings.push(`Missing required slots: ${missingCriticalSlots.join(', ')}.`)
+    }
+
+    if (definition.deprecated) {
+      warnings.push('This part definition is deprecated in the catalog.')
+    }
+
+    return { valid: true, warnings }
+  } // end function getGarageEquipValidation
+
+  if (
+    pauseDebugLoadoutPanelElement instanceof HTMLElement
+    && pauseLoadoutSlotListElement instanceof HTMLElement
+    && pauseLoadoutTitleElement instanceof HTMLElement
+    && pauseLoadoutContentElement instanceof HTMLElement
+    && pauseLoadoutSummaryElement instanceof HTMLElement
+  ) {
+    garageView = createGarageView({
+      store: garageStore,
+      elements: {
+        root: pauseDebugLoadoutPanelElement,
+        slotList: pauseLoadoutSlotListElement,
+        title: pauseLoadoutTitleElement,
+        content: pauseLoadoutContentElement,
+        summary: pauseLoadoutSummaryElement
+      },
+      getEquipValidation: getGarageEquipValidation,
+      onLoadoutChanged: () => {
+        syncGarageLoadoutToDevParts()
+        applySubsystemIntegrityState()
+        syncAuthoritativeMechStats()
+        updatePauseDebugTabs()
+      }
+    })
+
+    garageStore.subscribe(() => {
+      syncGarageLoadoutToDevParts()
+      if (garageView) {
+        garageView.render()
+      }
+    })
+  }
+
+  syncGarageLoadoutToDevParts()
 
   const getRuntimeDebugOverlayLines = (): string[] => {
     const headingDegrees = normalizeDegrees((player.angle * 180) / Math.PI)
@@ -4318,6 +4561,18 @@ function startTestMap(): void {
       return ['Build reset to defaults.']
     } // end if reset.build command
 
+    if (normalizedCommand === 'dev mode on') {
+      garageStore.setDevMode(true)
+      nextEventTag('Garage developer mode enabled')
+      return ['dev mode = on']
+    } // end if dev mode enabled
+
+    if (normalizedCommand === 'dev mode off') {
+      garageStore.setDevMode(false)
+      nextEventTag('Garage developer mode disabled')
+      return ['dev mode = off']
+    } // end if dev mode disabled
+
     if (command === 'help') {
       if (args.length === 0) {
         helpMenuSelectionPath = []
@@ -4486,6 +4741,12 @@ function startTestMap(): void {
         .filter((trackName) => trackName.toLowerCase().startsWith(currentTrack))
         .map((trackName) => `music ${trackName}`)
     } // end if completing music track
+
+    if (currentCommand === 'dev') {
+      const suffix = tokens.slice(1).join(' ').toLowerCase()
+      return ['dev mode on', 'dev mode off']
+        .filter((entry) => entry.startsWith(`dev ${suffix}`.trim()))
+    } // end if completing dev commands
 
     return []
   } // end function getDeveloperConsoleSuggestions

@@ -301,7 +301,7 @@
       display: none;
       align-items: center;
       justify-content: center;
-      background: rgba(3, 8, 14, 0.74);
+      background: rgba(0, 0, 0, 0.92);
       backdrop-filter: blur(2px);
       z-index: 10;
     }
@@ -310,7 +310,7 @@
       max-height: calc(100vh - 24px);
       overflow: auto;
       border: 1px solid rgba(98, 214, 255, 0.45);
-      background: rgba(4, 12, 22, 0.92);
+      background: #000;
       box-shadow: 0 0 22px rgba(0, 170, 255, 0.3);
       padding: 22px;
       text-align: center;
@@ -456,6 +456,9 @@
       background: rgba(1, 23, 38, 0.72);
       padding: 10px;
       min-height: 280px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
     }
     .pause-loadout-title {
       margin: 0 0 8px;
@@ -463,17 +466,189 @@
       color: #d7f8ff;
       letter-spacing: 1px;
     }
-    .pause-loadout-pre {
-      margin: 0;
-      white-space: pre-wrap;
-      line-height: 1.45;
-      font-size: 12px;
-      color: #c6f6ff;
-    }
     .pause-loadout-summary {
-      margin-top: 8px;
       font-size: 11px;
       color: #8dd9f2;
+    }
+    .garage-part-list {
+      display: grid;
+      gap: 12px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .garage-pane-header {
+      font-size: 12px;
+      letter-spacing: 0.6px;
+      color: #9adff5;
+      text-transform: uppercase;
+    }
+    .garage-empty-state {
+      border: 1px dashed rgba(123, 220, 255, 0.35);
+      background: rgba(4, 35, 50, 0.45);
+      padding: 14px;
+      color: #b7eefb;
+      font-size: 12px;
+    }
+    .garage-part-card {
+      border: 1px solid rgba(113, 223, 255, 0.42);
+      background:
+        linear-gradient(180deg, rgba(8, 42, 59, 0.92), rgba(2, 21, 34, 0.94));
+      box-shadow: inset 0 1px 0 rgba(170, 241, 255, 0.08);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+    .garage-part-card-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .garage-part-card-title {
+      margin: 0;
+      font-size: 18px;
+      color: #effcff;
+      letter-spacing: 0.5px;
+    }
+    .garage-part-card-meta,
+    .garage-part-card-status,
+    .garage-part-card-extras {
+      font-size: 12px;
+      color: #9ee1f8;
+    }
+    .garage-part-card-stats {
+      margin: 0;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 12px;
+    }
+    .garage-part-card-stats dt {
+      color: #8fd8f2;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+    .garage-part-card-stats dd {
+      margin: 0;
+      color: #ecfbff;
+      font-size: 13px;
+    }
+    .garage-part-card-warnings,
+    .garage-modal-warning-list {
+      margin: 0;
+      padding-left: 18px;
+      color: #ffd39e;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .garage-part-card-actions,
+    .garage-modal-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .garage-action-button {
+      border: 1px solid rgba(111, 220, 255, 0.52);
+      background: rgba(0, 39, 57, 0.65);
+      color: #dffbff;
+      font-family: monospace;
+      font-size: 12px;
+      padding: 7px 10px;
+      cursor: pointer;
+    }
+    .garage-action-button.primary {
+      background: rgba(0, 104, 145, 0.75);
+    }
+    .garage-action-button.danger {
+      border-color: rgba(255, 133, 122, 0.6);
+      background: rgba(101, 25, 20, 0.72);
+    }
+    .garage-action-button:hover,
+    .garage-action-button:focus {
+      outline: none;
+      background: rgba(0, 96, 136, 0.86);
+    }
+    .garage-add-button {
+      justify-self: start;
+    }
+    .garage-modal-overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(3px);
+      z-index: 40;
+    }
+    .garage-modal {
+      width: min(980px, 100%);
+      max-height: min(90vh, 820px);
+      overflow: auto;
+      border: 1px solid rgba(115, 221, 255, 0.55);
+      background: linear-gradient(180deg, rgba(6, 38, 55, 0.98), rgba(0, 17, 28, 0.98));
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+      padding: 18px;
+    }
+    .garage-modal-content {
+      display: grid;
+      gap: 14px;
+    }
+    .garage-modal-title {
+      margin: 0;
+      color: #f0fdff;
+      font-size: 20px;
+      letter-spacing: 0.6px;
+    }
+    .garage-modal-body {
+      margin: 0;
+      color: #bfeaf6;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .garage-modal-compare {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+    }
+    .garage-definition-form {
+      display: grid;
+      gap: 10px;
+    }
+    .garage-definition-row {
+      display: grid;
+      gap: 5px;
+      color: #cdeffc;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .garage-definition-row input {
+      width: 100%;
+      border: 1px solid rgba(116, 217, 255, 0.42);
+      background: rgba(3, 26, 39, 0.92);
+      color: #eafcff;
+      font-family: monospace;
+      font-size: 13px;
+      padding: 7px 8px;
+    }
+    @media (max-width: 900px) {
+      .pause-loadout-layout {
+        grid-template-columns: 1fr;
+      }
+      .pause-loadout-slots {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 640px) {
+      .pause-loadout-slots {
+        grid-template-columns: 1fr;
+      }
+      .garage-part-card-stats {
+        grid-template-columns: 1fr;
+      }
     }
     #devConsoleOverlay {
       position: absolute;
@@ -760,14 +935,14 @@
   </div>
 </div>
 <div id="pauseOverlay" aria-hidden="true">
-  <div class="pause-panel" role="dialog" aria-modal="true" aria-label="Pause Menu">
-    <div class="pause-title">Paused</div>
+  <div id="pausePanelDialog" class="pause-panel" role="dialog" aria-roledescription="dialogue" aria-modal="true" aria-labelledby="pauseMenuTitle" tabindex="-1">
+    <div id="pauseMenuTitle" class="pause-title" tabindex="-1">Paused</div>
     <div class="pause-debug-tabs" aria-label="Developer Debug Tabs">
       <div class="pause-debug-tab-buttons" role="tablist" aria-label="Pause Debug Tabs">
         <button id="pauseDebugTabRuntimeButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="true" aria-controls="pauseDebugRuntimePanel">Runtime Stats</button>
         <button id="pauseDebugTabEventsButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugEventsPanel">Event Log</button>
         <button id="pauseDebugTabTuningButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugTuningPanel">Live Tuning</button>
-        <button id="pauseDebugTabLoadoutButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugLoadoutPanel">Loadout</button>
+        <button id="pauseDebugTabLoadoutButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugLoadoutPanel">Garage</button>
       </div>
       <section id="pauseDebugRuntimePanel" class="pause-debug-tab-panel active" role="tabpanel" aria-label="Runtime Stats">
         <pre id="pauseDebugRuntimeContent" class="pause-debug-pre">Runtime stats loading...</pre>
@@ -789,13 +964,13 @@
         </div>
         <div class="pause-debug-hint">Live tuning applies instantly while paused and after resuming.</div>
       </section>
-      <section id="pauseDebugLoadoutPanel" class="pause-debug-tab-panel" role="tabpanel" aria-label="Loadout">
+      <section id="pauseDebugLoadoutPanel" class="pause-debug-tab-panel" role="tabpanel" aria-label="Garage">
         <div class="pause-loadout-layout">
           <ul id="pauseLoadoutSlotList" class="pause-loadout-slots" aria-label="Loadout slots"></ul>
-          <section class="pause-loadout-details" aria-live="polite" aria-atomic="false">
-            <h3 id="pauseLoadoutTitle" class="pause-loadout-title">Loadout</h3>
-            <pre id="pauseLoadoutDetailsContent" class="pause-loadout-pre">Loadout details loading...</pre>
-            <div class="pause-loadout-summary">Use tab and arrow keys to inspect each equipped subsystem and aggregate stats.</div>
+          <section class="pause-loadout-details" aria-live="off" aria-atomic="false">
+            <h3 id="pauseLoadoutTitle" class="pause-loadout-title">Garage</h3>
+            <div id="pauseLoadoutContent" class="garage-part-list">Garage loading...</div>
+            <div id="pauseLoadoutSummary" class="pause-loadout-summary">Browse owned parts, equip them to the current mech, or toggle dev mode to edit the catalog.</div>
           </section>
         </div>
       </section>

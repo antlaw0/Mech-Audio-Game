@@ -1,5 +1,19 @@
 # 🧾 MECH COPILOT EXECUTION PACK (v4)
 
+## Temporary Execution Pause
+Copilot status: in-progress
+Developer status:
+
+Primary roadmap execution is temporarily paused while the client-only Garage and Parts Catalog system is implemented and validated. This workstream currently covers:
+
+- client-side part definitions vs. owned part instances
+- garage inventory and mech equip/swap UI
+- reusable part cards
+- stat resolution for part instances
+- developer-mode catalog editing flow
+
+Resume normal ticket progression after Garage approval.
+
 ### ROADMAP AUTHORITY
 
 This execution pack implements the master specification.
