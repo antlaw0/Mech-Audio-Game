@@ -1052,59 +1052,559 @@ Use:
 * weight
 * heat
 
+# ⚡ PHASE 4 — ENERGY SYSTEM
+
 ---
 
 ## Ticket 18 — Energy Starvation
+
+Copilot status: not started
+Developer status:
+
+### 🧠 Copilot Prompt
+
+Implement energy starvation behavior.
+
+When:
+
+```text
+currentEP <= 0
+```
 
 Disable:
 
 * flight
 * energy weapons
-* boost
+* boost systems
 
-Ground movement remains.
+Ground movement remains available.
 
----
+Physical weapons remain usable.
 
-# 🛡️ PHASE 5 — COMBAT PIPELINE
-
----
-
-## Ticket 19 — Defense Calculation
+Trigger:
 
 ```text
-mitigation = x / (x + 100)
-finalDamage = incoming * (1 - mitigation)
+energy_starved
+```
+
+when entering starvation.
+
+Trigger:
+
+```text
+energy_restored
+```
+
+when exiting starvation.
+
+---
+
+### 🎯 Expected Outcome
+
+* Mech remains mobile
+* Energy-dependent systems shut down immediately
+
+---
+
+### 🧪 Verify
+
+* Set energy to 0
+* Attempt boost
+* Attempt flight
+* Attempt ballistic weapon
+* Confirm only energy systems fail
+
+---
+
+# 🎯 PHASE 5 — TARGETING + COMBAT COGNITION
+
+---
+
+## Ticket 19 — Target Lock Acquisition
+
+Copilot status: not started
+Developer status:
+
+### 🧠 Copilot Prompt
+
+Implement target lock acquisition.
+
+A target becomes lockable when:
+
+* inside lock box
+* within weapon range
+* line of sight exists
+
+Bronze lock must occur instantly.
+
+If multiple targets qualify:
+
+Use target priority:
+
+```text
+targetScore =
+(crosshairAlignment * 0.5) +
+(distanceWeight * 0.3) +
+(targetSizeWeight * 0.2)
+```
+
+Highest score wins.
+
+Implement hysteresis.
+
+Current target remains selected unless another target exceeds score by hysteresis threshold.
+
+---
+
+### Required runtime data
+
+```text
+currentTargetId
+lockProgress
+targetScore
 ```
 
 ---
 
-## Ticket 20 — Damage Routing
+### 🎯 Expected Outcome
 
-* physical → PDEF
-* energy → EDEF
+* Stable target selection
+* No target jitter
 
 ---
 
-## Ticket 21 — Combat Resolution Order
+### 🧪 Verify
 
-Process:
+* Spawn multiple enemies
+* Sweep crosshairs across targets
+* Confirm stable lock behavior
+
+---
+
+## Ticket 20 — Continuous Lock Progression
+
+Copilot status: not started
+Developer status:
+
+### 🧠 Copilot Prompt
+
+Implement continuous lock progression:
 
 ```text
-damage
-heat
-energy
-stagger
-subsystem damage
+lockProgress = 0–100
+```
+
+Lock gain speed affected by:
+
+* crosshair alignment
+* target distance
+* target movement
+* head.lockAcquisition
+* head.trackingStability
+* computer.processorSpeed
+* chip modifiers
+
+Lock thresholds:
+
+```text
+0–24 Bronze
+25–59 Silver
+60–84 Gold
+85–100 Platinum
+```
+
+Lock loss causes decay.
+
+Decay affected by:
+
+```text
+computer.lockRetention
 ```
 
 ---
 
-## Ticket 22 — Subsystem Damage
+### 🎯 Expected Outcome
 
-Random subsystem hit.
-
-Destroying parts disables them.
+* Lock grows smoothly
+* Faster targets harder to refine
 
 ---
+
+### 🧪 Verify
+
+* Track stationary target
+* Track moving target
+* Compare lock times
+
+---
+
+## Ticket 21 — Lock Audio + Cockpit Announcements
+
+Copilot status: not started
+Developer status:
+
+### 🧠 Copilot Prompt
+
+Implement lock audio.
+
+Continuous lock tone:
+
+Pitch scales proportionally with:
+
+```text
+lockProgress
+```
+
+Threshold announcements:
+
+Bronze:
+
+```text
+Target acquired
+```
+
+Silver:
+
+```text
+Subsystem analysis available
+```
+
+Gold:
+
+```text
+Precision lock
+```
+
+Platinum:
+
+```text
+Surgical lock
+```
+
+Must support:
+
+* audio
+* speech
+* debug text
+
+---
+
+### 🎯 Expected Outcome
+
+* Player can track lock state without visuals
+
+---
+
+### 🧪 Verify
+
+* Lock target from 0 to Platinum
+* Confirm all transitions
+
+---
+
+## Ticket 22 — Lock Memory Bandwidth
+
+Copilot status: not started
+Developer status:
+
+### 🧠 Copilot Prompt
+
+Implement target memory.
+
+Computer exposes:
+
+```text
+memoryBandwidth
+```
+
+Partial lock progress may be retained across multiple targets.
+
+Rules:
+
+Each remembered target consumes bandwidth.
+
+When bandwidth is full:
+
+* weakest remembered lock is discarded
+
+When target destroyed:
+
+* memory returns to pool
+
+Lock memory decays over time.
+
+---
+
+### 🎯 Expected Outcome
+
+* Player can switch targets without fully restarting lock
+
+---
+
+### 🧪 Verify
+
+* Lock enemy A
+* Switch to enemy B
+* Return to enemy A
+* Confirm retained progress
+
+---
+
+## Ticket 23 — Bronze Combat Routing
+
+Copilot status: not started
+Developer status:
+
+### 🧠 Copilot Prompt
+
+At Bronze lock:
+
+Subsystem targeting is disabled.
+
+Weapon spread uses full accuracy cone.
+
+Damage routing:
+
+```text
+all direct-fire damage → Core
+```
+
+Missiles ignore subsystem targeting.
+
+Missiles always target mech center mass.
+
+---
+
+### 🎯 Expected Outcome
+
+* Spray-and-pray remains viable
+
+---
+
+### 🧪 Verify
+
+* Fire at Bronze
+* Confirm only Core takes damage
+
+---
+
+## Ticket 24 — Subsystem Selection
+
+Copilot status: not started
+Developer status:
+
+### 🧠 Copilot Prompt
+
+Subsystem targeting unlocks at Silver.
+
+Implement dedicated controls:
+
+```text
+NextSubsystem
+PreviousSubsystem
+```
+
+Static cycle order:
+
+```text
+Head
+Core
+LeftArm
+RightArm
+LeftMount
+RightMount
+Movement
+FlightSystem
+```
+
+Bronze:
+
+* subsystem controls disabled
+
+Silver+:
+
+* subsystem controls enabled
+
+---
+
+### 🎯 Expected Outcome
+
+* Deterministic subsystem selection
+* Consistent muscle memory
+
+---
+
+### 🧪 Verify
+
+* Reach Silver
+* Cycle all subsystems
+
+---
+
+## Ticket 25 — Core Breach + Internal Exposure
+
+Copilot status: not started
+Developer status:
+
+### 🧠 Copilot Prompt
+
+When Core integrity reaches 0:
+
+Expose internal systems:
+
+```text
+Computer
+Generator
+ThermalRegulator
+```
+
+Append exposed systems to subsystem cycle order.
+
+Core destruction:
+
+* removes Core defensive bonuses
+* does NOT destroy mech
+
+---
+
+### 🎯 Expected Outcome
+
+* Layered targeting becomes available
+
+---
+
+### 🧪 Verify
+
+* Destroy Core
+* Confirm internals appear
+
+---
+
+## Ticket 26 — Lock Stage Combat Accuracy
+
+Copilot status: not started
+Developer status:
+
+### 🧠 Copilot Prompt
+
+Apply lock-stage weapon compensation.
+
+---
+
+## Bronze
+
+* no compensation
+* full spread
+
+---
+
+## Silver
+
+* partial spread compensation
+* partial subsystem bias
+
+---
+
+## Gold
+
+* strong recoil compensation
+* strong subsystem bias
+
+---
+
+## Platinum
+
+For non-missile direct-fire weapons:
+
+* guaranteed subsystem hit
+
+---
+
+### 🎯 Expected Outcome
+
+* Lock refinement directly affects combat precision
+
+---
+
+### 🧪 Verify
+
+* Fire at each lock stage
+* Confirm progressively tighter routing
+
+---
+
+## Ticket 27 — Lock Loss + Subsystem Retarget Penalty
+
+Copilot status: not started
+Developer status:
+
+### 🧠 Copilot Prompt
+
+Implement lock penalties.
+
+When subsystem selection changes:
+
+Reduce lock stage by one:
+
+```text
+Platinum → Gold
+Gold → Silver
+Silver → Bronze
+Bronze → Bronze
+```
+
+When target lock is broken:
+
+* lock enters retention state
+* retained lock decays over time
+
+---
+
+### 🎯 Expected Outcome
+
+* Target switching remains tactical
+
+---
+
+### 🧪 Verify
+
+* Reach Platinum
+* Switch subsystem
+* Confirm stage drops
+
+---
+
+## Ticket 28 — Replace Random Subsystem Damage
+
+Copilot status: not started
+Developer status:
+
+### 🧠 Copilot Prompt
+
+Remove all legacy random subsystem hit logic.
+
+All subsystem damage must route through:
+
+* Bronze Core routing
+* Silver+ selected subsystem routing
+* Platinum guaranteed subsystem routing
+
+No hidden random subsystem damage is allowed.
+
+Splash weapons may damage multiple subsystems based on blast radius.
+
+Missiles always use center-mass blast routing.
+
+---
+
+### 🎯 Expected Outcome
+
+* Combat fully matches Master Spec
+
+---
+
+### 🧪 Verify
+
+* Search codebase for legacy random subsystem logic
+* Confirm all combat routes through targeting system
 
