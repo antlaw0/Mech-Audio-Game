@@ -515,6 +515,7 @@ function startTestMap(): void {
   let devDriftMultiplier = 1
   let devAudioPitchScale = 1
   let devAudioVolumeScale = 1
+  let devEnergyStarved = false
 
   const DEV_PART_SLOTS = [
     'Head',
@@ -989,6 +990,9 @@ function startTestMap(): void {
   } // end function clearGameplayInputs
 
   const getWeaponReloadCost = (weapon: PlayerWeaponDefinition): number => {
+    if (isEnergyWeapon(weapon)) {
+      return 0
+    }
     return Math.ceil(Math.max(0, weapon.clipSize) * Math.max(0, weapon.ammoResourcePerRound))
   } // end function getWeaponReloadCost
 
@@ -1153,6 +1157,11 @@ function startTestMap(): void {
       announceBlockedAction('reload-ranged-offline', 'Cannot reload. Right arm or right hand is offline.')
       return
     } // end if ranged subsystem is offline
+
+    if (isEnergyWeapon(playerWeapon)) {
+      announceBlockedAction('reload-energy-weapon', 'Energy weapons do not use reload.')
+      return
+    } // end if current weapon uses energy instead of ammo
 
     if (playerWeapon.ammoInClip >= playerWeapon.clipSize) {
       announceBlockedAction('reload-clip-full', 'Clip already full.')
@@ -1760,6 +1769,8 @@ function startTestMap(): void {
     } // end function parseNum
     return {
       weaponType: playerWeapon.weaponType,
+      damageType: playerWeapon.damageType,
+      projectileType: playerWeapon.projectileType,
       accuracy: Math.max(0.01, Math.min(1, parseNum(weaponAccuracyInput, playerWeapon.accuracy))),
       damagePerShot: Math.max(1, Math.round(parseNum(weaponDamageInput, playerWeapon.damagePerShot))),
       projectileCount: Math.max(1, Math.round(parseNum(weaponProjectileCountInput, playerWeapon.projectileCount))),
@@ -1780,6 +1791,7 @@ function startTestMap(): void {
       clipSize: playerWeapon.clipSize,
       ammoInClip: playerWeapon.ammoInClip,
       ammoResourcePerRound: playerWeapon.ammoResourcePerRound,
+      energyCostPerShot: playerWeapon.energyCostPerShot,
       reloadDefinition: {
         timeline: playerWeapon.reloadDefinition.timeline.map((segment) => ({ ...segment })),
         servoLoopSoundPath: playerWeapon.reloadDefinition.servoLoopSoundPath,
@@ -2950,6 +2962,47 @@ function startTestMap(): void {
     }
     return 'stable'
   } // end function getEnergyStateLabel
+
+  const isEnergyStarved = (): boolean => {
+    return player.ep <= 0
+  } // end function isEnergyStarved
+
+  const isEnergyWeapon = (weapon: PlayerWeaponDefinition): boolean => {
+    return weapon.weaponType === 'energy' || Math.max(0, weapon.energyCostPerShot ?? 0) > 0
+  } // end function isEnergyWeapon
+
+  const updateEnergyStarvationState = (): boolean => {
+    const starved = isEnergyStarved()
+    if (starved !== devEnergyStarved) {
+      devEnergyStarved = starved
+      nextEventTag(starved ? 'energy_starved' : 'energy_restored')
+    }
+    return starved
+  } // end function updateEnergyStarvationState
+
+  const applyEnergyStarvationShutdown = (): void => {
+    if (!updateEnergyStarvationState()) {
+      return
+    }
+
+    input.flightTogglePending = false
+    input.boostTogglePending = false
+
+    if (player.isBoosting) {
+      player.isBoosting = false
+      if (audio.isAudioStarted()) {
+        audio.stopBoostAudio()
+      }
+    }
+
+    if (player.isFlying && player.flightState !== 'descending' && player.flightState !== 'grounded') {
+      player.flightState = 'descending'
+      announceBlockedAction('flight-energy-starved', 'Energy starved. Flight disabled.')
+      if (audio.isAudioStarted()) {
+        audio.stopFlightLoop({ quickSpinDown: true })
+      }
+    }
+  } // end function applyEnergyStarvationShutdown
 
   const inferMobilityType = (): string => {
     const movementPart = getDevPartState('Movement')
@@ -5101,9 +5154,15 @@ function startTestMap(): void {
     const minBoostEnergy = Math.max(1, (flightRuntimeProfile.energyUsePerSecond + BOOST_EP_DRAIN_PER_SECOND) * 0.25)
 
     applyOverheatShutdown()
+    applyEnergyStarvationShutdown()
+    const energyStarved = isEnergyStarved()
 
     if (input.flightTogglePending && player.flightState === 'grounded') {
-      if (overheatShutdownActive) {
+      if (energyStarved) {
+        input.flightTogglePending = false
+        audio.playNegativeActionTone()
+        announceBlockedAction('flight-energy-starved', 'Cannot fly. Energy starved.')
+      } else if (overheatShutdownActive) {
         input.flightTogglePending = false
         audio.playNegativeActionTone()
         announceBlockedAction('flight-overheat', 'Cannot fly. Overheated.')
@@ -5126,7 +5185,11 @@ function startTestMap(): void {
       const canToggleBoost = !overheatShutdownActive
         && player.isFlying
         && (player.flightState === 'ascending' || player.flightState === 'airborne')
-      if (overheatShutdownActive) {
+      if (energyStarved) {
+        input.boostTogglePending = false
+        audio.playNegativeActionTone()
+        announceBlockedAction('boost-energy-starved', 'Cannot boost. Energy starved.')
+      } else if (overheatShutdownActive) {
         input.boostTogglePending = false
         audio.playNegativeActionTone()
         announceBlockedAction('boost-overheat', 'Cannot boost. Overheated.')
@@ -5202,22 +5265,7 @@ function startTestMap(): void {
     devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + flightHeatGain)
     updateHeatState()
     applyOverheatShutdown()
-
-    // Force landing when EP is fully depleted while in flight
-    if (player.ep <= 0 && player.isFlying &&
-        player.flightState !== 'descending' && player.flightState !== 'grounded') {
-      if (player.isBoosting) {
-        player.isBoosting = false
-        if (audio.isAudioStarted()) {
-          audio.stopBoostAudio()
-        } // end if stopping boost audio on EP depletion
-      } // end if was boosting
-      player.flightState = 'descending'
-      announceBlockedAction('flight-energy-depleted', 'Energy depleted. Landing.')
-      if (audio.isAudioStarted()) {
-        audio.stopFlightLoop({ quickSpinDown: true })
-      } // end if stopping flight loop on EP depletion
-    } // end if EP depleted while flying
+    applyEnergyStarvationShutdown()
 
     if (input.speakHpPending) {
       input.speakHpPending = false
@@ -5428,13 +5476,17 @@ function startTestMap(): void {
     }
 
     if (shouldAttemptShot && !isReloading && playerFireCooldownSeconds <= 0) {
+      const weaponUsesAmmo = !isEnergyWeapon(playerWeapon)
       if (isOverheatShutdownActive()) {
         audio.playNegativeActionTone()
         announceBlockedAction('fire-overheat', 'Cannot fire. Overheated.')
+      } else if (isEnergyStarved() && isEnergyWeapon(playerWeapon)) {
+        audio.playNegativeActionTone()
+        announceBlockedAction('fire-energy-starved', 'Cannot fire energy weapon. Energy starved.')
       } else if (!canUseRangedSubsystem()) {
         audio.playNegativeActionTone()
         announceBlockedAction('fire-ranged-offline', 'Cannot fire. Right arm or right hand is offline.')
-      } else if (playerWeapon.ammoInClip <= 0) {
+      } else if (weaponUsesAmmo && playerWeapon.ammoInClip <= 0) {
         if (!hasPlayedEmptyClipForCurrentTriggerPull) {
           audio.fireGunshot(EMPTY_CLIP_SOUND_PATH)
           announceBlockedAction('fire-empty-clip', 'Cannot fire. Clip is empty.')
@@ -5444,12 +5496,16 @@ function startTestMap(): void {
       const playerSpeed = Math.hypot(player.x - previousPlayerX, player.y - previousPlayerY) / Math.max(deltaSeconds, 0.0001)
       const maxMoveSpeed = player.isFlying ? flightSpeedLimit : PLAYER_SPEED
       const speedFraction = Math.min(1, playerSpeed / maxMoveSpeed)
+      const shotEnergyCost = Math.max(0, playerWeapon.energyCostPerShot ?? 0)
 
       if (playerWeapon.weaponType === 'missile') {
         const lockedTargetId = lockUpdate.lockedTank?.id ?? null
         if (missileRequiresLock && (!missileLockConfirmed || lockedTargetId === null)) {
           audio.playNegativeActionTone()
           announceBlockedAction('fire-missile-lock', 'Cannot fire missile. Lock is not confirmed.')
+        } else if (player.ep < shotEnergyCost) {
+          audio.playNegativeActionTone()
+          announceBlockedAction('fire-energy-cost', 'Cannot fire. Not enough energy.')
         } else {
           audio.fireGunshot(playerWeapon.fireSoundPath)
           updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
@@ -5471,51 +5527,69 @@ function startTestMap(): void {
               playerWeapon.explosionRadius,
               playerWeapon.explosionDamage,
               playerWeapon.explosionSounds,
+              playerWeapon.projectileType === 'rocket' ? 'rocket' : 'missile',
               playerWeapon.accuracy,
               speedFraction
             )
           } // end for each missile in shot
-          playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
+          if (shotEnergyCost > 0) {
+            player.ep = Math.max(0, player.ep - shotEnergyCost)
+          }
+          if (weaponUsesAmmo) {
+            playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
+          }
           applyWeaponHeatGain(playerWeapon)
         } // end if missile shot blocked or fired
       } else {
-        audio.fireGunshot(playerWeapon.fireSoundPath)
-        updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
-        if (playerWeapon.fireRateCooldownSeconds > 0) {
-          playerFireCooldownSeconds = playerWeapon.fireRateCooldownSeconds
-        } // end if fire rate applies
-        if (lockUpdate.lockedTank !== null) {
-          spawnPlayerBulletToward(
-            combatWorld,
-            player,
-            lockUpdate.lockedTank.x,
-            lockUpdate.lockedTank.y,
-            lockUpdate.lockedTank.height + PLAYER_HEIGHT,
-            playerWeapon.accuracy,
-            speedFraction,
-            playerWeapon.damagePerShot,
-            playerWeapon.bulletSpeed,
-            playerWeapon.maxRange,
-            playerWeapon.projectileSize,
-            playerWeapon.projectileCount,
-            playerWeapon.spreadDegrees
-          )
+        if (player.ep < shotEnergyCost) {
+          audio.playNegativeActionTone()
+          announceBlockedAction('fire-energy-cost', 'Cannot fire. Not enough energy.')
         } else {
-          spawnPlayerBullet(
-            combatWorld,
-            player,
-            playerWeapon.damagePerShot,
-            playerWeapon.bulletSpeed,
-            playerWeapon.maxRange,
-            playerWeapon.projectileSize,
-            playerWeapon.accuracy,
-            speedFraction,
-            playerWeapon.projectileCount,
-            playerWeapon.spreadDegrees
-          )
-        } // end if locked target for accuracy cone
-        playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
-        applyWeaponHeatGain(playerWeapon)
+          audio.fireGunshot(playerWeapon.fireSoundPath)
+          updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
+          if (playerWeapon.fireRateCooldownSeconds > 0) {
+            playerFireCooldownSeconds = playerWeapon.fireRateCooldownSeconds
+          } // end if fire rate applies
+          if (lockUpdate.lockedTank !== null) {
+            spawnPlayerBulletToward(
+              combatWorld,
+              player,
+              lockUpdate.lockedTank.x,
+              lockUpdate.lockedTank.y,
+              lockUpdate.lockedTank.height + PLAYER_HEIGHT,
+              playerWeapon.accuracy,
+              speedFraction,
+              playerWeapon.damagePerShot,
+              playerWeapon.bulletSpeed,
+              playerWeapon.maxRange,
+              playerWeapon.projectileSize,
+              playerWeapon.projectileType,
+              playerWeapon.projectileCount,
+              playerWeapon.spreadDegrees
+            )
+          } else {
+            spawnPlayerBullet(
+              combatWorld,
+              player,
+              playerWeapon.damagePerShot,
+              playerWeapon.bulletSpeed,
+              playerWeapon.maxRange,
+              playerWeapon.projectileSize,
+              playerWeapon.projectileType,
+              playerWeapon.accuracy,
+              speedFraction,
+              playerWeapon.projectileCount,
+              playerWeapon.spreadDegrees
+            )
+          } // end if locked target for accuracy cone
+          if (shotEnergyCost > 0) {
+            player.ep = Math.max(0, player.ep - shotEnergyCost)
+          }
+          if (weaponUsesAmmo) {
+            playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
+          }
+          applyWeaponHeatGain(playerWeapon)
+        }
       } // end if missile or ballistic firing mode
       } // end if weapon has ammo in clip and subsystem is online
     } // end if fire input and cooldown allow

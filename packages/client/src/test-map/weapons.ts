@@ -12,9 +12,9 @@ import {
 import type { MeleeWeaponStats, WeaponReloadDefinition, WeaponStats } from './types.js'
 
 export interface PlayerWeaponDefinition extends WeaponStats {
-  id: 'pistol' | 'shotgun' | 'assault-rifle' | 'missile-launcher' | 'rocket-launcher' | 'sniper-rifle'
+  id: 'pistol' | 'laser-pistol' | 'shotgun' | 'assault-rifle' | 'missile-launcher' | 'rocket-launcher' | 'sniper-rifle'
   name: string
-  selectionKey: '1' | '2' | '3' | '4' | '5' | '6'
+  selectionKey: '1' | '2' | '3' | '4' | '5' | '6' | '7'
   fireSoundPath: string
 } // end interface PlayerWeaponDefinition
 
@@ -126,6 +126,8 @@ export const PLAYER_WEAPON_DEFINITIONS: readonly PlayerWeaponDefinition[] = [
     selectionKey: '1',
     fireSoundPath: 'assets/sounds/weapons/pistol_fire.ogg',
     weaponType: 'ballistic',
+    damageType: 'physical',
+    projectileType: 'bullet',
     accuracy: Math.max(WEAPON_DEFAULT_ACCURACY, 0.94),
     lockOnRange: WEAPON_LOCK_ON_RANGE,
     damagePerShot: 18,
@@ -149,11 +151,44 @@ export const PLAYER_WEAPON_DEFINITIONS: readonly PlayerWeaponDefinition[] = [
     reloadDefinition: createPistolReloadDefinition()
   },
   {
+    id: 'laser-pistol',
+    name: 'Laser Pistol',
+    selectionKey: '7',
+    fireSoundPath: 'assets/sounds/weapons/laser_pistol.ogg',
+    weaponType: 'energy',
+    damageType: 'energy',
+    projectileType: 'laserBeam',
+    accuracy: Math.max(WEAPON_DEFAULT_ACCURACY, 0.94),
+    lockOnRange: WEAPON_LOCK_ON_RANGE,
+    damagePerShot: 18,
+    projectileCount: 1,
+    spreadDegrees: 1.4,
+    bulletSpeed: BULLET_SPEED,
+    maxRange: BULLET_MAX_DIST,
+    isFullAuto: false,
+    fireRateCooldownSeconds: 0.33,
+    projectileSize: 0.22,
+    lockOnWindowWidthPercent: 100,
+    lockOnWindowHeightPercent: 100,
+    lockOnTimeMs: 0,
+    trackingRating: 0,
+    explosionRadius: 0,
+    explosionDamage: 0,
+    explosionSounds: [],
+    clipSize: 10,
+    ammoInClip: 10,
+    ammoResourcePerRound: 1,
+    energyCostPerShot: 5,
+    reloadDefinition: createPistolReloadDefinition()
+  },
+  {
     id: 'shotgun',
     name: 'Shotgun',
     selectionKey: '2',
     fireSoundPath: 'assets/sounds/weapons/shotgun_fire.ogg',
     weaponType: 'ballistic',
+    damageType: 'physical',
+    projectileType: 'bullet',
     accuracy: 0.82,
     lockOnRange: WEAPON_LOCK_ON_RANGE,
     damagePerShot: 11,
@@ -182,6 +217,8 @@ export const PLAYER_WEAPON_DEFINITIONS: readonly PlayerWeaponDefinition[] = [
     selectionKey: '3',
     fireSoundPath: 'assets/sounds/weapons/assault_fire.ogg',
     weaponType: 'ballistic',
+    damageType: 'physical',
+    projectileType: 'bullet',
     accuracy: 0.88,
     lockOnRange: WEAPON_LOCK_ON_RANGE,
     damagePerShot: 9,
@@ -210,6 +247,8 @@ export const PLAYER_WEAPON_DEFINITIONS: readonly PlayerWeaponDefinition[] = [
     selectionKey: '4',
     fireSoundPath: 'assets/sounds/weapons/missileFire.ogg',
     weaponType: 'missile',
+    damageType: 'explosive',
+    projectileType: 'missile',
     accuracy: 1,
     lockOnRange: WEAPON_LOCK_ON_RANGE,
     damagePerShot: 20,
@@ -242,6 +281,8 @@ export const PLAYER_WEAPON_DEFINITIONS: readonly PlayerWeaponDefinition[] = [
     selectionKey: '5',
     fireSoundPath: 'assets/sounds/weapons/rocket_fire.OGG',
     weaponType: 'missile',
+    damageType: 'explosive',
+    projectileType: 'rocket',
     accuracy: 0.72,
     lockOnRange: WEAPON_LOCK_ON_RANGE,
     damagePerShot: 20,
@@ -274,6 +315,8 @@ export const PLAYER_WEAPON_DEFINITIONS: readonly PlayerWeaponDefinition[] = [
     selectionKey: '6',
     fireSoundPath: 'assets/sounds/weapons/sniper_fire.ogg',
     weaponType: 'ballistic',
+    damageType: 'physical',
+    projectileType: 'bullet',
     accuracy: 0.995,
     lockOnRange: WEAPON_LOCK_ON_RANGE * 1.45,
     damagePerShot: 52,

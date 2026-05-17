@@ -1058,8 +1058,10 @@ Use:
 
 ## Ticket 18 — Energy Starvation
 
-Copilot status: not started
-Developer status:
+Copilot status: Complete
+Developer status: Approved
+
+Notes: Added runtime energy-starvation state transitions (`energy_starved`, `energy_restored`) plus immediate shutdown of flight/boost while EP is 0. Added an extensible placeholder gate for energy-weapon firing (`energyDependent` / `energyCostPerShot`) so physical weapons remain usable.
 
 ### 🧠 Copilot Prompt
 

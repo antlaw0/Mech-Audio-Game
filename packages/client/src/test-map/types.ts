@@ -160,7 +160,11 @@ export interface TargetLockState {
 
 export interface WeaponStats {
   /** Weapon archetype affects firing behavior and lock requirements. */
-  weaponType: 'ballistic' | 'missile'
+  weaponType: 'ballistic' | 'missile' | 'energy'
+  /** Damage channel used by this weapon profile. */
+  damageType: 'physical' | 'energy' | 'explosive'
+  /** Projectile visual category used by renderer and combat spawning. */
+  projectileType: 'bullet' | 'rocket' | 'missile' | 'laserBeam'
   /** 0.0 (chaotic) – 1.0 (perfect): offsets the entire projectile spread cone from the aim direction. */
   accuracy: number
   /** World-unit radius within which target lock engages. */
@@ -203,6 +207,8 @@ export interface WeaponStats {
   ammoResourcePerRound: number
   /** Optional explicit heat generated per trigger pull. Falls back to runtime-derived value when omitted. */
   heatPerShot?: number
+  /** Optional EP consumed per trigger pull. */
+  energyCostPerShot?: number
   /** Reload timeline that defines clip audio sequencing and synchronized servo automation. */
   reloadDefinition: WeaponReloadDefinition
 } // end interface WeaponStats
@@ -228,7 +234,7 @@ export interface Bullet {
   zOrigin: number
   distance: number
   radius: number
-  kind: 'bullet' | 'missile'
+  kind: 'bullet' | 'rocket' | 'missile' | 'laserBeam'
   trail: TrailPoint[]
   alive: boolean
 } // end interface Bullet

@@ -46,6 +46,10 @@ const KIND_ENEMY = 2
 const KIND_TANK = 3
 const KIND_TANK_PROJECTILE = 4
 const KIND_MISSILE = 5
+const PROJECTILE_VISUAL_BULLET = 1
+const PROJECTILE_VISUAL_ROCKET = 2
+const PROJECTILE_VISUAL_MISSILE = 3
+const PROJECTILE_VISUAL_LASER_BEAM = 4
 const PROJECTILE_OWNER_PLAYER = 1
 const PROJECTILE_OWNER_ENEMY = 2
 const BULLET_HIT_RADIUS = 0.25
@@ -123,6 +127,7 @@ const ProjectileStats = defineComponent({
   maxDistance: Types.f32,
   originHeight: Types.f32,
   nearMissPlayed: Types.ui8,
+  visualType: Types.ui8,
   owner: Types.ui8
 })
 
@@ -229,6 +234,7 @@ function spawnTankProjectile(
   ProjectileStats.maxDistance[bullet] = definition.projectileMaxDistance
   ProjectileStats.originHeight[bullet] = originHeight
   ProjectileStats.nearMissPlayed[bullet] = 0
+  ProjectileStats.visualType[bullet] = PROJECTILE_VISUAL_BULLET
   ProjectileStats.owner[bullet] = PROJECTILE_OWNER_ENEMY
 } // end function spawnTankProjectile
 
@@ -555,6 +561,7 @@ export function spawnPlayerBullet(
   speed = BULLET_SPEED,
   maxDistance = BULLET_MAX_DIST,
   projectileSize = BULLET_HIT_RADIUS,
+  projectileVisualType: 'bullet' | 'rocket' | 'missile' | 'laserBeam' = 'bullet',
   accuracy = 1,
   playerSpeedFraction = 0,
   projectileCount = 1,
@@ -572,7 +579,8 @@ export function spawnPlayerBullet(
     damage,
     speed,
     maxDistance,
-    projectileSize
+    projectileSize,
+    projectileVisualType
   )
 } // end function spawnPlayerBullet
 
@@ -584,7 +592,8 @@ function spawnPlayerProjectile(
   damage: number,
   speed: number,
   maxDistance: number,
-  projectileSize: number
+  projectileSize: number,
+  projectileVisualType: 'bullet' | 'rocket' | 'missile' | 'laserBeam'
 ): void {
   const bullet = addEntity(world)
   addComponent(world, Position, bullet)
@@ -604,6 +613,15 @@ function spawnPlayerProjectile(
   ProjectileStats.maxDistance[bullet] = maxDistance
   ProjectileStats.originHeight[bullet] = (player.z ?? 0) + PLAYER_HEIGHT
   ProjectileStats.nearMissPlayed[bullet] = 0
+  if (projectileVisualType === 'laserBeam') {
+    ProjectileStats.visualType[bullet] = PROJECTILE_VISUAL_LASER_BEAM
+  } else if (projectileVisualType === 'rocket') {
+    ProjectileStats.visualType[bullet] = PROJECTILE_VISUAL_ROCKET
+  } else if (projectileVisualType === 'missile') {
+    ProjectileStats.visualType[bullet] = PROJECTILE_VISUAL_MISSILE
+  } else {
+    ProjectileStats.visualType[bullet] = PROJECTILE_VISUAL_BULLET
+  }
   ProjectileStats.owner[bullet] = PROJECTILE_OWNER_PLAYER
 } // end function spawnPlayerProjectile
 
@@ -636,7 +654,8 @@ function spawnPlayerProjectileBurst(
   damage: number,
   speed: number,
   maxDistance: number,
-  projectileSize: number
+  projectileSize: number,
+  projectileVisualType: 'bullet' | 'rocket' | 'missile' | 'laserBeam'
 ): void {
   const clampedAccuracy = Math.max(0, Math.min(1, accuracy))
   const baseHalfAngle = WEAPON_MAX_CONE_RADIANS * Math.max(0, 1 - clampedAccuracy)
@@ -657,7 +676,8 @@ function spawnPlayerProjectileBurst(
       damage,
       speed,
       maxDistance,
-      projectileSize
+      projectileSize,
+      projectileVisualType
     )
   } // end for each projectile in burst
 } // end function spawnPlayerProjectileBurst
@@ -679,6 +699,7 @@ export function spawnPlayerBulletToward(
   speed = BULLET_SPEED,
   maxDistance = BULLET_MAX_DIST,
   projectileSize = BULLET_HIT_RADIUS,
+  projectileVisualType: 'bullet' | 'rocket' | 'missile' | 'laserBeam' = 'bullet',
   projectileCount = 1,
   spreadDegrees = 0
 ): void {
@@ -697,7 +718,8 @@ export function spawnPlayerBulletToward(
     damage,
     speed,
     maxDistance,
-    projectileSize
+    projectileSize,
+    projectileVisualType
   )
 } // end function spawnPlayerBulletToward
 
@@ -713,6 +735,7 @@ export function spawnPlayerMissile(
   explosionRadius: number,
   explosionDamage: number,
   explosionSounds: string[],
+  projectileVisualType: 'rocket' | 'missile' = 'missile',
   accuracy = 1,
   playerSpeedFraction = 0
 ): void {
@@ -752,6 +775,9 @@ export function spawnPlayerMissile(
   ProjectileStats.maxDistance[missile] = Math.max(1, maxDistance)
   ProjectileStats.originHeight[missile] = originHeight
   ProjectileStats.nearMissPlayed[missile] = 0
+  ProjectileStats.visualType[missile] = projectileVisualType === 'rocket'
+    ? PROJECTILE_VISUAL_ROCKET
+    : PROJECTILE_VISUAL_MISSILE
   ProjectileStats.owner[missile] = PROJECTILE_OWNER_PLAYER
   MissileStats.targetId[missile] = targetTankId ?? 0
   MissileStats.trackingRating[missile] = Math.max(0, Math.min(1, trackingRating))
@@ -1575,7 +1601,19 @@ export function getCombatRenderState(world: CombatEcsWorld): {
         zOrigin: getNumber(ProjectileStats.originHeight, entity) ?? PLAYER_HEIGHT,
         distance,
         radius: Math.max(0.03, radius ?? BULLET_HIT_RADIUS),
-        kind: kind === KIND_MISSILE ? 'missile' : 'bullet',
+        kind: (() => {
+          const visualType = ProjectileStats.visualType[entity] ?? 0
+          if (visualType === PROJECTILE_VISUAL_LASER_BEAM) {
+            return 'laserBeam'
+          }
+          if (visualType === PROJECTILE_VISUAL_ROCKET) {
+            return 'rocket'
+          }
+          if (visualType === PROJECTILE_VISUAL_MISSILE) {
+            return 'missile'
+          }
+          return kind === KIND_MISSILE ? 'missile' : 'bullet'
+        })(),
         trail: kind === KIND_MISSILE ? [...(world.missileTrails.get(entity) ?? [])] : [],
         alive: true
       })

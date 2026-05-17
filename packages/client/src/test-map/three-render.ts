@@ -4,6 +4,9 @@ import { getCell } from './map-data.js'
 import type { Bullet, EnemyRender, Player, SpriteObject, TankRender } from './types.js'
 import { PLAYER_EYE_HEIGHT, WORLD_WALL_HEIGHT } from './world-collision.js'
 
+const PROJECTILE_SPHERE_GEOMETRY = new THREE.SphereGeometry(0.05, 10, 10)
+const PROJECTILE_LASER_GEOMETRY = new THREE.CylinderGeometry(0.5, 0.5, 1, 10)
+
 interface ThreeRendererCreateArgs {
   canvas: HTMLCanvasElement
   canvasWidth: number
@@ -127,7 +130,7 @@ function createEnemyMesh(): THREE.Mesh {
 
 function createBulletMesh(): THREE.Mesh {
   return new THREE.Mesh(
-    new THREE.SphereGeometry(0.05, 10, 10),
+    PROJECTILE_SPHERE_GEOMETRY,
     new THREE.MeshBasicMaterial({ color: 0xfff2b0 })
   )
 } // end function createBulletMesh
@@ -534,15 +537,38 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
         if (mesh.material instanceof THREE.MeshBasicMaterial) {
           if (bullet.kind === 'missile') {
             mesh.material.color.setHex(0xffc96a)
+          } else if (bullet.kind === 'rocket') {
+            mesh.material.color.setHex(0xff9f4a)
+          } else if (bullet.kind === 'laserBeam') {
+            mesh.material.color.setHex(0x49a7ff)
           } else {
             mesh.material.color.setHex(0xfff2b0)
           } // end if missile or ballistic visual
         } // end if basic material
 
-        const renderedRadius = bullet.kind === 'missile'
+        const renderedRadius = (bullet.kind === 'missile' || bullet.kind === 'rocket')
           ? Math.max(0.08, bullet.radius)
           : Math.max(0.03, bullet.radius * 0.55)
-        mesh.scale.setScalar(renderedRadius / 0.05)
+        if (bullet.kind === 'laserBeam') {
+          if (mesh.geometry !== PROJECTILE_LASER_GEOMETRY) {
+            mesh.geometry = PROJECTILE_LASER_GEOMETRY
+          }
+          const beamRadius = Math.max(0.01, bullet.radius * 0.08)
+          const beamLength = Math.max(0.45, Math.min(1.6, bullet.radius * 2.2))
+          mesh.scale.set(beamRadius, beamLength, beamRadius)
+          const direction = new THREE.Vector3(
+            Math.cos(bullet.angle) * Math.cos(bullet.pitch),
+            -Math.sin(bullet.pitch),
+            Math.sin(bullet.angle) * Math.cos(bullet.pitch)
+          ).normalize()
+          mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
+        } else {
+          if (mesh.geometry !== PROJECTILE_SPHERE_GEOMETRY) {
+            mesh.geometry = PROJECTILE_SPHERE_GEOMETRY
+          }
+          mesh.scale.setScalar(renderedRadius / 0.05)
+          mesh.rotation.set(0, 0, 0)
+        }
 
         const horizontalDist = bullet.distance
         const bulletY = bullet.zOrigin - Math.sin(bullet.pitch) * horizontalDist
@@ -553,7 +579,7 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
         )
 
         if (trailPuffs) {
-          const trail = bullet.kind === 'missile' ? bullet.trail : []
+          const trail = (bullet.kind === 'missile' || bullet.kind === 'rocket') ? bullet.trail : []
           if (trail.length >= 2) {
             trailPuffs.visible = true
             for (let pointIndex = 0; pointIndex < trailPuffs.children.length; pointIndex += 1) {
