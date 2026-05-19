@@ -124,32 +124,20 @@ export function bindInput(
 
 
       if (event.code === 'Digit1') {
-        input.selectedWeaponSlot = 1
+        input.selectedWeaponSlot = 'RightHand'
       } // end if Digit1
 
       if (event.code === 'Digit2') {
-        input.selectedWeaponSlot = 2
+        input.selectedWeaponSlot = 'LeftHand'
       } // end if Digit2
 
       if (event.code === 'Digit3') {
-        input.selectedWeaponSlot = 3
+        input.selectedWeaponSlot = 'ShoulderRight'
       } // end if Digit3
 
       if (event.code === 'Digit4') {
-        input.selectedWeaponSlot = 4
+        input.selectedWeaponSlot = 'ShoulderLeft'
       } // end if Digit4
-
-      if (event.code === 'Digit5') {
-        input.selectedWeaponSlot = 5
-      } // end if Digit5
-
-      if (event.code === 'Digit6') {
-        input.selectedWeaponSlot = 6
-      } // end if Digit6
-
-      if (event.code === 'Digit7') {
-        input.selectedWeaponSlot = 7
-      } // end if Digit7
 
       if (event.code === 'Numpad1') {
         input.spawnTankPending = true

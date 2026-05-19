@@ -6,7 +6,9 @@ export const PART_CATEGORIES = [
   'LeftArm',
   'RightArm',
   'Utility1',
-  'Utility2'
+  'Utility2',
+  'HandWeapon',
+  'ShoulderWeapon'
 ] as const
 
 export type PartCategory = typeof PART_CATEGORIES[number]
@@ -52,6 +54,25 @@ export type PartDefinition = {
   meleePower?: number
   accuracy?: number
   sensorStrength?: number
+  twoHanded?: boolean
+  isMelee?: boolean
+  isPassive?: boolean
+  damagePerShot?: number
+  fireRateCooldownSeconds?: number
+  projectileCount?: number
+  projectileType?: string
+  spreadDegrees?: number
+  bulletSpeed?: number
+  clipSize?: number
+  fireSound?: string
+  reloadSound?: string
+  damageType?: string
+  firingMode?: 'fullauto' | 'semiauto'
+  lockboxWidth?: number
+  lockboxHeight?: number
+  effectiveRange?: number
+  ammoConsumedPerShot?: number
+  energyPerShot?: number
 }
 
 export type PartInstance = {
@@ -72,6 +93,21 @@ export type MechLoadout = {
   RightArm?: string
   Utility1?: string
   Utility2?: string
+  LeftHand?: string
+  RightHand?: string
+  ShoulderLeft?: string
+  ShoulderRight?: string
+}
+
+export type WeaponMountSlot = 'LeftHand' | 'RightHand' | 'ShoulderLeft' | 'ShoulderRight'
+
+export const WEAPON_MOUNT_SLOTS: readonly WeaponMountSlot[] = ['LeftHand', 'RightHand', 'ShoulderLeft', 'ShoulderRight']
+
+export const WEAPON_MOUNT_SLOT_LABELS: Record<WeaponMountSlot, string> = {
+  LeftHand: 'Left Hand',
+  RightHand: 'Right Hand',
+  ShoulderLeft: 'Left Shoulder',
+  ShoulderRight: 'Right Shoulder'
 }
 
 export type ResolvedPartStats = PartDefinition & {
@@ -111,7 +147,18 @@ export const PART_DEFINITION_NUMERIC_KEYS = [
   'stability',
   'meleePower',
   'accuracy',
-  'sensorStrength'
+  'sensorStrength',
+  'damagePerShot',
+  'fireRateCooldownSeconds',
+  'projectileCount',
+  'spreadDegrees',
+  'bulletSpeed',
+  'clipSize',
+  'lockboxWidth',
+  'lockboxHeight',
+  'effectiveRange',
+  'ammoConsumedPerShot',
+  'energyPerShot'
 ] as const
 
 export type PartNumericKey = typeof PART_DEFINITION_NUMERIC_KEYS[number]
@@ -124,5 +171,7 @@ export const CATEGORY_LABELS: Record<PartCategory, string> = {
   LeftArm: 'Left Arm',
   RightArm: 'Right Arm',
   Utility1: 'Utility 1',
-  Utility2: 'Utility 2'
+  Utility2: 'Utility 2',
+  HandWeapon: 'Hand Weapon',
+  ShoulderWeapon: 'Shoulder Weapon'
 }

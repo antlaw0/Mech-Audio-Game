@@ -10,12 +10,14 @@ import {
   CATEGORY_LABELS,
   PART_CATEGORIES,
   PART_DEFINITION_NUMERIC_KEYS,
+  WEAPON_MOUNT_SLOTS,
   type GarageSnapshot,
   type MechLoadout,
   type PartCategory,
   type PartNumericKey,
   type PartDefinition,
-  type PartInstance
+  type PartInstance,
+  type WeaponMountSlot
 } from '../../data/parts/types.js'
 
 const SAVE_DEBOUNCE_MS = 250
@@ -37,17 +39,23 @@ export type GarageStore = {
   getDefinitionsByCategory: (category: PartCategory) => PartDefinition[]
   getGarageInstancesByCategory: (category: PartCategory) => PartInstance[]
   getEquippedInstance: (category: PartCategory) => PartInstance | null
+  getEquippedInWeaponSlot: (slot: WeaponMountSlot) => PartInstance | null
   getInstance: (instanceId: string) => PartInstance | null
   getDefinition: (definitionId: string) => PartDefinition | null
   setDevMode: (enabled: boolean) => void
   equipInstance: (category: PartCategory, instanceId: string) => void
+  equipToWeaponSlot: (slot: WeaponMountSlot, instanceId: string) => void
   unequipSlot: (category: PartCategory) => void
+  unequipWeaponSlot: (slot: WeaponMountSlot) => void
   addDefinition: (definition: PartDefinition) => void
   updateDefinition: (definitionId: string, nextDefinition: PartDefinition) => void
   deleteDefinition: (definitionId: string) => { deprecated: boolean }
   createInstanceFromDefinition: (definitionId: string) => PartInstance
   validateEquip: (category: PartCategory, instanceId: string, callback?: (snapshot: GarageSnapshot) => EquipValidation) => EquipValidation
+  validateEquipToWeaponSlot: (slot: WeaponMountSlot, instanceId: string, callback?: (snapshot: GarageSnapshot) => EquipValidation) => EquipValidation
   getCategoryLabel: (category: PartCategory) => string
+  isTwoHandedWeaponEquipped: () => boolean
+  isTwoShoulderedWeaponEquipped: () => boolean
   exportCatalogJson: () => string
   importCatalogJson: (raw: string) => CatalogImportResult
 }
@@ -127,6 +135,16 @@ const normalizeCatalogDefinition = (entry: unknown, index: number): PartDefiniti
     normalized.flightType = source.flightType
   }
 
+  if (source.twoHanded === true) {
+    normalized.twoHanded = true
+  }
+  if (source.isMelee === true) {
+    normalized.isMelee = true
+  }
+  if (source.isPassive === true) {
+    normalized.isPassive = true
+  }
+
   return normalized
 }
 
@@ -187,7 +205,9 @@ export const createGarageStore = (): GarageStore => {
   }
 
   const getGarageInstancesByCategory = (category: PartCategory): PartInstance[] => {
-    const equippedIds = new Set(Object.values(loadout).filter((entry): entry is string => typeof entry === 'string'))
+    const equippedIds = new Set([
+      ...Object.values(loadout).filter((entry): entry is string => typeof entry === 'string')
+    ])
     return inventory.filter((entry) => {
       const definition = getDefinition(entry.definitionId)
       return definition?.category === category && !equippedIds.has(entry.instanceId)
@@ -195,7 +215,7 @@ export const createGarageStore = (): GarageStore => {
   }
 
   const getEquippedInstance = (category: PartCategory): PartInstance | null => {
-    const instanceId = loadout[category]
+    const instanceId = loadout[category as keyof MechLoadout]
     if (!instanceId) {
       return null
     }
@@ -215,7 +235,7 @@ export const createGarageStore = (): GarageStore => {
       return { valid: true, warnings: [] }
     }
     const previewLoadout = cloneLoadout(loadout)
-    previewLoadout[category] = instanceId
+    ;(previewLoadout as Record<string, string>)[category] = instanceId
     return callback({
       catalog: catalog.map((entry) => ({ ...entry })),
       inventory: inventory.map((entry) => ({ ...entry, modifiers: [...entry.modifiers], installedChips: [...entry.installedChips] })),
@@ -246,7 +266,121 @@ export const createGarageStore = (): GarageStore => {
 
   const unequipSlot = (category: PartCategory): void => {
     const nextLoadout = cloneLoadout(loadout)
-    delete nextLoadout[category]
+    delete (nextLoadout as Record<string, unknown>)[category]
+    loadout = nextLoadout
+    persistInventory()
+    emitChange()
+  }
+
+  const getEquippedInWeaponSlot = (slot: WeaponMountSlot): PartInstance | null => {
+    const instanceId = loadout[slot]
+    if (!instanceId) {
+      return null
+    }
+    return getInstance(instanceId)
+  }
+
+  const isTwoHandedWeaponEquipped = (): boolean => {
+    const rhInstanceId = loadout.RightHand
+    if (!rhInstanceId) {
+      return false
+    }
+    const instance = getInstance(rhInstanceId)
+    const definition = instance ? getDefinition(instance.definitionId) : null
+    return !!(definition?.twoHanded && definition.category === 'HandWeapon')
+  }
+
+  const isTwoShoulderedWeaponEquipped = (): boolean => {
+    const slInstanceId = loadout.ShoulderLeft
+    if (!slInstanceId) {
+      return false
+    }
+    const instance = getInstance(slInstanceId)
+    const definition = instance ? getDefinition(instance.definitionId) : null
+    return !!(definition?.twoHanded && definition.category === 'ShoulderWeapon')
+  }
+
+  const validateEquipToWeaponSlot = (slot: WeaponMountSlot, instanceId: string, callback?: (snapshot: GarageSnapshot) => EquipValidation): EquipValidation => {
+    const instance = getInstance(instanceId)
+    const definition = instance ? getDefinition(instance.definitionId) : null
+    if (!instance || !definition) {
+      return { valid: false, warnings: ['Selected part instance no longer exists.'] }
+    }
+    const expectedCategory = (slot === 'LeftHand' || slot === 'RightHand') ? 'HandWeapon' : 'ShoulderWeapon'
+    if (definition.category !== expectedCategory) {
+      return { valid: false, warnings: [`${definition.name} cannot be installed in this weapon slot.`] }
+    }
+    if (!callback) {
+      return { valid: true, warnings: [] }
+    }
+    // Build preview loadout reflecting this equip action
+    const previewLoadout = cloneLoadout(loadout)
+    if (definition.twoHanded) {
+      if (slot === 'LeftHand' || slot === 'RightHand') {
+        previewLoadout.RightHand = instanceId
+        delete previewLoadout.LeftHand
+      } else {
+        previewLoadout.ShoulderLeft = instanceId
+        delete previewLoadout.ShoulderRight
+      }
+    } else {
+      previewLoadout[slot] = instanceId
+    }
+    return callback({
+      catalog: catalog.map((entry) => ({ ...entry })),
+      inventory: inventory.map((entry) => ({ ...entry, modifiers: [...entry.modifiers], installedChips: [...entry.installedChips] })),
+      loadout: previewLoadout,
+      devModeEnabled
+    })
+  }
+
+  const equipToWeaponSlot = (slot: WeaponMountSlot, instanceId: string): void => {
+    const instance = getInstance(instanceId)
+    const definition = instance ? getDefinition(instance.definitionId) : null
+    const expectedCategory = (slot === 'LeftHand' || slot === 'RightHand') ? 'HandWeapon' : 'ShoulderWeapon'
+    if (!instance || !definition || definition.category !== expectedCategory) {
+      throw new Error('Invalid weapon equip target.')
+    }
+    const nextLoadout = cloneLoadout(loadout)
+    if (definition.twoHanded) {
+      // Two-handed weapon occupies the primary slot and clears the other
+      if (expectedCategory === 'HandWeapon') {
+        nextLoadout.RightHand = instanceId
+        delete nextLoadout.LeftHand
+      } else {
+        nextLoadout.ShoulderLeft = instanceId
+        delete nextLoadout.ShoulderRight
+      }
+    } else {
+      // If a two-handed weapon is currently in hands, clear it first
+      if (expectedCategory === 'HandWeapon' && isTwoHandedWeaponEquipped()) {
+        delete nextLoadout.RightHand
+        delete nextLoadout.LeftHand
+      }
+      // If a two-shouldered weapon is currently equipped and we're equipping to a shoulder
+      if (expectedCategory === 'ShoulderWeapon' && isTwoShoulderedWeaponEquipped()) {
+        delete nextLoadout.ShoulderLeft
+        delete nextLoadout.ShoulderRight
+      }
+      nextLoadout[slot] = instanceId
+    }
+    loadout = nextLoadout
+    persistInventory()
+    emitChange()
+  }
+
+  const unequipWeaponSlot = (slot: WeaponMountSlot): void => {
+    const nextLoadout = cloneLoadout(loadout)
+    // If unequipping the primary slot of a two-handed/two-shouldered weapon, clear both
+    if (slot === 'RightHand' && isTwoHandedWeaponEquipped()) {
+      delete nextLoadout.RightHand
+      delete nextLoadout.LeftHand
+    } else if (slot === 'ShoulderLeft' && isTwoShoulderedWeaponEquipped()) {
+      delete nextLoadout.ShoulderLeft
+      delete nextLoadout.ShoulderRight
+    } else {
+      delete nextLoadout[slot]
+    }
     loadout = nextLoadout
     persistInventory()
     emitChange()
@@ -334,16 +468,22 @@ export const createGarageStore = (): GarageStore => {
     getDefinitionsByCategory,
     getGarageInstancesByCategory,
     getEquippedInstance,
+    getEquippedInWeaponSlot,
     getInstance,
     getDefinition,
     setDevMode,
     equipInstance,
+    equipToWeaponSlot,
     unequipSlot,
+    unequipWeaponSlot,
     addDefinition,
     updateDefinition,
     deleteDefinition,
     createInstanceFromDefinition,
     validateEquip,
+    validateEquipToWeaponSlot,
+    isTwoHandedWeaponEquipped,
+    isTwoShoulderedWeaponEquipped,
     getCategoryLabel: (category) => CATEGORY_LABELS[category],
     exportCatalogJson: () => `${JSON.stringify(catalog.map((entry) => ({ ...entry })), null, 2)}\n`,
     importCatalogJson: (raw) => {
@@ -380,13 +520,23 @@ export const createGarageStore = (): GarageStore => {
       const nextLoadout = cloneLoadout(loadout)
       const clearedLoadoutSlots: PartCategory[] = []
       PART_CATEGORIES.forEach((category) => {
-        const instanceId = nextLoadout[category]
+        if (category === 'HandWeapon' || category === 'ShoulderWeapon') return
+        const instanceId = (nextLoadout as Record<string, string | undefined>)[category]
         if (!instanceId) {
           return
         }
         if (!knownInstanceIds.has(instanceId)) {
-          delete nextLoadout[category]
+          delete (nextLoadout as Record<string, unknown>)[category]
           clearedLoadoutSlots.push(category)
+        }
+      })
+      WEAPON_MOUNT_SLOTS.forEach((slot) => {
+        const instanceId = nextLoadout[slot]
+        if (!instanceId) {
+          return
+        }
+        if (!knownInstanceIds.has(instanceId)) {
+          delete nextLoadout[slot]
         }
       })
       loadout = nextLoadout
@@ -404,4 +554,6 @@ export const createGarageStore = (): GarageStore => {
   }
 }
 
-export const GARAGE_CATEGORY_ORDER = [...PART_CATEGORIES]
+export const GARAGE_CATEGORY_ORDER = PART_CATEGORIES.filter(
+  (c) => c !== 'HandWeapon' && c !== 'ShoulderWeapon'
+) as Array<Exclude<typeof PART_CATEGORIES[number], 'HandWeapon' | 'ShoulderWeapon'>>

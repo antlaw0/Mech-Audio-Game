@@ -1,4 +1,4 @@
-import type { PartDefinition, PartInstance, MechLoadout, PartCategory } from './types.js'
+import type { PartDefinition, PartInstance, MechLoadout, PartCategory, WeaponMountSlot } from './types.js'
 
 const CATALOG_STORAGE_KEY = 'mech.parts.catalog.v1'
 const INVENTORY_STORAGE_KEY = 'mech.parts.inventory.v1'
@@ -26,6 +26,7 @@ const loadSeedCatalog = (): PartDefinition[] => {
 }
 
 const seedCatalog = loadSeedCatalog()
+const seedCatalogById = new Map(seedCatalog.map((definition) => [definition.id, definition] as const))
 
 const createInstanceId = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -34,12 +35,20 @@ const createInstanceId = (): string => {
   return `part-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-const normalizeDefinition = (definition: PartDefinition): PartDefinition => ({
-  ...definition,
-  passiveBonuses: Array.isArray(definition.passiveBonuses) ? [...definition.passiveBonuses] : [],
-  activeAbilities: Array.isArray(definition.activeAbilities) ? [...definition.activeAbilities] : [],
-  specialEffects: Array.isArray(definition.specialEffects) ? [...definition.specialEffects] : []
-})
+const normalizeDefinition = (definition: PartDefinition): PartDefinition => {
+  const seedDefinition = seedCatalogById.get(definition.id)
+  const mergedDefinition = {
+    ...(seedDefinition ?? {}),
+    ...definition
+  } as PartDefinition
+
+  return {
+    ...mergedDefinition,
+    passiveBonuses: Array.isArray(mergedDefinition.passiveBonuses) ? [...mergedDefinition.passiveBonuses] : [],
+    activeAbilities: Array.isArray(mergedDefinition.activeAbilities) ? [...mergedDefinition.activeAbilities] : [],
+    specialEffects: Array.isArray(mergedDefinition.specialEffects) ? [...mergedDefinition.specialEffects] : []
+  }
+}
 
 const getWindowStorage = (): Storage | null => {
   if (typeof window === 'undefined') {
@@ -107,7 +116,7 @@ export const saveDevModeFlag = (enabled: boolean): void => {
 const createSeedInstances = (): { inventory: PartInstance[]; loadout: MechLoadout } => {
   const inventory: PartInstance[] = []
   const loadout: MechLoadout = {}
-  const equippedDefinitionIds: Record<PartCategory, string> = {
+  const equippedDefinitionIds: Record<string, string> = {
     Head: 'basic.head',
     Computer: 'basic.computer',
     Core: 'basic.exoshell',
@@ -116,6 +125,11 @@ const createSeedInstances = (): { inventory: PartInstance[]; loadout: MechLoadou
     RightArm: 'basic.right-arm',
     Utility1: 'basic.utility1',
     Utility2: 'basic.jetpack'
+  }
+
+  const equippedWeaponSlotIds: Partial<Record<WeaponMountSlot, string>> = {
+    LeftHand: 'basic.sword',
+    RightHand: 'basic.pistol'
   }
 
   const bonusDefinitionIds: string[] = [
@@ -127,10 +141,12 @@ const createSeedInstances = (): { inventory: PartInstance[]; loadout: MechLoadou
     'stabilized.right-arm',
     'sensor.utility1',
     'basic.rotor.dual',
-    'basic.head'
+    'basic.head',
+    'basic.laser-pistol',
+    'basic.shotgun'
   ]
 
-  for (const [category, definitionId] of Object.entries(equippedDefinitionIds) as Array<[PartCategory, string]>) {
+  for (const [slotKey, definitionId] of Object.entries(equippedDefinitionIds)) {
     const definition = seedCatalog.find((entry) => entry.id === definitionId)
     if (!definition) {
       continue
@@ -144,7 +160,24 @@ const createSeedInstances = (): { inventory: PartInstance[]; loadout: MechLoadou
       installedChips: [],
       rngSeed: Math.floor(Math.random() * 1_000_000)
     })
-    loadout[category] = instanceId
+    ;(loadout as Record<string, string>)[slotKey] = instanceId
+  }
+
+  for (const [slot, definitionId] of Object.entries(equippedWeaponSlotIds) as Array<[WeaponMountSlot, string]>) {
+    const definition = seedCatalog.find((entry) => entry.id === definitionId)
+    if (!definition) {
+      continue
+    }
+    const instanceId = createInstanceId()
+    inventory.push({
+      instanceId,
+      definitionId,
+      currentIntegrity: definition.integrity,
+      modifiers: [],
+      installedChips: [],
+      rngSeed: Math.floor(Math.random() * 1_000_000)
+    })
+    loadout[slot] = instanceId
   }
 
   bonusDefinitionIds.forEach((definitionId, index) => {
@@ -155,8 +188,8 @@ const createSeedInstances = (): { inventory: PartInstance[]; loadout: MechLoadou
     inventory.push({
       instanceId: createInstanceId(),
       definitionId,
-      currentIntegrity: index === bonusDefinitionIds.length - 1 ? 34 : definition.integrity,
-      modifiers: index === bonusDefinitionIds.length - 1 ? [{ id: 'range-upgrade', type: 'stat_mult', stat: 'range', value: 0.1 }] : [],
+      currentIntegrity: index === bonusDefinitionIds.length - 3 ? 34 : definition.integrity,
+      modifiers: index === bonusDefinitionIds.length - 3 ? [{ id: 'range-upgrade', type: 'stat_mult', stat: 'range', value: 0.1 }] : [],
       installedChips: index === 1 ? ['mk1-lock-chip'] : [],
       rngSeed: Math.floor(Math.random() * 1_000_000)
     })
@@ -199,6 +232,12 @@ export const loadGarageInventory = (catalog: PartDefinition[]): { inventory: Par
     const instanceId = storedLoadout[category]
     if (typeof instanceId === 'string' && normalizedInventory.some((entry) => entry.instanceId === instanceId)) {
       loadout[category] = instanceId
+    }
+  }
+  for (const slot of ['LeftHand', 'RightHand', 'ShoulderLeft', 'ShoulderRight'] as const) {
+    const instanceId = storedLoadout[slot]
+    if (typeof instanceId === 'string' && normalizedInventory.some((entry) => entry.instanceId === instanceId)) {
+      loadout[slot] = instanceId
     }
   }
 

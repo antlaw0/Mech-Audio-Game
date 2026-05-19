@@ -1,5 +1,6 @@
 export type PlayerFlightState = 'grounded' | 'ascending' | 'airborne' | 'descending'
 import { type WorldCollisionWorld } from './world-collision.js'
+import type { WeaponMountSlot } from '../data/parts/types.js'
 
 
 export interface Player {
@@ -41,7 +42,7 @@ export interface InputState {
   snapWestPending: boolean
   snapLeftPending: boolean
   snapRightPending: boolean
-  selectedWeaponSlot: number | null
+  selectedWeaponSlot: WeaponMountSlot | null
   spawnTankPending: boolean
   spawnStrikerPending: boolean
   spawnBrutePending: boolean
@@ -211,7 +212,7 @@ export interface WeaponStats {
   /** Weapon archetype affects firing behavior and lock requirements. */
   weaponType: 'ballistic' | 'missile' | 'energy'
   /** Damage channel used by this weapon profile. */
-  damageType: 'physical' | 'energy' | 'explosive'
+  damageType: string
   /** Projectile visual category used by renderer and combat spawning. */
   projectileType: 'bullet' | 'rocket' | 'missile' | 'laserBeam'
   /** 0.0 (chaotic) – 1.0 (perfect): offsets the entire projectile spread cone from the aim direction. */

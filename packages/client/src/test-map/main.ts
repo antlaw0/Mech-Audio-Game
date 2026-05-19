@@ -55,7 +55,7 @@ import { createThreeRenderSystem } from './three-render.js'
 import { createUpdateState, updateFrame } from './update.js'
 import { createWorldMapOverlay } from './world-map-overlay.js'
 import { createWorldCollisionWorld, isPlayerBlocked, PLAYER_COLLISION_HEIGHT } from './world-collision.js'
-import type { GarageSnapshot, PartCategory } from '../data/parts/types.js'
+import type { GarageSnapshot, MechLoadout, PartCategory, PartDefinition, WeaponMountSlot } from '../data/parts/types.js'
 import type { AudioCategory, AudioVolumeChannel } from './types.js'
 import type { WorldPosition } from './types.js'
 
@@ -129,6 +129,8 @@ type LoadoutViewId =
   | 'Utility 1'
   | 'Utility 2'
   | 'Aggregate Stats'
+  | 'Left Hand'
+  | 'Right Hand'
 
 type MobilityType = 'Wheels' | 'Treads' | 'Hover' | 'Walker' | 'Flight' | 'Placeholder'
 
@@ -465,8 +467,8 @@ function startTestMap(): void {
     ...weapon,
     swingSoundPaths: [...weapon.swingSoundPaths]
   }))
-  let activeWeaponIndex = 0
-  let playerWeapon = weaponLoadout[activeWeaponIndex]!
+  let activeRangedSlot: WeaponMountSlot = 'RightHand'
+  let playerWeapon = weaponLoadout.find((weapon) => weapon.id === 'basic.pistol') ?? weaponLoadout[0]!
   let equippedMeleeWeapon = meleeLoadout[0] ?? null
   let missileLockProgressMs = 0
   let missileLockTargetId: number | null = null
@@ -732,16 +734,18 @@ function startTestMap(): void {
       energyDrain: 0
     },
     ShoulderRight: {
-      partId: 'empty.right-shoulder',
+      partId: 'basic.plasma-cannon',
       partType: 'Shoulder Mount',
-      name: 'Empty',
-      integrity: 0,
-      maxIntegrity: 100,
-      online: false,
-      weight: 0,
-      PDEF: 0,
-      EDEF: 0,
-      energyDrain: 0
+      name: 'Plasma Cannon',
+      integrity: 140,
+      maxIntegrity: 140,
+      online: true,
+      weight: 180,
+      PDEF: 12,
+      EDEF: 18,
+      energyDrain: 6,
+      heatGeneration: 8,
+      activeAbilities: ['Mapped to current plasma cannon behavior and stats']
     },
     LeftHand: {
       partId: 'basic.sword',
@@ -836,6 +840,45 @@ function startTestMap(): void {
   }))
   const garageStore = createGarageStore()
 
+  // --- SEED DEFAULT WEAPONS IN GARAGE IF MISSING ---
+  const seedWeaponDefinitionsIfMissing = async (): Promise<void> => {
+    // List of required weapon part IDs
+    const requiredWeaponIds: readonly string[] = ['basic.pistol', 'basic.sword', 'basic.plasma-cannon']
+    const snapshot = garageStore.getSnapshot()
+    const missingIds = requiredWeaponIds.filter((id) => !snapshot.catalog.some((def) => def.id === id))
+    if (missingIds.length > 0) {
+      // Dynamically import the seed catalog (parts.json)
+      const response = await fetch(new URL('../data/parts/parts.json', import.meta.url).toString())
+      if (!response.ok) {
+        return
+      }
+      const seedCatalog = (await response.json()) as PartDefinition[]
+      for (const id of missingIds) {
+        const def = seedCatalog.find((entry: PartDefinition) => entry.id === id)
+        if (def) {
+          garageStore.addDefinition(def)
+        }
+      }
+    }
+  }
+
+  // Seed and equip default weapons after ensuring definitions exist
+  seedWeaponDefinitionsIfMissing().then(() => {
+    const ensureDefaultWeaponEquipped = (slot: WeaponMountSlot, partId: string): void => {
+      const snapshot = garageStore.getSnapshot()
+      let instance = snapshot.inventory.find((inst) => inst.definitionId === partId)
+      if (!instance) {
+        instance = garageStore.createInstanceFromDefinition(partId)
+      }
+      if (snapshot.loadout[slot] !== instance.instanceId) {
+        garageStore.equipToWeaponSlot(slot, instance.instanceId)
+      }
+    }
+    ensureDefaultWeaponEquipped('RightHand', 'basic.pistol')
+    ensureDefaultWeaponEquipped('LeftHand', 'basic.sword')
+    ensureDefaultWeaponEquipped('ShoulderRight', 'basic.plasma-cannon')
+  })
+
   configurePartStatResolver({
     getDefinition: garageStore.getDefinition,
     getInstance: garageStore.getInstance
@@ -929,7 +972,9 @@ function startTestMap(): void {
     { id: 'Legs', slot: 'Legs' },
     { id: 'Utility 1', slot: 'Utility1' },
     { id: 'Utility 2', slot: 'Utility2' },
-    { id: 'Aggregate Stats' }
+    { id: 'Aggregate Stats' },
+    { id: 'Left Hand', slot: 'LeftHand' },
+    { id: 'Right Hand', slot: 'RightHand' }
   ]
 
   const AGGREGATE_PART_SLOTS: ReadonlySet<DevPartSlot> = new Set([
@@ -998,10 +1043,11 @@ function startTestMap(): void {
   } // end function clearGameplayInputs
 
   const getWeaponReloadCost = (weapon: PlayerWeaponDefinition): number => {
-    if (isEnergyWeapon(weapon)) {
+    if (Math.max(0, weapon.ammoResourcePerRound) <= 0) {
       return 0
     }
-    return Math.ceil(Math.max(0, weapon.clipSize) * Math.max(0, weapon.ammoResourcePerRound))
+    const missingRounds = Math.max(0, Math.round(weapon.clipSize) - Math.round(weapon.ammoInClip))
+    return missingRounds * Math.max(0, weapon.ammoResourcePerRound)
   } // end function getWeaponReloadCost
 
   const getWeaponHeatPerShot = (weapon: PlayerWeaponDefinition): number => {
@@ -1166,18 +1212,20 @@ function startTestMap(): void {
       return
     } // end if ranged subsystem is offline
 
-    if (isEnergyWeapon(playerWeapon)) {
-      announceBlockedAction('reload-energy-weapon', 'Energy weapons do not use reload.')
+    const ammoPerRound = Math.max(0, playerWeapon.ammoResourcePerRound)
+    if (ammoPerRound <= 0) {
+      announceBlockedAction('reload-no-ammo-system', 'This weapon does not use clip reloads.')
       return
-    } // end if current weapon uses energy instead of ammo
+    } // end if current weapon does not consume ammo per shot
 
     if (playerWeapon.ammoInClip >= playerWeapon.clipSize) {
       announceBlockedAction('reload-clip-full', 'Clip already full.')
       return
     } // end if clip already full
 
-    const reloadCost = getWeaponReloadCost(playerWeapon)
-    if (reloadCost <= 0 || !canAffordWeaponReload(playerWeapon)) {
+    const missingRounds = Math.max(0, Math.round(playerWeapon.clipSize) - Math.round(playerWeapon.ammoInClip))
+    const loadableRounds = Math.min(missingRounds, Math.floor(universalAmmoResource / ammoPerRound))
+    if (loadableRounds <= 0) {
       audio.playNegativeActionTone()
       announceBlockedAction('reload-ammo-low', 'Cannot reload. Not enough universal ammo.')
       return
@@ -1191,23 +1239,79 @@ function startTestMap(): void {
       .catch(() => undefined)
       .finally(() => {
         if (playerWeapon.id === reloadWeaponId && canUseRangedSubsystem()) {
-          if (universalAmmoResource >= reloadCost) {
-            universalAmmoResource -= reloadCost
-            reloadWeapon.ammoInClip = reloadWeapon.clipSize
-          } // end if ammo still sufficient after reload delay
+          const currentAmmoPerRound = Math.max(0, reloadWeapon.ammoResourcePerRound)
+          const currentMissingRounds = Math.max(0, Math.round(reloadWeapon.clipSize) - Math.round(reloadWeapon.ammoInClip))
+          const roundsToLoad = currentAmmoPerRound > 0
+            ? Math.min(currentMissingRounds, Math.floor(universalAmmoResource / currentAmmoPerRound))
+            : 0
+
+          if (roundsToLoad > 0) {
+            universalAmmoResource -= roundsToLoad * currentAmmoPerRound
+            reloadWeapon.ammoInClip = Math.min(reloadWeapon.clipSize, reloadWeapon.ammoInClip + roundsToLoad)
+          }
         }
         isReloading = false
       })
   } // end function tryStartWeaponReload
 
-  const equipWeaponAtIndex = (requestedIndex: number): void => {
-    if (weaponLoadout.length === 0) {
-      return
-    } // end if weapon loadout is empty
+  const resolveWeaponFromSlot = (slot: WeaponMountSlot): PlayerWeaponDefinition | null => {
+    const partState = devParts.get(slot)
+    if (!partState?.partId) {
+      return null
+    }
+    return weaponLoadout.find((w) => w.id === partState.partId) ?? null
+  } // end function resolveWeaponFromSlot
 
-    const normalizedIndex = Math.min(Math.max(requestedIndex, 0), weaponLoadout.length - 1)
-    activeWeaponIndex = normalizedIndex
-    playerWeapon = weaponLoadout[activeWeaponIndex] ?? weaponLoadout[0]!
+  const equipWeaponSlot = (requestedSlot: WeaponMountSlot): void => {
+    const snapshot = garageStore.getSnapshot()
+
+    // Key 2 (LeftHand): if two-handed weapon is in RightHand, switch to that instead
+    if (requestedSlot === 'LeftHand') {
+      if (garageStore.isTwoHandedWeaponEquipped()) {
+        requestedSlot = 'RightHand'
+      } else {
+        // Left hand only switchable if non-melee, non-passive weapon
+        const lhInstance = garageStore.getEquippedInWeaponSlot('LeftHand')
+        const lhDef = lhInstance ? garageStore.getDefinition(lhInstance.definitionId) : null
+        if (!lhDef || lhDef.isMelee || lhDef.isPassive) {
+          return
+        }
+      }
+    }
+
+    // Key 4 (ShoulderLeft): if two-shouldered weapon is in ShoulderLeft, switch to that
+    if (requestedSlot === 'ShoulderLeft') {
+      if (garageStore.isTwoShoulderedWeaponEquipped()) {
+        // Already handled, ShoulderLeft is primary for two-shouldered
+      } else {
+        const slInstance = garageStore.getEquippedInWeaponSlot('ShoulderLeft')
+        const slDef = slInstance ? garageStore.getDefinition(slInstance.definitionId) : null
+        if (!slDef || slDef.isPassive) {
+          return
+        }
+      }
+    }
+
+    // Key 3 (ShoulderRight): skip if passive or blocked by two-shouldered
+    if (requestedSlot === 'ShoulderRight') {
+      if (garageStore.isTwoShoulderedWeaponEquipped()) {
+        requestedSlot = 'ShoulderLeft'
+      } else {
+        const srInstance = garageStore.getEquippedInWeaponSlot('ShoulderRight')
+        const srDef = srInstance ? garageStore.getDefinition(srInstance.definitionId) : null
+        if (!srDef || srDef.isPassive) {
+          return
+        }
+      }
+    }
+
+    const nextWeapon = resolveWeaponFromSlot(requestedSlot)
+    if (!nextWeapon) {
+      return
+    }
+
+    activeRangedSlot = requestedSlot
+    playerWeapon = nextWeapon
     playerFireCooldownSeconds = 0
     resetTargetLockState()
     missileLockProgressMs = 0
@@ -1222,8 +1326,7 @@ function startTestMap(): void {
       window.speechSynthesis.cancel()
       window.speechSynthesis.speak(utterance)
     } // end if speech synthesis available
-
-  } // end function equipWeaponAtIndex
+  } // end function equipWeaponSlot
 
   const getPauseModalFocusableElements = (): HTMLElement[] => {
     if (!(pausePanelDialogElement instanceof HTMLElement)) {
@@ -3012,7 +3115,7 @@ function startTestMap(): void {
   } // end function isEnergyStarved
 
   const isEnergyWeapon = (weapon: PlayerWeaponDefinition): boolean => {
-    return weapon.weaponType === 'energy' || Math.max(0, weapon.energyCostPerShot ?? 0) > 0
+    return Math.max(0, weapon.energyCostPerShot ?? 0) > 0
   } // end function isEnergyWeapon
 
   const updateEnergyStarvationState = (): boolean => {
@@ -3125,7 +3228,7 @@ function startTestMap(): void {
     part.energyUse = profile.energyUse
   } // end function applyMovementArchetypeToPart
 
-  const GARAGE_CATEGORY_TO_DEV_SLOT: Record<PartCategory, DevPartSlot> = {
+  const GARAGE_CATEGORY_TO_DEV_SLOT: Partial<Record<PartCategory, DevPartSlot>> = {
     Head: 'Head',
     Computer: 'Computer',
     Core: 'ExoShell',
@@ -3136,8 +3239,8 @@ function startTestMap(): void {
     Utility2: 'Utility2'
   }
 
-  const getManagedGarageCategories = (): PartCategory[] => {
-    return ['Head', 'Computer', 'Core', 'Generator', 'LeftArm', 'RightArm', 'Utility1', 'Utility2']
+  const getManagedGarageCategories = (): Array<keyof MechLoadout & PartCategory> => {
+    return ['Head', 'Computer', 'Core', 'Generator', 'LeftArm', 'RightArm', 'Utility1', 'Utility2'] as (keyof MechLoadout & PartCategory)[]
   } // end function getManagedGarageCategories
 
   const getManagedGarageWeight = (snapshot: GarageSnapshot): number => {
@@ -3151,6 +3254,14 @@ function startTestMap(): void {
       } catch {
         return total
       }
+    }, 0) + (['LeftHand', 'RightHand', 'ShoulderLeft', 'ShoulderRight'] as const).reduce((total, slot) => {
+      const instance = garageStore.getEquippedInWeaponSlot(slot)
+      if (!instance) return total
+      try {
+        return total + getFinalPartStats(instance.instanceId).weight
+      } catch {
+        return total
+      }
     }, 0)
   } // end function getManagedGarageWeight
 
@@ -3158,6 +3269,7 @@ function startTestMap(): void {
     const snapshot = garageStore.getSnapshot()
     for (const category of getManagedGarageCategories()) {
       const slot = GARAGE_CATEGORY_TO_DEV_SLOT[category]
+      if (!slot) continue
       const instanceId = snapshot.loadout[category]
       if (!instanceId) {
         devParts.set(slot, normalizeDevPartState(slot, {
@@ -3226,7 +3338,47 @@ function startTestMap(): void {
       name: utility2Resolved ? `${utility2Resolved.name} Link` : 'Flight Link',
       online: !!utility2Resolved && utility2Resolved.currentIntegrity > 0,
       liftCapacity: utility2Resolved?.liftCapacity ?? 0
+
     }))
+
+    // Sync weapon slots
+    const weaponSyncSlots: Array<{ slot: WeaponMountSlot; devSlot: DevPartSlot }> = [
+      { slot: 'LeftHand', devSlot: 'LeftHand' },
+      { slot: 'RightHand', devSlot: 'RightHand' },
+      { slot: 'ShoulderLeft', devSlot: 'ShoulderLeft' },
+      { slot: 'ShoulderRight', devSlot: 'ShoulderRight' }
+    ]
+    for (const { slot, devSlot } of weaponSyncSlots) {
+      const weaponInstance = garageStore.getEquippedInWeaponSlot(slot)
+      const weaponDefinition = weaponInstance ? garageStore.getDefinition(weaponInstance.definitionId) : null
+      if (!weaponInstance || !weaponDefinition) {
+        devParts.set(devSlot, normalizeDevPartState(devSlot, {
+          ...createPlaceholderPart(devSlot),
+          name: `${slot} Empty`,
+          online: false,
+          integrity: 0,
+          maxIntegrity: 100
+        }))
+        continue
+      }
+      const resolvedWeapon = getFinalPartStats(weaponInstance.instanceId)
+      devParts.set(devSlot, normalizeDevPartState(devSlot, {
+        ...createPlaceholderPart(devSlot),
+        partId: weaponDefinition.id,
+        partType: 'Hand Weapon',
+        name: weaponDefinition.name,
+        integrity: resolvedWeapon.currentIntegrity,
+        maxIntegrity: weaponDefinition.integrity,
+        online: resolvedWeapon.currentIntegrity > 0,
+        weight: resolvedWeapon.weight,
+        PDEF: resolvedWeapon.PDEF,
+        EDEF: resolvedWeapon.EDEF,
+        energyDrain: resolvedWeapon.energyDrain,
+        accuracy: resolvedWeapon.accuracy,
+        passiveBonuses: [...(weaponDefinition.passiveBonuses ?? [])],
+        activeAbilities: [...(weaponDefinition.activeAbilities ?? [])]
+      }))
+    }
   } // end function syncGarageLoadoutToDevParts
 
   const getGarageEquipValidation = (category: PartCategory, instanceId: string, preview: GarageSnapshot) => {
@@ -4466,7 +4618,7 @@ function startTestMap(): void {
     if (normalizedCommand === 'list weapons') {
       return [
         'weapons:',
-        ...weaponLoadout.map((weapon, index) => `  ${weapon.id} (${weapon.weaponType})${index === activeWeaponIndex ? ' [equipped]' : ''}`)
+        ...weaponLoadout.map((weapon) => `  ${weapon.id} (${weapon.weaponType})${playerWeapon === weapon ? ' [equipped]' : ''}`)
       ]
     } // end if list weapons command
 
@@ -5241,11 +5393,11 @@ function startTestMap(): void {
     playerMeleeCooldownSeconds = Math.max(0, playerMeleeCooldownSeconds - deltaSeconds)
 
     if (input.selectedWeaponSlot !== null) {
-      const selectedIndex = input.selectedWeaponSlot - 1
+      const requestedSlot = input.selectedWeaponSlot
       input.selectedWeaponSlot = null
-      if (!isReloading && selectedIndex !== activeWeaponIndex && selectedIndex >= 0 && selectedIndex < weaponLoadout.length) {
-        equipWeaponAtIndex(selectedIndex)
-      } // end if selected weapon changed
+      if (!isReloading) {
+        equipWeaponSlot(requestedSlot)
+      } // end if not reloading
     } // end if selected weapon slot pending
 
     if (input.reloadPending) {
@@ -5663,13 +5815,16 @@ function startTestMap(): void {
     }
 
     if (shouldAttemptShot && !isReloading && playerFireCooldownSeconds <= 0) {
-      const weaponUsesAmmo = !isEnergyWeapon(playerWeapon)
+      const ammoPerShot = Math.max(0, playerWeapon.ammoResourcePerRound)
+      const weaponUsesAmmo = ammoPerShot > 0
+      const shotEnergyCost = Math.max(0, playerWeapon.energyCostPerShot ?? 0)
+      const weaponUsesEnergy = shotEnergyCost > 0
       if (isOverheatShutdownActive()) {
         audio.playNegativeActionTone()
         announceBlockedAction('fire-overheat', 'Cannot fire. Overheated.')
-      } else if (isEnergyStarved() && isEnergyWeapon(playerWeapon)) {
+      } else if (isEnergyStarved() && weaponUsesEnergy) {
         audio.playNegativeActionTone()
-        announceBlockedAction('fire-energy-starved', 'Cannot fire energy weapon. Energy starved.')
+        announceBlockedAction('fire-energy-starved', 'Cannot fire. Energy starved.')
       } else if (!canUseRangedSubsystem()) {
         audio.playNegativeActionTone()
         announceBlockedAction('fire-ranged-offline', 'Cannot fire. Right arm or right hand is offline.')
@@ -5679,20 +5834,19 @@ function startTestMap(): void {
           announceBlockedAction('fire-empty-clip', 'Cannot fire. Clip is empty.')
           hasPlayedEmptyClipForCurrentTriggerPull = true
         } // end if empty clip sound has not played for this trigger pull
+      } else if (weaponUsesEnergy && player.ep < shotEnergyCost) {
+        audio.playNegativeActionTone()
+        announceBlockedAction('fire-energy-cost', 'Cannot fire. Not enough energy.')
       } else {
       const playerSpeed = Math.hypot(player.x - previousPlayerX, player.y - previousPlayerY) / Math.max(deltaSeconds, 0.0001)
       const maxMoveSpeed = player.isFlying ? flightSpeedLimit : PLAYER_SPEED
       const speedFraction = Math.min(1, playerSpeed / maxMoveSpeed)
-      const shotEnergyCost = Math.max(0, playerWeapon.energyCostPerShot ?? 0)
 
       if (playerWeapon.weaponType === 'missile') {
         const lockedTargetId = lockUpdate.lockedTarget?.id ?? null
         if (missileRequiresLock && (!missileLockConfirmed || lockedTargetId === null)) {
           audio.playNegativeActionTone()
           announceBlockedAction('fire-missile-lock', 'Cannot fire missile. Lock is not confirmed.')
-        } else if (player.ep < shotEnergyCost) {
-          audio.playNegativeActionTone()
-          announceBlockedAction('fire-energy-cost', 'Cannot fire. Not enough energy.')
         } else {
           audio.fireGunshot(playerWeapon.fireSoundPath)
           updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
@@ -5728,55 +5882,50 @@ function startTestMap(): void {
           applyWeaponHeatGain(playerWeapon)
         } // end if missile shot blocked or fired
       } else {
-        if (player.ep < shotEnergyCost) {
-          audio.playNegativeActionTone()
-          announceBlockedAction('fire-energy-cost', 'Cannot fire. Not enough energy.')
+        audio.fireGunshot(playerWeapon.fireSoundPath)
+        updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
+        if (playerWeapon.fireRateCooldownSeconds > 0) {
+          playerFireCooldownSeconds = playerWeapon.fireRateCooldownSeconds
+        } // end if fire rate applies
+        if (lockUpdate.lockedTarget !== null) {
+          spawnPlayerBulletToward(
+            combatWorld,
+            player,
+            lockUpdate.lockedTarget.x,
+            lockUpdate.lockedTarget.y,
+            lockUpdate.lockedTarget.height + PLAYER_HEIGHT,
+            playerWeapon.accuracy,
+            speedFraction,
+            playerWeapon.damagePerShot,
+            playerWeapon.bulletSpeed,
+            playerWeapon.maxRange,
+            playerWeapon.projectileSize,
+            playerWeapon.projectileType,
+            playerWeapon.projectileCount,
+            playerWeapon.spreadDegrees
+          )
         } else {
-          audio.fireGunshot(playerWeapon.fireSoundPath)
-          updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
-          if (playerWeapon.fireRateCooldownSeconds > 0) {
-            playerFireCooldownSeconds = playerWeapon.fireRateCooldownSeconds
-          } // end if fire rate applies
-          if (lockUpdate.lockedTarget !== null) {
-            spawnPlayerBulletToward(
-              combatWorld,
-              player,
-              lockUpdate.lockedTarget.x,
-              lockUpdate.lockedTarget.y,
-              lockUpdate.lockedTarget.height + PLAYER_HEIGHT,
-              playerWeapon.accuracy,
-              speedFraction,
-              playerWeapon.damagePerShot,
-              playerWeapon.bulletSpeed,
-              playerWeapon.maxRange,
-              playerWeapon.projectileSize,
-              playerWeapon.projectileType,
-              playerWeapon.projectileCount,
-              playerWeapon.spreadDegrees
-            )
-          } else {
-            spawnPlayerBullet(
-              combatWorld,
-              player,
-              playerWeapon.damagePerShot,
-              playerWeapon.bulletSpeed,
-              playerWeapon.maxRange,
-              playerWeapon.projectileSize,
-              playerWeapon.projectileType,
-              playerWeapon.accuracy,
-              speedFraction,
-              playerWeapon.projectileCount,
-              playerWeapon.spreadDegrees
-            )
-          } // end if locked target for accuracy cone
-          if (shotEnergyCost > 0) {
-            player.ep = Math.max(0, player.ep - shotEnergyCost)
-          }
-          if (weaponUsesAmmo) {
-            playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
-          }
-          applyWeaponHeatGain(playerWeapon)
+          spawnPlayerBullet(
+            combatWorld,
+            player,
+            playerWeapon.damagePerShot,
+            playerWeapon.bulletSpeed,
+            playerWeapon.maxRange,
+            playerWeapon.projectileSize,
+            playerWeapon.projectileType,
+            playerWeapon.accuracy,
+            speedFraction,
+            playerWeapon.projectileCount,
+            playerWeapon.spreadDegrees
+          )
+        } // end if locked target for accuracy cone
+        if (shotEnergyCost > 0) {
+          player.ep = Math.max(0, player.ep - shotEnergyCost)
         }
+        if (weaponUsesAmmo) {
+          playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
+        }
+        applyWeaponHeatGain(playerWeapon)
       } // end if missile or ballistic firing mode
       } // end if weapon has ammo in clip and subsystem is online
     } // end if fire input and cooldown allow
