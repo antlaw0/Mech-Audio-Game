@@ -136,6 +136,7 @@ export interface EnemyAudioState {
   height: number
   positionalLoopSound?: string
   loopSoundPauseIntervalMs?: number
+  loopSoundMaxDistance?: number
   stopLoopSoundWhileStationary?: boolean
 } // end interface EnemyAudioState
 
@@ -154,8 +155,33 @@ export interface SonarEcho {
   obstacleType: 'wall' | SpriteType
 } // end interface SonarEcho
 
+export interface AudioOcclusionRayDiagnostic {
+  start: WorldPosition
+  end: WorldPosition
+  blockerCount: number
+  thickness: number
+  absorption: number
+  occlusionAmount: number
+} // end interface AudioOcclusionRayDiagnostic
+
+export interface AudioOcclusionDiagnostics {
+  entityId: string | number
+  blockerCount: number
+  blockerThickness: number
+  materialAbsorption: number
+  occlusionAmount: number
+  smoothedOcclusionAmount: number
+  sampledRayCount: number
+  lastQueryTimeSeconds: number
+  rays: AudioOcclusionRayDiagnostic[]
+} // end interface AudioOcclusionDiagnostics
+
 export interface TargetLockState {
-  lockedTankId: number | null
+  currentTargetId: number | null
+  lockProgress: number
+  targetScore: number
+  retainedTargetId: number | null
+  retentionActive: boolean
 } // end interface TargetLockState
 
 export interface WeaponStats {
@@ -239,32 +265,33 @@ export interface Bullet {
   alive: boolean
 } // end interface Bullet
 
-export interface EnemyRender {
-  x: number
-  y: number
-  radius: number
-  alive: boolean
-} // end interface EnemyRender
-
-export interface TankRender {
+export interface TargetableEnemyRender {
   id: number
+  enemyClass: string
   enemyType: string
   x: number
   y: number
   radius: number
+  height: number
+  alive: boolean
+} // end interface TargetableEnemyRender
+
+export interface EnemyRender extends TargetableEnemyRender {
+} // end interface EnemyRender
+
+export interface CombatEnemyRender extends TargetableEnemyRender {
   angle: number
   velocityX: number
   velocityY: number
   airborne: boolean
-  height: number
   health: number
   maxHealth: number
-  alive: boolean
   explosionIntensity: number
   positionalLoopSound?: string
   loopSoundPauseIntervalMs?: number
+  loopSoundMaxDistance?: number
   stopLoopSoundWhileStationary?: boolean
-} // end interface TankRender
+} // end interface CombatEnemyRender
 
 export interface IncomingProjectileAudioState {
   id: number
@@ -378,6 +405,15 @@ export interface AudioController {
   playLockLostChirp: () => void
   playMissileLockTone: () => void
   playMissileLockConfirmTone: () => void
+  updateTargetLockProgressAudio: (
+    deltaSeconds: number,
+    hasActiveLock: boolean,
+    hasRetentionLock: boolean,
+    lockProgress: number,
+    maxLockProgress: number,
+    targetPos?: WorldPosition
+  ) => void
+  resetTargetLockProgressAudio: () => void
   playNegativeActionTone: () => void
   playExplosion: (
     worldX: number,
@@ -393,4 +429,8 @@ export interface AudioController {
   updatePlayerEnergyStatusAudio: (dt: number, epPercent: number) => void
   updatePlayerHeatStatusAudio: (dt: number, heatPercent: number) => void
   prewarmEnemyAudioAssets: () => void
+  setOcclusionDebugLogging: (enabled: boolean) => void
+  setOcclusionDebugVisualizationHook: (hook: ((diagnostics: AudioOcclusionDiagnostics) => void) | null) => void
+  getOcclusionDiagnostics: (emitterId: string | number) => AudioOcclusionDiagnostics | null
+  getAllOcclusionDiagnostics: () => AudioOcclusionDiagnostics[]
 } // end interface AudioController

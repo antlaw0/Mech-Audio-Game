@@ -1,5 +1,5 @@
 import type { NavigationPoi } from './scene-layout.js'
-import type { EnemyRender, Player, SpriteObject, TankRender } from './types.js'
+import type { EnemyRender, Player, SpriteObject, CombatEnemyRender } from './types.js'
 
 interface WorldMapOverlayCreateArgs {
   mapData: Uint8Array
@@ -12,7 +12,7 @@ interface WorldMapOverlayCreateArgs {
 interface WorldMapRenderArgs {
   player: Player
   enemies: EnemyRender[]
-  tanks: TankRender[]
+  tanks: CombatEnemyRender[]
 } // end interface WorldMapRenderArgs
 
 interface WorldMapOverlaySystem {

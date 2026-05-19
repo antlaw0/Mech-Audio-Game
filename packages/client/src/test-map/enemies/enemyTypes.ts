@@ -32,6 +32,8 @@ export interface EnemySoundDefinition {
   positionalLoopSound: string
   /** Milliseconds to pause between loop iterations. 0 or undefined = continuous loop. */
   loopSoundPauseIntervalMs?: number
+  /** Maximum distance in world units for loop audibility. */
+  loopSoundMaxDistance?: number
   /** If true, stop the loop sound when the enemy is not moving and resume when it moves again. If false or undefined, always loop. */
   stopLoopSoundWhileStationary?: boolean
 } // end interface EnemySoundDefinition

@@ -34,12 +34,12 @@ import {
   syncDynamicFlightHeights,
   stepCombatEcsWorld
 } from './combat-ecs.js'
-import { createTargetLockState, updateTargetLock } from './target-lock.js'
+import { createTargetLockState, updateTargetLock, type LockLevel } from './target-lock.js'
 import { getEnemyDefinition } from './enemies/index.js'
 import type { EnemyDefinitionConfig, EnemyMovementPattern } from './enemies/enemyTypes.js'
 import type { EnemyId } from './enemies/enemyTypes.js'
 import { getSharedFlightHeight, setSharedFlightHeight } from './runtime-config.js'
-import type { WeaponStats } from './types.js'
+import type { TargetableEnemyRender, WeaponStats } from './types.js'
 import { PLAYER_MELEE_WEAPON_DEFINITIONS, PLAYER_WEAPON_DEFINITIONS, type PlayerMeleeWeaponDefinition, type PlayerWeaponDefinition } from './weapons.js'
 import { bindInput } from './input.js'
 import { createDeveloperConsole } from './dev-console.js'
@@ -401,6 +401,7 @@ function startTestMap(): void {
   const editorDeathSoundInput = getInput('editorDeathSound')
   const editorLoopSoundInput = getInput('editorLoopSound')
   const editorLoopSoundPauseIntervalInput = getInput('editorLoopSoundPauseIntervalMs')
+  const editorLoopSoundMaxDistanceInput = getInput('editorLoopSoundMaxDistance')
 
   const mapData = createMapData()
   const sprites = createSprites()
@@ -500,6 +501,9 @@ function startTestMap(): void {
   let devPreviousSpeed = 0
   let devApproxAcceleration = 0
   let devTargetLockedId: number | null = null
+  let devTargetLockedName = 'None'
+  let devLastKnownLockTargetName = 'None'
+  let devTargetLockMaxProgress = 100
   let devEnemyCount = 0
   let devProjectileCount = 0
   let isRuntimeDebugOverlayVisible = false
@@ -573,6 +577,10 @@ function startTestMap(): void {
     turnRate?: number
     terrainPenaltyMultiplier?: number
     energyUse?: number
+    range?: number
+    lockOn?: number
+    accuracy?: number
+    sensorStrength?: number
     specialEffects: string[]
     passiveBonuses: string[]
     activeAbilities: string[]
@@ -1201,7 +1209,7 @@ function startTestMap(): void {
     activeWeaponIndex = normalizedIndex
     playerWeapon = weaponLoadout[activeWeaponIndex] ?? weaponLoadout[0]!
     playerFireCooldownSeconds = 0
-    targetLockState.lockedTankId = null
+    resetTargetLockState()
     missileLockProgressMs = 0
     missileLockTargetId = null
     missileLockConfirmed = false
@@ -1244,6 +1252,23 @@ function startTestMap(): void {
     if (visible && document.activeElement instanceof HTMLElement) {
       pausePreviouslyFocusedElement = document.activeElement
     }
+
+    if (!visible) {
+      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      if (activeElement && pauseOverlayElement.contains(activeElement)) {
+        const restoreTarget = pausePreviouslyFocusedElement
+        if (restoreTarget instanceof HTMLElement && !pauseOverlayElement.contains(restoreTarget)) {
+          restoreTarget.focus({ preventScroll: true })
+        } else if (canvas instanceof HTMLCanvasElement) {
+          if (canvas.tabIndex < 0) {
+            canvas.tabIndex = -1
+          }
+          canvas.focus({ preventScroll: true })
+        } else {
+          activeElement.blur()
+        }
+      }
+    } // end if pause overlay becoming hidden
 
     pauseOverlayElement.style.display = visible ? 'flex' : 'none'
     pauseOverlayElement.setAttribute('aria-hidden', visible ? 'false' : 'true')
@@ -1834,6 +1859,7 @@ function startTestMap(): void {
     if (editorDeathSoundInput) editorDeathSoundInput.value = config.sounds.deathSound
     if (editorLoopSoundInput) editorLoopSoundInput.value = config.sounds.positionalLoopSound
     if (editorLoopSoundPauseIntervalInput) editorLoopSoundPauseIntervalInput.value = String(config.sounds.loopSoundPauseIntervalMs ?? 0)
+    if (editorLoopSoundMaxDistanceInput) editorLoopSoundMaxDistanceInput.value = String(config.sounds.loopSoundMaxDistance ?? AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance)
   } // end function populateEditorForm
 
   const readEditorForm = (baseId: EnemyId): EnemyDefinitionConfig => {
@@ -1868,6 +1894,7 @@ function startTestMap(): void {
         hurtSound: editorHurtSoundInput?.value.trim() || def.sounds.hurtSound,
         deathSound: editorDeathSoundInput?.value.trim() || def.sounds.deathSound,
         positionalLoopSound: editorLoopSoundInput?.value.trim() || def.sounds.positionalLoopSound,
+        loopSoundMaxDistance: Math.max(1, parseNum(editorLoopSoundMaxDistanceInput, def.sounds.loopSoundMaxDistance ?? AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance)),
         loopSoundPauseIntervalMs: Math.max(0, Math.round(parseNum(editorLoopSoundPauseIntervalInput, def.sounds.loopSoundPauseIntervalMs ?? 0)))
       }
     } // end object enemy config
@@ -2286,6 +2313,19 @@ function startTestMap(): void {
   spawnEnemyAtPosition(combatWorld, 268, 496, 'striker')
 
   const targetLockState = createTargetLockState()
+  const resetTargetLockState = (): void => {
+    targetLockState.currentTargetId = null
+    targetLockState.lockProgress = 0
+    targetLockState.targetScore = 0
+    targetLockState.retainedTargetId = null
+    targetLockState.retentionActive = false
+    devTargetLockedId = null
+    devTargetLockedName = 'None'
+    devLastKnownLockTargetName = 'None'
+    devTargetLockMaxProgress = 100
+    audio.resetTargetLockProgressAudio()
+  } // end function resetTargetLockState
+
   let lastTimeMs = 0
   let previousPlayerX = player.x
   let previousPlayerY = player.y
@@ -2651,6 +2691,10 @@ function startTestMap(): void {
       turnRate: safeSource.turnRate === undefined ? undefined : readNumber(safeSource.turnRate, 0),
       terrainPenaltyMultiplier: safeSource.terrainPenaltyMultiplier === undefined ? undefined : readNumber(safeSource.terrainPenaltyMultiplier, 1),
       energyUse: safeSource.energyUse === undefined ? undefined : readNumber(safeSource.energyUse, 0),
+        range: safeSource.range === undefined ? undefined : readNumber(safeSource.range, 0),
+        lockOn: safeSource.lockOn === undefined ? undefined : readNumber(safeSource.lockOn, 0),
+        accuracy: safeSource.accuracy === undefined ? undefined : readNumber(safeSource.accuracy, 1),
+        sensorStrength: safeSource.sensorStrength === undefined ? undefined : readNumber(safeSource.sensorStrength, 1),
       specialEffects: Array.isArray(safeSource.specialEffects) ? [...safeSource.specialEffects] : [],
       passiveBonuses: Array.isArray(safeSource.passiveBonuses) ? [...safeSource.passiveBonuses] : [],
       activeAbilities: Array.isArray(safeSource.activeAbilities) ? [...safeSource.activeAbilities] : []
@@ -3161,6 +3205,10 @@ function startTestMap(): void {
         flightStability: resolved.flightStability,
         speedModifier: resolved.speedModifier,
         energyUse: resolved.energyUse,
+        range: resolved.range,
+        lockOn: resolved.lockOn,
+        accuracy: resolved.accuracy,
+        sensorStrength: resolved.sensorStrength,
         passiveBonuses: [
           ...(definition.passiveBonuses ?? []),
           ...resolved.modifierSummary.map((entry) => `Modified: ${entry}`)
@@ -3261,6 +3309,35 @@ function startTestMap(): void {
 
   syncGarageLoadoutToDevParts()
 
+  const getLockMaxProgressForLevel = (level: LockLevel): number => {
+    if (level === 'Bronze') {
+      return 24
+    }
+    if (level === 'Silver') {
+      return 59
+    }
+    if (level === 'Gold') {
+      return 84
+    }
+    return 100
+  } // end function getLockMaxProgressForLevel
+
+  const getLockTargetDisplayName = (target: TargetableEnemyRender | null): string => {
+    if (!target) {
+      return 'None'
+    }
+
+    if (target.enemyType === 'enemy') {
+      return 'Enemy'
+    }
+
+    try {
+      return getEnemyDefinition(target.enemyType as EnemyId).name
+    } catch {
+      return target.enemyType
+    }
+  } // end function getLockTargetDisplayName
+
   const getRuntimeDebugOverlayLines = (): string[] => {
     const headingDegrees = normalizeDegrees((player.angle * 180) / Math.PI)
     const stats = syncAuthoritativeMechStats()
@@ -3283,6 +3360,18 @@ function startTestMap(): void {
       ? (player.isBoosting ? 'flight+boost' : 'flight')
       : (audio.isServoPlaying() ? 'servo' : 'idle')
 
+    // Compute distance to current target if available
+    let targetDistance = null
+    if (devTargetLockedId !== null && typeof devTargetLockedId === 'number') {
+      const renderState = getCombatRenderState(combatWorld)
+      const target = [...renderState.enemies, ...renderState.tanks].find((entry) => entry.id === devTargetLockedId)
+      if (target) {
+        const dx = (target.x - player.x)
+        const dy = (target.y - player.y)
+        const dz = (target.height - (player.z ?? 0))
+        targetDistance = Math.sqrt(dx*dx + dy*dy + dz*dz)
+      }
+    }
     const lines: string[] = [
       'PLAYER',
       `Position: (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${(player.z ?? 0).toFixed(2)})`,
@@ -3292,6 +3381,11 @@ function startTestMap(): void {
       `Flying: ${player.isFlying ? 'true' : 'false'}`,
       `Boosting: ${player.isBoosting ? 'true' : 'false'}`,
       `Target Locked: ${devTargetLockedId === null ? 'false' : `true (id ${devTargetLockedId})`}`,
+      `Target Name: ${devTargetLockedName}`,
+      `Target Progress: ${targetLockState.lockProgress.toFixed(1)}%`,
+      `Target Progress Value: ${targetLockState.lockProgress.toFixed(2)} / ${devTargetLockMaxProgress.toFixed(2)}`,
+      `Target Score: ${targetLockState.targetScore.toFixed(3)}`,
+      targetDistance !== null ? `Target Distance: ${targetDistance.toFixed(2)} m` : 'Target Distance: N/A',
       '',
       'CORE STATS',
       `Current Heat / Max Heat: ${devCurrentHeat.toFixed(1)} / ${stats.maxHeat.toFixed(1)}`,
@@ -4384,7 +4478,7 @@ function startTestMap(): void {
 
     if (normalizedCommand.startsWith('player.get ')) {
       const mode = normalizedCommand.slice('player.get '.length)
-      const targetId = targetLockState.lockedTankId
+      const targetId = targetLockState.currentTargetId
       const stats = syncAuthoritativeMechStats()
       const weight = stats.totalWeight
       if (mode === 'all') {
@@ -5132,7 +5226,7 @@ function startTestMap(): void {
       || input.snapLeftPending
       || input.snapRightPending
     if (snapWasRequested) {
-      targetLockState.lockedTankId = null
+      resetTargetLockState()
       missileLockProgressMs = 0
       missileLockTargetId = null
       missileLockConfirmed = false
@@ -5392,15 +5486,47 @@ function startTestMap(): void {
     const combatRender = getCombatRenderState(combatWorld)
 
     // --- Target lock evaluation ---
+    const lockTargets: TargetableEnemyRender[] = [...combatRender.enemies, ...combatRender.tanks]
+
+    const headPart = getDevPartState('Head')
+    const computerPart = getDevPartState('Computer')
+    const utilityPart = getDevPartState('Utility1')
+    const normalizedHeadRange = Math.max(0.4, (headPart.range ?? 100) / 100)
+    const headTrackingStabilityBase = Math.max(0.4, normalizedHeadRange * 0.95)
+    const computerLockMultiplier = Math.max(0.4, computerPart.lockOn ?? 1)
+    const utilitySensorStrength = Math.max(0.5, utilityPart.sensorStrength ?? 1)
+    const lockChipCount = [computerPart, utilityPart].reduce((total, part) => {
+      const partChipCount = part.specialEffects.filter((effect) => effect.toLowerCase().startsWith('chip:')).length
+      return total + partChipCount
+    }, 0)
+    const chipLockMultiplier = 1 + (Math.min(4, lockChipCount) * 0.06)
+    const isHeadOperational = isDevPartOperational('Head')
+    const maxLockLevel: LockLevel = isHeadOperational ? 'Platinum' : 'Silver'
+    const maxLockProgress = getLockMaxProgressForLevel(maxLockLevel)
+    const lockGainMultiplier = isHeadOperational ? 1 : 0.4
+
+    const lockModifiers = {
+      deltaSeconds,
+      headLockAcquisition: normalizedHeadRange,
+      headTrackingStability: isHeadOperational ? headTrackingStabilityBase : (headTrackingStabilityBase * 0.55),
+      computerProcessorSpeed: computerLockMultiplier,
+      computerLockRetention: computerLockMultiplier,
+      chipLockMultiplier,
+      ecmResistance: utilitySensorStrength,
+      maxLockLevel,
+      lockGainMultiplier
+    }
+
     const lockUpdate = updateTargetLock(
       targetLockState,
       player,
-      combatRender.tanks,
+      lockTargets,
       collisionWorld,
       playerWeapon.lockOnRange,
       playerWeapon.lockOnWindowWidthPercent,
       playerWeapon.lockOnWindowHeightPercent,
-      getHalfHorizontalFovRadians(currentCanvasWidth / Math.max(1, currentCanvasHeight))
+      getHalfHorizontalFovRadians(currentCanvasWidth / Math.max(1, currentCanvasHeight)),
+      lockModifiers
     )
 
     if (lockUpdate.justLost || lockUpdate.switchedTarget) {
@@ -5411,7 +5537,34 @@ function startTestMap(): void {
       audio.playLockOnChirp()
     } // end if lock acquired
 
-    devTargetLockedId = lockUpdate.lockedTank?.id ?? null
+    devTargetLockedId = lockUpdate.currentTargetId
+    if (lockUpdate.lockedTarget !== null) {
+      devLastKnownLockTargetName = getLockTargetDisplayName(lockUpdate.lockedTarget)
+      devTargetLockedName = devLastKnownLockTargetName
+    } else if (targetLockState.retentionActive && targetLockState.retainedTargetId !== null) {
+      devTargetLockedName = `${devLastKnownLockTargetName} (retained)`
+    } else {
+      devTargetLockedName = 'None'
+    }
+    devTargetLockMaxProgress = maxLockProgress
+
+    // Find current target's position for 3D panning
+    let targetPos = undefined
+    if (lockUpdate.currentTargetId !== null) {
+      const renderState = getCombatRenderState(combatWorld)
+      const target = renderState.enemies.find(e => e.id === lockUpdate.currentTargetId)
+      if (target) {
+        targetPos = { x: target.x, y: target.y, z: 0 }
+      }
+    }
+    audio.updateTargetLockProgressAudio(
+      deltaSeconds,
+      lockUpdate.currentTargetId !== null,
+      targetLockState.retentionActive,
+      targetLockState.lockProgress,
+      maxLockProgress,
+      targetPos
+    )
 
     const missileRequiresLock = playerWeapon.weaponType === 'missile'
       && (playerWeapon.lockOnTimeMs > 0 || playerWeapon.trackingRating > 0)
@@ -5423,7 +5576,7 @@ function startTestMap(): void {
         missileLockConfirmed = false
         missileLockToneTimerSeconds = 0
       } else {
-      const currentLockId = lockUpdate.lockedTank?.id ?? null
+      const currentLockId = lockUpdate.lockedTarget?.id ?? null
       if (currentLockId === null) {
         if (missileLockProgressMs > 0 || missileLockConfirmed) {
           audio.playLockLostChirp()
@@ -5499,7 +5652,7 @@ function startTestMap(): void {
       const shotEnergyCost = Math.max(0, playerWeapon.energyCostPerShot ?? 0)
 
       if (playerWeapon.weaponType === 'missile') {
-        const lockedTargetId = lockUpdate.lockedTank?.id ?? null
+        const lockedTargetId = lockUpdate.lockedTarget?.id ?? null
         if (missileRequiresLock && (!missileLockConfirmed || lockedTargetId === null)) {
           audio.playNegativeActionTone()
           announceBlockedAction('fire-missile-lock', 'Cannot fire missile. Lock is not confirmed.')
@@ -5550,13 +5703,13 @@ function startTestMap(): void {
           if (playerWeapon.fireRateCooldownSeconds > 0) {
             playerFireCooldownSeconds = playerWeapon.fireRateCooldownSeconds
           } // end if fire rate applies
-          if (lockUpdate.lockedTank !== null) {
+          if (lockUpdate.lockedTarget !== null) {
             spawnPlayerBulletToward(
               combatWorld,
               player,
-              lockUpdate.lockedTank.x,
-              lockUpdate.lockedTank.y,
-              lockUpdate.lockedTank.height + PLAYER_HEIGHT,
+              lockUpdate.lockedTarget.x,
+              lockUpdate.lockedTarget.y,
+              lockUpdate.lockedTarget.height + PLAYER_HEIGHT,
               playerWeapon.accuracy,
               speedFraction,
               playerWeapon.damagePerShot,
@@ -5648,6 +5801,7 @@ function startTestMap(): void {
       isAlive: tank.alive,
       height: tank.height,
       positionalLoopSound: tank.positionalLoopSound,
+      loopSoundMaxDistance: tank.loopSoundMaxDistance,
       loopSoundPauseIntervalMs: tank.loopSoundPauseIntervalMs,
       stopLoopSoundWhileStationary: tank.stopLoopSoundWhileStationary
     }))
@@ -5737,7 +5891,7 @@ function startTestMap(): void {
         bullets: combatRender.bullets,
         player,
         muzzleFlashAlpha,
-        lockedTankId: targetLockState.lockedTankId,
+        lockedTankId: targetLockState.currentTargetId,
         lockOnWindowWidthPercent: playerWeapon.lockOnWindowWidthPercent,
         lockOnWindowHeightPercent: playerWeapon.lockOnWindowHeightPercent
       })

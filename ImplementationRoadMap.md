@@ -1,18 +1,5 @@
 # 🧾 MECH COPILOT EXECUTION PACK (v4)
 
-## Temporary Execution Pause
-Copilot status: in-progress
-Developer status:
-
-Primary roadmap execution is temporarily paused while the client-only Garage and Parts Catalog system is implemented and validated. This workstream currently covers:
-
-- client-side part definitions vs. owned part instances
-- garage inventory and mech equip/swap UI
-- reusable part cards
-- stat resolution for part instances
-- developer-mode catalog editing flow
-
-Resume normal ticket progression after Garage approval.
 
 ### ROADMAP AUTHORITY
 
@@ -50,7 +37,7 @@ Copilot must not:
 If something is unclear:
 → mark as TODO
 → do not guess
-
+when a ticket is ready for my review, make sure to tell me what was implemented and what to test 
 ---
 
 # 🔧 PHASE 0 — DEVELOPMENT INSTRUMENTATION
@@ -1116,7 +1103,6 @@ when exiting starvation.
 * Attempt ballistic weapon
 * Confirm only energy systems fail
 
----
 
 # 🎯 PHASE 5 — TARGETING + COMBAT COGNITION
 
@@ -1124,8 +1110,10 @@ when exiting starvation.
 
 ## Ticket 19 — Target Lock Acquisition
 
-Copilot status: not started
-Developer status:
+Copilot status: ready for approval
+Developer status: approved
+
+Notes: Target acquisition now scores all visible combat targets, keeps the current target unless a new one clears the hysteresis threshold, and exposes currentTargetId, lockProgress, and targetScore in runtime debug output.
 
 ### 🧠 Copilot Prompt
 
@@ -1136,6 +1124,7 @@ A target becomes lockable when:
 * inside lock box
 * within weapon range
 * line of sight exists
+* target is not fully ECM-obscured
 
 Bronze lock must occur instantly.
 
@@ -1156,6 +1145,16 @@ Implement hysteresis.
 
 Current target remains selected unless another target exceeds score by hysteresis threshold.
 
+Weapon switching must preserve:
+
+```text
+currentTargetId
+lockProgress
+selectedSubsystem
+```
+
+unless the newly selected weapon cannot engage at current range.
+
 ---
 
 ### Required runtime data
@@ -1164,6 +1163,7 @@ Current target remains selected unless another target exceeds score by hysteresi
 currentTargetId
 lockProgress
 targetScore
+selectedSubsystem
 ```
 
 ---
@@ -1172,6 +1172,7 @@ targetScore
 
 * Stable target selection
 * No target jitter
+* Weapon switching does not drop lock unnecessarily
 
 ---
 
@@ -1179,14 +1180,17 @@ targetScore
 
 * Spawn multiple enemies
 * Sweep crosshairs across targets
-* Confirm stable lock behavior
+* Switch weapons
+* Confirm stable target retention
 
 ---
 
 ## Ticket 20 — Continuous Lock Progression
 
-Copilot status: not started
-Developer status:
+Copilot status: ready for approval
+Developer status: pending
+
+Notes: Replaced instant lock with continuous progression (0-100) using alignment, distance, target movement, and runtime head/computer/chip factors. Added retention decay when lock requirements break, resume-on-reacquire for the same target, and enforced head-destroyed penalties (max Silver cap, 0.4 gain multiplier, reduced tracking stability).
 
 ### 🧠 Copilot Prompt
 
@@ -1215,12 +1219,31 @@ Lock thresholds:
 85–100 Platinum
 ```
 
-Lock loss causes decay.
+Active lock breaks when:
+
+* target leaves lock box
+* target leaves weapon range
+* line of sight breaks
+* ECM disrupts lock
+* player loses aim
+
+When active lock breaks:
+
+* lock enters retention state
+* lock progress decays
 
 Decay affected by:
 
 ```text
 computer.lockRetention
+```
+
+Head destruction penalties:
+
+```text
+maxLockLevel = Silver
+lockGainMultiplier = 0.4
+trackingStability reduced
 ```
 
 ---
@@ -1229,6 +1252,7 @@ computer.lockRetention
 
 * Lock grows smoothly
 * Faster targets harder to refine
+* Sensor crippling affects combat
 
 ---
 
@@ -1236,7 +1260,8 @@ computer.lockRetention
 
 * Track stationary target
 * Track moving target
-* Compare lock times
+* Destroy head
+* Confirm degraded lock capability
 
 ---
 
@@ -1339,14 +1364,14 @@ Lock memory decays over time.
 
 ### 🎯 Expected Outcome
 
-* Player can switch targets without fully restarting lock
+* Skilled players may juggle multiple partial locks
 
 ---
 
 ### 🧪 Verify
 
 * Lock enemy A
-* Switch to enemy B
+* Lock enemy B
 * Return to enemy A
 * Confirm retained progress
 
@@ -1373,7 +1398,9 @@ all direct-fire damage → Core
 
 Missiles ignore subsystem targeting.
 
-Missiles always target mech center mass.
+Missiles always use center-mass blast routing.
+
+ECM interference limits maximum lock to Bronze.
 
 ---
 
@@ -1390,7 +1417,73 @@ Missiles always target mech center mass.
 
 ---
 
-## Ticket 24 — Subsystem Selection
+## Ticket 23A — Entity Target Layout Definitions
+
+Copilot status: not started
+Developer status:
+
+### 🧠 Copilot Prompt
+
+Implement data-driven targeting layouts.
+
+Every targetable entity must expose:
+
+```text
+layoutId
+nodes
+edges
+defaultNode
+fallbackNode
+```
+
+Each node exposes:
+
+```text
+nodeId
+partType
+gridX
+gridY
+initiallyExposed
+destroyedFallbackNode
+```
+
+Implement APIs:
+
+```text
+getTargetLayout(entity)
+getAdjacentSubsystem(entity,node,direction)
+getExposedSubsystems(entity)
+getFallbackSubsystem(entity)
+```
+
+Required starter layouts:
+
+* HumanoidMech
+* Tank
+* Helicopter
+* APC
+* Drone
+
+Layout coordinates are for deterministic navigation only.
+
+---
+
+### 🎯 Expected Outcome
+
+* Any entity can use subsystem targeting
+
+---
+
+### 🧪 Verify
+
+* Spawn mech
+* Spawn tank
+* Spawn helicopter
+* Navigate subsystems
+
+---
+
+## Ticket 24 — Directional Subsystem Selection
 
 Copilot status: not started
 Developer status:
@@ -1399,25 +1492,28 @@ Developer status:
 
 Subsystem targeting unlocks at Silver.
 
-Implement dedicated controls:
+Holding subsystem-selection modifier:
 
 ```text
-NextSubsystem
-PreviousSubsystem
+Alt
 ```
 
-Static cycle order:
+temporarily remaps:
 
 ```text
-Head
-Core
-LeftArm
-RightArm
-LeftMount
-RightMount
-Movement
-FlightSystem
+turnLeft
+turnRight
+lookUp
+lookDown
 ```
+
+into:
+
+```text
+navigate subsystem layout
+```
+
+Use entity targeting layouts.
 
 Bronze:
 
@@ -1427,19 +1523,37 @@ Silver+:
 
 * subsystem controls enabled
 
+If selected subsystem becomes invalid:
+
+* destroyed
+* hidden
+* jammed
+
+Automatically:
+
+```text
+selectedSubsystem = fallbackNode
+```
+
+Announce:
+
+```text
+Subsystem unavailable
+```
+
 ---
 
 ### 🎯 Expected Outcome
 
-* Deterministic subsystem selection
-* Consistent muscle memory
+* Directional muscle memory
+* No static cycling
 
 ---
 
 ### 🧪 Verify
 
 * Reach Silver
-* Cycle all subsystems
+* Navigate all directions
 
 ---
 
@@ -1452,7 +1566,9 @@ Developer status:
 
 When Core integrity reaches 0:
 
-Expose internal systems:
+Expose all hidden internal nodes defined by entity layout.
+
+Example mech internals:
 
 ```text
 Computer
@@ -1460,18 +1576,22 @@ Generator
 ThermalRegulator
 ```
 
-Append exposed systems to subsystem cycle order.
-
 Core destruction:
 
-* removes Core defensive bonuses
-* does NOT destroy mech
+* removes defensive bonuses
+* does NOT destroy entity
+
+If core becomes restored:
+
+* internal nodes become hidden again
+
+Invalid selections fall back automatically.
 
 ---
 
 ### 🎯 Expected Outcome
 
-* Layered targeting becomes available
+* Layered armor targeting
 
 ---
 
@@ -1491,34 +1611,30 @@ Developer status:
 
 Apply lock-stage weapon compensation.
 
----
-
-## Bronze
+### Bronze
 
 * no compensation
 * full spread
 
----
-
-## Silver
+### Silver
 
 * partial spread compensation
 * partial subsystem bias
 
----
-
-## Gold
+### Gold
 
 * strong recoil compensation
 * strong subsystem bias
 
----
-
-## Platinum
+### Platinum
 
 For non-missile direct-fire weapons:
 
 * guaranteed subsystem hit
+
+Missiles:
+
+* always use blast routing
 
 ---
 
@@ -1531,18 +1647,15 @@ For non-missile direct-fire weapons:
 ### 🧪 Verify
 
 * Fire at each lock stage
-* Confirm progressively tighter routing
 
 ---
 
-## Ticket 27 — Lock Loss + Subsystem Retarget Penalty
+## Ticket 27 — Lock Loss + Retarget Penalty
 
 Copilot status: not started
 Developer status:
 
 ### 🧠 Copilot Prompt
-
-Implement lock penalties.
 
 When subsystem selection changes:
 
@@ -1555,24 +1668,26 @@ Silver → Bronze
 Bronze → Bronze
 ```
 
-When target lock is broken:
+When active lock breaks:
 
-* lock enters retention state
-* retained lock decays over time
+* enter retention state
+* preserve target
+* preserve subsystem
+* decay over time
 
 ---
 
 ### 🎯 Expected Outcome
 
-* Target switching remains tactical
+* Retargeting remains tactical
 
 ---
 
 ### 🧪 Verify
 
 * Reach Platinum
-* Switch subsystem
-* Confirm stage drops
+* Change subsystem
+* Confirm downgrade
 
 ---
 
@@ -1589,13 +1704,30 @@ All subsystem damage must route through:
 
 * Bronze Core routing
 * Silver+ selected subsystem routing
-* Platinum guaranteed subsystem routing
+* Platinum guaranteed routing
 
-No hidden random subsystem damage is allowed.
+No hidden random subsystem damage allowed.
 
-Splash weapons may damage multiple subsystems based on blast radius.
+Splash routing must use:
 
-Missiles always use center-mass blast routing.
+* blast radius
+* blast direction
+* entity targeting layout topology
+
+Explosion damage distributes across exposed subsystems.
+
+Generator destruction:
+
+```text
+storedEP remains
+energyRegen = 0
+```
+
+Thermal destruction:
+
+```text
+coolingRate = 0
+```
 
 ---
 
@@ -1607,6 +1739,5 @@ Missiles always use center-mass blast routing.
 
 ### 🧪 Verify
 
-* Search codebase for legacy random subsystem logic
-* Confirm all combat routes through targeting system
-
+* Search codebase for random subsystem routing
+* Confirm all combat uses targeting system

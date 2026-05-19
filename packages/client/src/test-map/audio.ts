@@ -7,7 +7,6 @@ import {
   filterClosest,
   findNearestObstacleContact,
   getBearing,
-  hasLineOfSight,
   initializeAudioCueUtilities,
   normalizeAngle,
   playCardinalOrientationCue as playCardinalOrientationCueUtility,
@@ -19,6 +18,8 @@ import {
 } from './audio-utils.js'
 import { getEnemyDefinition } from './enemies/index.js'
 import type { EnemyAutomaticFireDefinition, EnemyId } from './enemies/enemyTypes.js'
+import { AudioOcclusionSystem } from './audio-occlusion.js'
+import { type SpatialAudioEmitter, createSharedSpatialAudioScene } from './spatial-audio.js'
 import type {
   AudioCategory,
   AudioController,
@@ -69,7 +70,7 @@ interface EnemySoundSet {
 interface EnemyEffects {
   filter: Tone.Filter
   gain: Tone.Gain
-  panner: Tone.Panner3D
+  emitter: SpatialAudioEmitter
 } // end interface EnemyEffects
 
 interface EnemyAudioParams {
@@ -77,12 +78,14 @@ interface EnemyAudioParams {
   passivePingRateMs: number
   movementVariance: number
   threatCueDelayMs: number
+  loopSoundMaxDistance: number
   loopSoundPauseIntervalMs: number
   stopLoopSoundWhileStationary: boolean
 } // end interface EnemyAudioParams
 
 interface EnemySoundOverrides {
   positionalLoopSound?: string
+  loopSoundMaxDistance?: number
   loopSoundPauseIntervalMs?: number
   stopLoopSoundWhileStationary?: boolean
 } // end interface EnemySoundOverrides
@@ -114,7 +117,7 @@ interface IncomingProjectileVoice {
   id: number | null
   player: Tone.Player
   gain: Tone.Gain
-  panner: Tone.Panner3D
+  emitter: SpatialAudioEmitter
 } // end interface IncomingProjectileVoice
 
 interface CardinalHeadingCue {
@@ -176,11 +179,8 @@ class EnemyAudioRuntime {
   private readonly oneshotGain: Tone.Gain
   private readonly turnCueSynth: Tone.Synth
   private readonly radarEchoSynth: Tone.FMSynth
-  private lastFacingAngle: number | null = null
   private passivePingTimerSeconds = 0
-  private turnCueCooldownSeconds = 0
   private attackDuckingTimerSeconds = 0
-  private losTickCooldownSeconds = 0
   private activeSonarStamp = -1
   private alive = true
   private lastTurnCueTime = -1
@@ -216,7 +216,7 @@ class EnemyAudioRuntime {
     profile.sounds.deathSound.connect(this.oneshotGain)
 
     profile.effects.filter.connect(profile.effects.gain)
-    profile.effects.gain.connect(profile.effects.panner)
+    profile.effects.gain.connect(profile.effects.emitter.input)
 
     this.turnCueSynth = new Tone.Synth({
       oscillator: { type: 'triangle' },
@@ -231,9 +231,6 @@ class EnemyAudioRuntime {
     })
     this.radarEchoSynth.connect(this.oneshotGain)
 
-    // lastFacingAngle stays null until the first updateAudio call to prevent
-    // a spurious first-frame turn cue caused by comparing a real facing angle
-    // against the default zero, which would fire at full volume via Tone.js lookahead.
     this.passivePingTimerSeconds = this.randomPassiveIntervalSeconds()
   } // end constructor
 
@@ -246,28 +243,30 @@ class EnemyAudioRuntime {
     this.movementGain.gain.rampTo(1, AUDIO_CONFIG.enemy.movementFadeSeconds)
   } // end method initializeLoops
 
-  updateAudio(dt: number, enemy: EnemyAudioState, player: PlayerAudioState, hasSightLine: boolean, volumeScale: number): void {
+  updateAudio(dt: number, enemy: EnemyAudioState, player: PlayerAudioState, occlusionAmount: number, volumeScale: number): void {
     // Handle movement-gated and pause-interval loop logic.
     this.updateMovementLoop(dt, enemy)
 
-    const relative = worldToListenerSpace(enemy.position, player.position, player.angle)
-    this.profile.effects.panner.positionX.value = relative.x
-    this.profile.effects.panner.positionY.value = relative.y
-    this.profile.effects.panner.positionZ.value = relative.z
+    this.profile.effects.emitter.setPosition(enemy.position.x, enemy.position.y, enemy.position.z)
 
-    const distance = Math.hypot(relative.x, relative.y, relative.z)
-    const distanceVolume = distanceToVolume(distance, AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance)
-    const targetVolume = distance <= AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance
-      ? this.profile.params.baseVolume * Math.pow(distanceVolume, AUDIO_NAVIGATION_CONFIG.enemyAudioDistanceExponent) * volumeScale
+    const distance = Math.hypot(
+      enemy.position.x - player.position.x,
+      enemy.position.y - player.position.y,
+      enemy.position.z - player.position.z
+    )
+    const enemyMaxDistance = Math.max(0.001, this.profile.params.loopSoundMaxDistance)
+    const distanceVolume = distanceToVolume(distance, enemyMaxDistance)
+    const clampedOcclusion = clamp(occlusionAmount, 0, 1)
+    const occlusionVolumeScale = 1 + ((AUDIO_CONFIG.enemy.occlusionVolumeMultiplier - 1) * clampedOcclusion)
+    const targetVolume = distance <= enemyMaxDistance
+      ? this.profile.params.baseVolume * Math.pow(distanceVolume, AUDIO_NAVIGATION_CONFIG.enemyAudioDistanceExponent) * volumeScale * occlusionVolumeScale
       : 0
     this.profile.effects.gain.gain.rampTo(targetVolume, 0.08)
 
-    const filterTarget = (
-      hasSightLine
-        ? distanceToFilter(distance)
-        : Math.max(240, distanceToFilter(distance) * 0.42)
-    ) + enemy.height * AUDIO_CONFIG.enemy.altitudeFilterScale
-    this.profile.effects.filter.frequency.rampTo(filterTarget, 0.08)
+    const clearFilterTarget = distanceToFilter(distance) + enemy.height * AUDIO_CONFIG.enemy.altitudeFilterScale
+    const occludedFilterTarget = Math.min(clearFilterTarget, AUDIO_CONFIG.enemy.occlusionLowpassHz)
+    const filterTarget = clearFilterTarget + ((occludedFilterTarget - clearFilterTarget) * clampedOcclusion)
+    this.profile.effects.filter.frequency.rampTo(filterTarget, AUDIO_CONFIG.enemy.occlusionTransitionSeconds)
 
     const isHelicopter = this.profile.type === AUDIO_CONFIG.helicopter.type
     if (!isHelicopter) {
@@ -279,24 +278,7 @@ class EnemyAudioRuntime {
 
     this.idleGain.gain.rampTo(0, AUDIO_CONFIG.enemy.idleFadeSeconds)
     this.movementGain.gain.rampTo(enemy.isAlive ? 1 : 0, AUDIO_CONFIG.enemy.movementFadeSeconds)
-
-    if (this.lastFacingAngle !== null) {
-    const facingDelta = Math.abs(normalizeAngle(enemy.facingAngle - this.lastFacingAngle))
-    if (facingDelta > AUDIO_CONFIG.enemy.turnCueThresholdRadians && this.turnCueCooldownSeconds <= 0 && enemy.isAlive) {
-      this.triggerTurnCue('G5', '32n')
-      this.turnCueCooldownSeconds = AUDIO_CONFIG.enemy.turnCueCooldownSeconds
-    } // end if turn delta exceeds threshold
-    } // end if lastFacingAngle is initialized
-
-    this.turnCueCooldownSeconds = Math.max(0, this.turnCueCooldownSeconds - dt)
     this.attackDuckingTimerSeconds = Math.max(0, this.attackDuckingTimerSeconds - dt)
-    this.losTickCooldownSeconds = Math.max(0, this.losTickCooldownSeconds - dt)
-    this.lastFacingAngle = enemy.facingAngle
-
-    if (enemy.isAlive && hasSightLine && distance <= AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance && this.losTickCooldownSeconds <= 0) {
-      this.triggerTurnCue('B5', '64n')
-      this.losTickCooldownSeconds = AUDIO_NAVIGATION_CONFIG.losTickIntervalSeconds
-    } // end if line-of-sight cue should play
 
     this.alive = enemy.isAlive
   } // end method updateAudio
@@ -382,7 +364,7 @@ class EnemyAudioRuntime {
     this.profile.sounds.deathSound.dispose()
     this.profile.effects.filter.dispose()
     this.profile.effects.gain.dispose()
-    this.profile.effects.panner.dispose()
+    this.profile.effects.emitter.dispose()
   } // end method dispose
 
   private triggerPassivePing(height: number): void {
@@ -547,21 +529,20 @@ function getEnemyAutomaticFireDefinition(definition: unknown): EnemyAutomaticFir
   return definition.automaticFire as EnemyAutomaticFireDefinition | undefined
 } // end function getEnemyAutomaticFireDefinition
 
-function createTankProfile(enemyId: string, enemyType: string, overrides?: EnemySoundOverrides): EnemyAudioProfile {
+type SpatialEmitterFactory = (minDistance: number, maxDistance: number) => SpatialAudioEmitter
+
+function createTankProfile(
+  enemyId: string,
+  enemyType: string,
+  emitterFactory: SpatialEmitterFactory,
+  overrides?: EnemySoundOverrides
+): EnemyAudioProfile {
   const definition = isEnemyId(enemyType) ? getEnemyDefinition(enemyType) : null
   const loopSoundPath = overrides?.positionalLoopSound ?? definition?.sounds.positionalLoopSound ?? 'assets/sounds/tankMoving.ogg'
   const filter = new Tone.Filter({ type: 'lowpass', frequency: 2600, Q: 0.7 })
   const gain = new Tone.Gain(0)
-  const panner = new Tone.Panner3D({
-    panningModel: 'equalpower',
-    distanceModel: 'inverse',
-    refDistance: 1,
-    maxDistance: AUDIO_CONFIG.enemy.maxDistance,
-    rolloffFactor: 1.4,
-    coneInnerAngle: 360,
-    coneOuterAngle: 0,
-    coneOuterGain: 0
-  }).toDestination()
+  const maxDistance = Math.max(1, overrides?.loopSoundMaxDistance ?? definition?.sounds.loopSoundMaxDistance ?? AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance)
+  const emitter = emitterFactory(8, maxDistance)
 
   return {
     id: enemyId,
@@ -581,34 +562,32 @@ function createTankProfile(enemyId: string, enemyType: string, overrides?: Enemy
     effects: {
       filter,
       gain,
-      panner
+      emitter
     },
     params: {
       baseVolume: AUDIO_CONFIG.tank.baseVolume,
       passivePingRateMs: AUDIO_CONFIG.tank.passivePingRateMs,
       movementVariance: AUDIO_CONFIG.tank.movementVariance,
       threatCueDelayMs: AUDIO_CONFIG.tank.threatCueDelayMs,
+      loopSoundMaxDistance: maxDistance,
       loopSoundPauseIntervalMs: overrides?.loopSoundPauseIntervalMs ?? definition?.sounds.loopSoundPauseIntervalMs ?? 0,
       stopLoopSoundWhileStationary: overrides?.stopLoopSoundWhileStationary ?? definition?.sounds.stopLoopSoundWhileStationary ?? false
     }
   } // end object enemy profile
 } // end function createTankProfile
 
-function createHelicopterProfile(enemyId: string, enemyType: string, overrides?: EnemySoundOverrides): EnemyAudioProfile {
+function createHelicopterProfile(
+  enemyId: string,
+  enemyType: string,
+  emitterFactory: SpatialEmitterFactory,
+  overrides?: EnemySoundOverrides
+): EnemyAudioProfile {
   const definition = isEnemyId(enemyType) ? getEnemyDefinition(enemyType) : null
   const loopSoundPath = overrides?.positionalLoopSound ?? definition?.sounds.positionalLoopSound ?? 'assets/sounds/helicopterLoop.ogg'
   const filter = new Tone.Filter({ type: 'lowpass', frequency: 3400, Q: 0.5 })
   const gain = new Tone.Gain(0)
-  const panner = new Tone.Panner3D({
-    panningModel: 'equalpower',
-    distanceModel: 'inverse',
-    refDistance: 1,
-    maxDistance: AUDIO_CONFIG.enemy.maxDistance,
-    rolloffFactor: 1.2,
-    coneInnerAngle: 360,
-    coneOuterAngle: 0,
-    coneOuterGain: 0
-  }).toDestination()
+  const maxDistance = Math.max(1, overrides?.loopSoundMaxDistance ?? definition?.sounds.loopSoundMaxDistance ?? AUDIO_CONFIG.enemy.maxDistance)
+  const emitter = emitterFactory(1, maxDistance)
 
   return {
     id: enemyId,
@@ -628,39 +607,40 @@ function createHelicopterProfile(enemyId: string, enemyType: string, overrides?:
     effects: {
       filter,
       gain,
-      panner
+      emitter
     },
     params: {
       baseVolume: AUDIO_CONFIG.helicopter.baseVolume,
       passivePingRateMs: AUDIO_CONFIG.helicopter.passivePingRateMs,
       movementVariance: AUDIO_CONFIG.helicopter.movementVariance,
       threatCueDelayMs: AUDIO_CONFIG.helicopter.threatCueDelayMs,
+      loopSoundMaxDistance: maxDistance,
       loopSoundPauseIntervalMs: overrides?.loopSoundPauseIntervalMs ?? definition?.sounds.loopSoundPauseIntervalMs ?? 0,
       stopLoopSoundWhileStationary: overrides?.stopLoopSoundWhileStationary ?? definition?.sounds.stopLoopSoundWhileStationary ?? false
     }
   }
 } // end function createHelicopterProfile
 
-function createEnemyProfile(enemyId: string, enemyType: string, overrides?: EnemySoundOverrides): EnemyAudioProfile {
+function createEnemyProfile(
+  enemyId: string,
+  enemyType: string,
+  emitterFactory: SpatialEmitterFactory,
+  overrides?: EnemySoundOverrides
+): EnemyAudioProfile {
   if (enemyType === AUDIO_CONFIG.helicopter.type) {
-    return createHelicopterProfile(enemyId, enemyType, overrides)
+    return createHelicopterProfile(enemyId, enemyType, emitterFactory, overrides)
   } // end if helicopter
-  return createTankProfile(enemyId, enemyType, overrides)
+  return createTankProfile(enemyId, enemyType, emitterFactory, overrides)
 } // end function createEnemyProfile
 
-function createFallbackEnemyProfile(enemyId: string, enemyType: string): EnemyAudioProfile {
+function createFallbackEnemyProfile(
+  enemyId: string,
+  enemyType: string,
+  emitterFactory: SpatialEmitterFactory
+): EnemyAudioProfile {
   const filter = new Tone.Filter({ type: 'lowpass', frequency: 2600, Q: 0.7 })
   const gain = new Tone.Gain(0)
-  const panner = new Tone.Panner3D({
-    panningModel: 'equalpower',
-    distanceModel: 'inverse',
-    refDistance: 1,
-    maxDistance: AUDIO_CONFIG.enemy.maxDistance,
-    rolloffFactor: 1.4,
-    coneInnerAngle: 360,
-    coneOuterAngle: 0,
-    coneOuterGain: 0
-  }).toDestination()
+  const emitter = emitterFactory(8, AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance)
 
   const isHelicopter = enemyType === AUDIO_CONFIG.helicopter.type
   return {
@@ -672,13 +652,14 @@ function createFallbackEnemyProfile(enemyId: string, enemyType: string): EnemyAu
     effects: {
       filter,
       gain,
-      panner
+      emitter
     },
     params: {
       baseVolume: isHelicopter ? AUDIO_CONFIG.helicopter.baseVolume : AUDIO_CONFIG.tank.baseVolume,
       passivePingRateMs: isHelicopter ? AUDIO_CONFIG.helicopter.passivePingRateMs : AUDIO_CONFIG.tank.passivePingRateMs,
       movementVariance: isHelicopter ? AUDIO_CONFIG.helicopter.movementVariance : AUDIO_CONFIG.tank.movementVariance,
       threatCueDelayMs: isHelicopter ? AUDIO_CONFIG.helicopter.threatCueDelayMs : AUDIO_CONFIG.tank.threatCueDelayMs,
+      loopSoundMaxDistance: AUDIO_NAVIGATION_CONFIG.enemyAudioMaxDistance,
       loopSoundPauseIntervalMs: 0,
       stopLoopSoundWhileStationary: false
     }
@@ -723,6 +704,8 @@ export function createAudioController(): AudioController {
   let energyStatusLoopStarted = false
   let energyStatusCrackleStarted = false
   let heatStatusSizzleStarted = false
+  let hoverMobilityTremoloStarted = false
+  let radarDetectionTremoloStarted = false
   let lastImpactTimeSeconds = -1
   let lastTankHitConfirmTimeSeconds = -1
   let suppressObjectNavigationIndicators = false
@@ -762,6 +745,21 @@ export function createAudioController(): AudioController {
   const aimAssistProjectileRadius = 0.25
 
   const rawContext = Tone.getContext().rawContext as AudioContext
+  const spatialScene = createSharedSpatialAudioScene(rawContext)
+  const audioOcclusionSystem = new AudioOcclusionSystem({
+    debugLogging: AUDIO_BROWSER_DEBUG_LOGS_ENABLED
+  })
+
+  const createWorldEmitter = (minDistance: number, maxDistance: number): SpatialAudioEmitter => {
+    return spatialScene.createEmitter({
+      minDistance,
+      maxDistance,
+      positionSmoothing: 1,
+      gain: 1,
+      directivity: { alpha: 0, sharpness: 1 }
+    })
+  } // end function createWorldEmitter
+
   const enemyRuntimes = new Map<string, EnemyAudioRuntime>()
 
   const clampVolumeScalar = (value: number): number => clamp(value, 0, 2)
@@ -1099,13 +1097,7 @@ export function createAudioController(): AudioController {
   servoAudio.loop = true
   servoAudio.volume = AUDIO_CONFIG.player.servoVolume
 
-  const impactPanner = new Tone.Panner3D({
-    panningModel: 'HRTF',
-    distanceModel: 'inverse',
-    refDistance: 1,
-    maxDistance: 96,
-    rolloffFactor: 1.8
-  }).toDestination()
+  const impactEmitter = createWorldEmitter(1, 96)
 
   const impactSynth = new Tone.MetalSynth({
     envelope: { attack: 0.001, decay: 0.16, release: 0.25 },
@@ -1113,7 +1105,7 @@ export function createAudioController(): AudioController {
     modulationIndex: 14,
     resonance: 2800,
     octaves: 1.2
-  }).connect(impactPanner)
+  }).connect(impactEmitter.input)
 
   const CARDINAL_HEADING_CUES: readonly CardinalHeadingCue[] = [
     { id: 'north', angle: -Math.PI / 2, path: 'assets/sounds/nav/north.ogg' },
@@ -1228,7 +1220,6 @@ export function createAudioController(): AudioController {
 
   const hoverMobilityGain = new Tone.Gain(0).connect(mobilityPlaceholderMasterGain)
   const hoverMobilityTremolo = new Tone.Tremolo({ frequency: 5, depth: 0.3, type: 'sine', spread: 0 }).connect(hoverMobilityGain)
-  hoverMobilityTremolo.start()
   const hoverMobilityOsc = new Tone.Oscillator({ frequency: 140, type: 'triangle' }).connect(hoverMobilityTremolo)
   const hoverMobilityHissGain = new Tone.Gain(0.04).connect(hoverMobilityGain)
   const hoverMobilityHissFilter = new Tone.Filter({ type: 'highpass', frequency: 1050, Q: 0.85 }).connect(hoverMobilityHissGain)
@@ -1254,14 +1245,8 @@ export function createAudioController(): AudioController {
   const hardLandingGain = new Tone.Gain(0.92).toDestination()
   const hardLandingSound = new Tone.Player('assets/sounds/hardLanding.ogg').connect(hardLandingGain)
 
-  const bulletNearMissPanner = new Tone.Panner3D({
-    panningModel: 'HRTF',
-    distanceModel: 'inverse',
-    refDistance: 0.8,
-    maxDistance: 8,
-    rolloffFactor: 1.35
-  }).toDestination()
-  const bulletNearMissGain = new Tone.Gain(0.001).connect(bulletNearMissPanner)
+  const bulletNearMissEmitter = createWorldEmitter(0.8, 8)
+  const bulletNearMissGain = new Tone.Gain(0.001).connect(bulletNearMissEmitter.input)
   const bulletNearMissVoices = [
     new Tone.Player('assets/sounds/bulletWiz.ogg').connect(bulletNearMissGain),
     new Tone.Player('assets/sounds/bulletWiz.ogg').connect(bulletNearMissGain),
@@ -1269,14 +1254,8 @@ export function createAudioController(): AudioController {
     new Tone.Player('assets/sounds/bulletWiz.ogg').connect(bulletNearMissGain)
   ]
 
-  const projectileNearMissPanner = new Tone.Panner3D({
-    panningModel: 'HRTF',
-    distanceModel: 'inverse',
-    refDistance: 1.1,
-    maxDistance: 10,
-    rolloffFactor: 1.25
-  }).toDestination()
-  const projectileNearMissGain = new Tone.Gain(0.001).connect(projectileNearMissPanner)
+  const projectileNearMissEmitter = createWorldEmitter(1.1, 10)
+  const projectileNearMissGain = new Tone.Gain(0.001).connect(projectileNearMissEmitter.input)
   const projectileNearMissVoices = [
     new Tone.Player('assets/sounds/projectileWiz.ogg').connect(projectileNearMissGain),
     new Tone.Player('assets/sounds/projectileWiz.ogg').connect(projectileNearMissGain),
@@ -1285,21 +1264,15 @@ export function createAudioController(): AudioController {
   ]
 
   const incomingProjectileVoices: IncomingProjectileVoice[] = Array.from({ length: 8 }, () => {
-    const panner = new Tone.Panner3D({
-      panningModel: 'HRTF',
-      distanceModel: 'inverse',
-      refDistance: 0.9,
-      maxDistance: 22,
-      rolloffFactor: 1.15
-    }).toDestination()
-    const gain = new Tone.Gain(0.001).connect(panner)
+    const emitter = createWorldEmitter(0.9, 22)
+    const gain = new Tone.Gain(0.001).connect(emitter.input)
     const player = new Tone.Player('assets/sounds/projectileWiz.ogg').connect(gain)
     player.loop = true
     return {
       id: null,
       player,
       gain,
-      panner
+      emitter
     }
   })
 
@@ -1462,6 +1435,29 @@ export function createAudioController(): AudioController {
     envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.05 }
   }).toDestination()
 
+
+  // 3D panners for lock progress tones
+  const targetLockProgressPanner = new Tone.Panner3D({ panningModel: 'HRTF', distanceModel: 'inverse', refDistance: 1, maxDistance: 96, rolloffFactor: 1.8 }).toDestination()
+  const targetLockProgressBeepSynth = new Tone.Synth({
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.025 }
+  }).connect(targetLockProgressPanner)
+
+  const targetLockStageSuccessSynth = new Tone.Synth({
+    oscillator: { type: 'sine' },
+    envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.04 }
+  }).connect(targetLockProgressPanner)
+
+  const targetLockStageLossSynth = new Tone.Synth({
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.001, decay: 0.09, sustain: 0, release: 0.045 }
+  }).connect(targetLockProgressPanner)
+
+  const targetLockFullSuccessSynth = new Tone.Synth({
+    oscillator: { type: 'sine' },
+    envelope: { attack: 0.001, decay: 0.1, sustain: 0, release: 0.06 }
+  }).connect(targetLockProgressPanner)
+
   const negativeActionSynth = new Tone.Synth({
     oscillator: { type: 'triangle' },
     envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.04 }
@@ -1489,7 +1485,6 @@ export function createAudioController(): AudioController {
   const radarDetectionFilter = new Tone.Filter({ frequency: 2400, type: 'lowpass', rolloff: -24 }).connect(radarDetectionBoost)
   const radarDetectionDistortion = new Tone.Distortion(0.55).connect(radarDetectionFilter)
   const radarDetectionTremolo = new Tone.Tremolo({ frequency: 1, depth: 1.0, type: 'sine', spread: 0 }).connect(radarDetectionDistortion)
-  radarDetectionTremolo.start()
   const radarDetectionOsc = new Tone.Oscillator({ frequency: 180, type: 'square' }).connect(radarDetectionTremolo)
 
   const destinationTonePanner = new Tone.Panner(0).toDestination()
@@ -1910,6 +1905,14 @@ export function createAudioController(): AudioController {
           firstTownTerrainStep.currentTime = 0
         }
         initializeAudioCueUtilities()
+        if (!hoverMobilityTremoloStarted) {
+          hoverMobilityTremolo.start()
+          hoverMobilityTremoloStarted = true
+        } // end if hover mobility tremolo not started
+        if (!radarDetectionTremoloStarted) {
+          radarDetectionTremolo.start()
+          radarDetectionTremoloStarted = true
+        } // end if radar detection tremolo not started
         if (!radarDetectionOscStarted) {
           radarDetectionOsc.start()
           radarDetectionOscStarted = true
@@ -1968,6 +1971,11 @@ export function createAudioController(): AudioController {
   let lockLostChirpLastStartSeconds = -Infinity
   let missileLockToneLastStartSeconds = -Infinity
   let missileLockConfirmLastStartSeconds = -Infinity
+  let targetLockProgressLastStartSeconds = -Infinity
+  let targetLockStageLastStartSeconds = -Infinity
+  let targetLockProgressBeepTimerSeconds = 0
+  let targetLockPreviousStage = 0
+  let targetLockWasFull = false
   let aimAssistTrackingLastStartSeconds = -Infinity
   let negativeActionLastStartSeconds = -Infinity
   let lastCardinalHeadingCueTimeSeconds = -Infinity
@@ -2030,6 +2038,127 @@ export function createAudioController(): AudioController {
     missileLockConfirmSynth.triggerAttackRelease('A5', '32n', secondStart)
     missileLockConfirmSynth.triggerAttackRelease('E6', '16n', thirdStart)
   } // end function playMissileLockConfirmTone
+
+  const getTargetLockStage = (lockProgress: number, maxLockProgress: number): number => {
+    const progress = clamp(lockProgress, 0, Math.max(1, maxLockProgress))
+    if (maxLockProgress >= 85 && progress >= 85) {
+      return 3
+    }
+    if (maxLockProgress >= 60 && progress >= 60) {
+      return 2
+    }
+    if (maxLockProgress >= 25 && progress >= 25) {
+      return 1
+    }
+    return 0
+  } // end function getTargetLockStage
+
+  // Helper to set 3D panner position for lock tones
+  function setTargetLockProgressPanner(x: number, y: number, z: number) {
+    targetLockProgressPanner.positionX.value = x
+    targetLockProgressPanner.positionY.value = y
+    targetLockProgressPanner.positionZ.value = z
+  }
+
+  // Accepts world position of target
+  const playTargetLockStageUpTone = (stage: number, pos?: {x:number,y:number,z:number}): void => {
+    if (pos) setTargetLockProgressPanner(pos.x, pos.y, pos.z)
+    const clampedStage = Math.max(1, Math.min(3, stage))
+    const rootFrequency = 520 + (clampedStage * 90)
+    const firstStart = strictlyIncreasingStartTime(Tone.now(), targetLockStageLastStartSeconds)
+    const secondStart = strictlyIncreasingStartTime(firstStart + 0.08, firstStart)
+    targetLockStageLastStartSeconds = secondStart
+    targetLockStageSuccessSynth.volume.value = Tone.gainToDb(0.38)
+    targetLockStageSuccessSynth.triggerAttackRelease(rootFrequency, '32n', firstStart)
+    targetLockStageSuccessSynth.triggerAttackRelease(rootFrequency * 1.34, '16n', secondStart)
+  }
+
+  const playTargetLockStageDownTone = (stage: number, pos?: {x:number,y:number,z:number}): void => {
+    if (pos) setTargetLockProgressPanner(pos.x, pos.y, pos.z)
+    const clampedStage = Math.max(1, Math.min(3, stage))
+    const rootFrequency = 520 + (clampedStage * 90)
+    const firstStart = strictlyIncreasingStartTime(Tone.now(), targetLockStageLastStartSeconds)
+    const secondStart = strictlyIncreasingStartTime(firstStart + 0.08, firstStart)
+    targetLockStageLastStartSeconds = secondStart
+    targetLockStageLossSynth.volume.value = Tone.gainToDb(0.35)
+    targetLockStageLossSynth.triggerAttackRelease(rootFrequency * 1.34, '32n', firstStart)
+    targetLockStageLossSynth.triggerAttackRelease(rootFrequency, '16n', secondStart)
+  }
+
+  const playTargetLockFullSuccessTone = (pos?: {x:number,y:number,z:number}): void => {
+    if (pos) setTargetLockProgressPanner(pos.x, pos.y, pos.z)
+    const firstStart = strictlyIncreasingStartTime(Tone.now(), targetLockStageLastStartSeconds)
+    const secondStart = strictlyIncreasingStartTime(firstStart + 0.07, firstStart)
+    const thirdStart = strictlyIncreasingStartTime(firstStart + 0.14, secondStart)
+    targetLockStageLastStartSeconds = thirdStart
+    targetLockFullSuccessSynth.volume.value = Tone.gainToDb(0.52)
+    targetLockFullSuccessSynth.triggerAttackRelease('G5', '32n', firstStart)
+    targetLockFullSuccessSynth.triggerAttackRelease('B5', '32n', secondStart)
+    targetLockFullSuccessSynth.triggerAttackRelease('D6', '16n', thirdStart)
+  }
+
+  const resetTargetLockProgressAudio = (): void => {
+    targetLockProgressBeepTimerSeconds = 0
+    targetLockPreviousStage = 0
+    targetLockWasFull = false
+  } // end function resetTargetLockProgressAudio
+
+  // Keep lock tones event-driven so they do not re-trigger continuously every frame.
+  const updateTargetLockProgressAudio = (
+    deltaSeconds: number,
+    hasActiveLock: boolean,
+    hasRetentionLock: boolean,
+    lockProgress: number,
+    maxLockProgress: number,
+    targetPos?: {x:number,y:number,z:number}
+  ): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
+      return
+    }
+    void hasRetentionLock
+    const shouldPlayLockTones = hasActiveLock && maxLockProgress > 0
+    if (!shouldPlayLockTones) {
+      resetTargetLockProgressAudio()
+      return
+    }
+    const clampedMaxProgress = Math.max(1, maxLockProgress)
+    const clampedProgress = clamp(lockProgress, 0, clampedMaxProgress)
+    const currentStage = getTargetLockStage(clampedProgress, clampedMaxProgress)
+
+    if (currentStage > targetLockPreviousStage) {
+      for (let stage = targetLockPreviousStage + 1; stage <= currentStage; stage += 1) {
+        playTargetLockStageUpTone(stage, targetPos)
+      } // end for each newly reached stage
+    } else if (currentStage < targetLockPreviousStage) {
+      for (let stage = targetLockPreviousStage; stage > currentStage; stage -= 1) {
+        playTargetLockStageDownTone(stage, targetPos)
+      } // end for each dropped stage
+    }
+
+    targetLockPreviousStage = currentStage
+
+    const isFull = hasActiveLock && clampedProgress >= (clampedMaxProgress - 0.001)
+    if (isFull && !targetLockWasFull) {
+      playTargetLockFullSuccessTone(targetPos)
+    }
+
+    targetLockWasFull = isFull
+
+    if (!isFull) {
+      targetLockProgressBeepTimerSeconds += Math.max(0, deltaSeconds)
+      const normalizedProgress = clamp(clampedProgress / clampedMaxProgress, 0, 1)
+      const beepIntervalSeconds = 0.22
+      if (targetLockProgressBeepTimerSeconds >= beepIntervalSeconds) {
+        targetLockProgressBeepTimerSeconds = 0
+        if (targetPos) setTargetLockProgressPanner(targetPos.x, targetPos.y, targetPos.z)
+        const start = strictlyIncreasingStartTime(Tone.now(), targetLockProgressLastStartSeconds)
+        targetLockProgressLastStartSeconds = start
+        const beepFrequency = 360 + (normalizedProgress * 700)
+        targetLockProgressBeepSynth.volume.value = Tone.gainToDb(0.24)
+        targetLockProgressBeepSynth.triggerAttackRelease(beepFrequency, '32n', start)
+      }
+    }
+  }
 
   const playNegativeActionTone = (): void => {
     if (!audioStarted || !isAudioContextRunning()) {
@@ -2131,6 +2260,8 @@ export function createAudioController(): AudioController {
         // Ignore suspend failures and keep gameplay paused regardless.
       } // end try/catch context suspend
     } // end if context was running before pause
+
+    resetTargetLockProgressAudio()
   } // end function pauseAllAudio
 
   const resumeAllAudio = async (): Promise<void> => {
@@ -2509,14 +2640,28 @@ export function createAudioController(): AudioController {
     collisionWorld: WorldCollisionWorld,
     sprites: SpriteObject[]
   ): void => {
-    const maxAudioLosDistance = 170
-
     updateZoneAmbienceMix(player, dt)
     applyHtmlAudioVolumes()
 
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
+
+    spatialScene.updateListenerFromCamera({
+      position: {
+        x: player.position.x,
+        y: player.position.y,
+        z: player.position.z
+      },
+      orientation: {
+        forwardX: Math.cos(player.angle),
+        forwardY: Math.sin(player.angle),
+        forwardZ: 0,
+        upX: 0,
+        upY: 0,
+        upZ: 1
+      }
+    })
 
     const elevatedSurfaceHeight = resolveElevatedSurfaceHeight(player, collisionWorld)
     const isOnElevatedSurface = elevatedSurfaceHeight !== null
@@ -2557,49 +2702,50 @@ export function createAudioController(): AudioController {
       (nearestDropEdgeContact !== null && nearestDropEdgeContact.distance <= AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance)
     )
 
-    const losEnemyCandidates = enemies
-      .filter((enemy) => enemy.isAlive)
-      .map((enemy) => {
-        const distance = Math.hypot(
-          enemy.position.x - player.position.x,
-          enemy.position.y - player.position.y,
-          enemy.position.z - player.position.z
-        )
-        if (distance > maxAudioLosDistance) {
-          return { enemyId: enemy.id, hasSightLine: false, distance }
-        } // end if enemy is outside LOS audio trace range
+    audioOcclusionSystem.update({
+      dtSeconds: dt,
+      world: collisionWorld,
+      listener: {
+        x: player.position.x,
+        y: player.position.y,
+        z: player.position.z
+      },
+      emitters: enemies
+        .filter((enemy) => enemy.isAlive)
+        .map((enemy) => {
+          const distance = Math.hypot(
+            enemy.position.x - player.position.x,
+            enemy.position.y - player.position.y,
+            enemy.position.z - player.position.z
+          )
 
-        const hasSightLine = hasLineOfSight(
-          collisionWorld,
-          { x: enemy.position.x, y: enemy.position.y },
-          { x: player.position.x, y: player.position.y }
-        )
-
-        return { enemyId: enemy.id, hasSightLine, distance }
-      })
-      .filter((entry) => entry.hasSightLine)
-      .sort((a, b) => a.distance - b.distance)
-    const primaryLosEnemyId = losEnemyCandidates[0]?.enemyId
+          return {
+            entityId: enemy.id,
+            position: enemy.position,
+            importance: clamp(1 - (distance / 52), 0.12, 1)
+          }
+        })
+    })
 
     const liveEnemyIds = new Set<string>()
     for (const enemy of enemies) {
       liveEnemyIds.add(enemy.id)
       const runtime = getOrCreateEnemyRuntime(enemy.id, enemy.type, {
         positionalLoopSound: enemy.positionalLoopSound,
+        loopSoundMaxDistance: enemy.loopSoundMaxDistance,
         loopSoundPauseIntervalMs: enemy.loopSoundPauseIntervalMs,
         stopLoopSoundWhileStationary: enemy.stopLoopSoundWhileStationary
       })
-      const hasSightLine = losEnemyCandidates.some((entry) => entry.enemyId === enemy.id)
-      const shouldEmitLosTick = primaryLosEnemyId === enemy.id
-      // Always call updateAudio so positional loops keep playing even when the
-      // enemies-category is toggled off. Cue sounds (LOS ticks, turn cues) are
-      // suppressed by passing false for the hasSightLine gate.
+      const occlusionAmount = audioOcclusionSystem.getOcclusionAmount(enemy.id)
+      // Always call updateAudio so movement/firing/reloading are never silenced by the combat audio toggle.
+      // Only LOS ticks, threat cues, and pings are gated by the toggle.
+      // Movement/firing/reloading always use full volume.
       runtime.updateAudio(
         dt,
         enemy,
         player,
-        categoryEnemies && hasNearbySonarContact && hasSightLine && shouldEmitLosTick,
-        categoryEnemies ? enemiesVolume : 0
+        /*occlusionAmount*/ occlusionAmount,
+        /*volumeScale*/ enemiesVolume > 0 ? enemiesVolume : 1
       )
     } // end for each enemy
 
@@ -2969,26 +3115,20 @@ export function createAudioController(): AudioController {
       return
     } // end if audio not started
 
-    const relative = worldToListenerSpace(
-      { x: worldX, y: worldY, z: 0 },
-      { x: playerX, y: playerY, z: 0 },
-      playerAngle
-    )
+    void playerX
+    void playerY
+    void playerAngle
     const clampedRadius = Math.max(nearMissRadius, 0.001)
     const closeness = clamp(1 - closestDistance / clampedRadius, 0, 1)
     if (projectileType === 'projectile') {
       projectileNearMissGain.gain.value = clamp((0.08 + closeness * 0.9) * enemiesVolume, 0, 1.4)
-      projectileNearMissPanner.positionX.value = relative.x
-      projectileNearMissPanner.positionY.value = relative.y
-      projectileNearMissPanner.positionZ.value = relative.z
+      projectileNearMissEmitter.setPosition(worldX, worldY, 0)
       projectileNearMissVoiceCursor = playFromVoicePool(projectileNearMissVoices, projectileNearMissVoiceCursor)
       return
     } // end if cannon projectile near miss
 
     bulletNearMissGain.gain.value = clamp((0.06 + closeness * 0.8) * enemiesVolume, 0, 1.3)
-    bulletNearMissPanner.positionX.value = relative.x
-    bulletNearMissPanner.positionY.value = relative.y
-    bulletNearMissPanner.positionZ.value = relative.z
+    bulletNearMissEmitter.setPosition(worldX, worldY, 0)
     bulletNearMissVoiceCursor = playFromVoicePool(bulletNearMissVoices, bulletNearMissVoiceCursor)
   } // end function playProjectileNearMiss
 
@@ -3024,11 +3164,6 @@ export function createAudioController(): AudioController {
         continue
       } // end if no voice available
 
-      const relative = worldToListenerSpace(
-        { x: projectile.x, y: projectile.y, z: 0 },
-        { x: playerX, y: playerY, z: 0 },
-        playerAngle
-      )
       const distance = Math.max(projectile.distanceToPlayer, 0.001)
       const toPlayerX = playerX - projectile.x
       const toPlayerY = playerY - projectile.y
@@ -3037,9 +3172,7 @@ export function createAudioController(): AudioController {
       const approach = clamp(closingSpeed / 8, 0, 1)
       const targetGain = clamp((0.015 + proximity * (0.2 + approach * 0.78)) * enemiesVolume, 0, 1.3)
 
-      voice.panner.positionX.value = relative.x
-      voice.panner.positionY.value = relative.y
-      voice.panner.positionZ.value = relative.z
+      voice.emitter.setPosition(projectile.x, projectile.y, 0)
       voice.gain.gain.value = targetGain
       if (voice.player.loaded && voice.player.state !== 'started') {
         voice.player.start()
@@ -3262,14 +3395,7 @@ export function createAudioController(): AudioController {
     } // end if impacts are being emitted too densely
     lastImpactTimeSeconds = now
 
-    const relative = worldToListenerSpace(
-      { x: worldX, y: worldY, z: 0 },
-      { x: playerX, y: playerY, z: 0 },
-      playerAngle
-    )
-    impactPanner.positionX.value = relative.x
-    impactPanner.positionY.value = relative.y
-    impactPanner.positionZ.value = relative.z
+    impactEmitter.setPosition(worldX, worldY, 0)
     impactSynth.volume.value = gainToDbSafe(objectsVolume)
     impactSynth.triggerAttackRelease(220, '16n', now + timeOffsetSeconds)
   } // end function playImpact
@@ -3751,11 +3877,13 @@ export function createAudioController(): AudioController {
       const typeChanged = existing.profile.type !== enemyType
       const pauseChanged = overrides?.loopSoundPauseIntervalMs !== undefined &&
         existing.profile.params.loopSoundPauseIntervalMs !== overrides.loopSoundPauseIntervalMs
+      const maxDistanceChanged = overrides?.loopSoundMaxDistance !== undefined &&
+        existing.profile.params.loopSoundMaxDistance !== overrides.loopSoundMaxDistance
       const stationaryChanged = overrides?.stopLoopSoundWhileStationary !== undefined &&
         existing.profile.params.stopLoopSoundWhileStationary !== overrides.stopLoopSoundWhileStationary
       const loopPathChanged = overrides?.positionalLoopSound !== undefined &&
         existing.profile.loopSoundPath !== overrides.positionalLoopSound
-      if (typeChanged || pauseChanged || stationaryChanged || loopPathChanged) {
+      if (typeChanged || pauseChanged || maxDistanceChanged || stationaryChanged || loopPathChanged) {
         existing.dispose()
         enemyRuntimes.delete(enemyId)
       } else {
@@ -3765,11 +3893,11 @@ export function createAudioController(): AudioController {
 
     let profile: EnemyAudioProfile
     try {
-      profile = createEnemyProfile(enemyId, enemyType, overrides)
+      profile = createEnemyProfile(enemyId, enemyType, createWorldEmitter, overrides)
     } catch (error) {
       // Keep frame-audio updates alive when a late-loaded enemy clip fails to fetch.
       audioDebugWarn('Enemy audio asset load failed, using silent fallback runtime.', { enemyId, enemyType, error })
-      profile = createFallbackEnemyProfile(enemyId, enemyType)
+      profile = createFallbackEnemyProfile(enemyId, enemyType, createWorldEmitter)
     }
 
     const runtime = new EnemyAudioRuntime(profile)
@@ -3841,6 +3969,14 @@ export function createAudioController(): AudioController {
     updatePlayerHealthStatusAudio,
     updatePlayerEnergyStatusAudio,
     updatePlayerHeatStatusAudio,
+    setOcclusionDebugLogging: (enabled: boolean) => {
+      audioOcclusionSystem.setDebugLogging(enabled)
+    },
+    setOcclusionDebugVisualizationHook: (hook) => {
+      audioOcclusionSystem.setDebugVisualizationHook(hook)
+    },
+    getOcclusionDiagnostics: (emitterId) => audioOcclusionSystem.getEmitterDiagnostics(emitterId),
+    getAllOcclusionDiagnostics: () => audioOcclusionSystem.getAllDiagnostics(),
     updateIncomingProjectileAudio,
     playProjectileNearMiss,
     isAudioStarted: () => audioStarted,
@@ -3860,6 +3996,8 @@ export function createAudioController(): AudioController {
     playLockLostChirp,
     playMissileLockTone,
     playMissileLockConfirmTone,
+    updateTargetLockProgressAudio,
+    resetTargetLockProgressAudio,
     playNegativeActionTone,
     playExplosion,
     playCardinalHeadingCueForFacing: (playerAngle: number) => playCardinalHeadingCue(playerAngle),

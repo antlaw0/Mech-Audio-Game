@@ -31,7 +31,7 @@ import {
   getEnemyDefinitionFromNumericId
 } from './enemies/index.js'
 import type { EnemyDefinitionConfig, EnemyId } from './enemies/enemyTypes.js'
-import type { AudioController, Bullet, EnemyRender, IncomingProjectileAudioState, Player, TankRender, TrailPoint } from './types.js'
+import type { AudioController, Bullet, EnemyRender, IncomingProjectileAudioState, Player, CombatEnemyRender, TrailPoint } from './types.js'
 
 function getAutomaticFireDefinition(definition: unknown): EnemyDefinitionConfig['automaticFire'] {
   if (typeof definition !== 'object' || definition === null || !('automaticFire' in definition)) {
@@ -1567,11 +1567,11 @@ export function stepCombatEcsWorld(
 export function getCombatRenderState(world: CombatEcsWorld): {
   bullets: Bullet[]
   enemies: EnemyRender[]
-  tanks: TankRender[]
+  tanks: CombatEnemyRender[]
 } {
   const bullets: Bullet[] = []
   const enemies: EnemyRender[] = []
-  const tanks: TankRender[] = []
+  const tanks: CombatEnemyRender[] = []
   const allEntities = CombatQuery(world)
   const tankEntities = TankQuery(world)
 
@@ -1629,9 +1629,13 @@ export function getCombatRenderState(world: CombatEcsWorld): {
       } // end if missing enemy render data
 
       enemies.push({
+        id: entity,
+        enemyClass: 'enemy',
+        enemyType: 'enemy',
         x,
         y,
         radius,
+        height: 0,
         alive: true
       })
       continue
@@ -1665,6 +1669,7 @@ export function getCombatRenderState(world: CombatEcsWorld): {
 
     tanks.push({
       id: tank,
+      enemyClass: 'enemy',
       enemyType: profile.id,
       x,
       y,
@@ -1682,6 +1687,7 @@ export function getCombatRenderState(world: CombatEcsWorld): {
         : 0,
       positionalLoopSound: customSounds?.positionalLoopSound,
       loopSoundPauseIntervalMs: customSounds?.loopSoundPauseIntervalMs,
+      loopSoundMaxDistance: customSounds?.loopSoundMaxDistance,
       stopLoopSoundWhileStationary: customSounds?.stopLoopSoundWhileStationary
     })
   } // end for each tank

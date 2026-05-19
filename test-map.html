@@ -1106,6 +1106,10 @@
           <label for="editorLoopSoundPauseIntervalMs">Loop Pause Interval (ms)</label>
           <input type="number" id="editorLoopSoundPauseIntervalMs" name="loopSoundPauseIntervalMs" min="0" step="10" />
         </div>
+        <div class="editor-field">
+          <label for="editorLoopSoundMaxDistance">Loop Max Distance (m)</label>
+          <input type="number" id="editorLoopSoundMaxDistance" name="loopSoundMaxDistance" min="1" step="1" />
+        </div>
       </fieldset>
       <div class="editor-actions">
         <button type="button" id="editorSpawnButton" class="pause-button">Spawn</button>
@@ -1191,7 +1195,8 @@
   "imports": {
     "tone": "https://esm.sh/tone@15",
     "bitecs": "https://esm.sh/bitecs@0.3.40",
-    "three": "https://esm.sh/three@0.170.0"
+    "three": "https://esm.sh/three@0.170.0",
+    "resonance-audio": "https://esm.sh/resonance-audio@1.0.0"
   }
 }
 </script>

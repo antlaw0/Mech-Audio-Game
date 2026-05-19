@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { MAP_HEIGHT, MAP_WIDTH } from './constants.js'
 import { getCell } from './map-data.js'
-import type { Bullet, EnemyRender, Player, SpriteObject, TankRender } from './types.js'
+import type { Bullet, EnemyRender, Player, SpriteObject, CombatEnemyRender } from './types.js'
 import { PLAYER_EYE_HEIGHT, WORLD_WALL_HEIGHT } from './world-collision.js'
 
 const PROJECTILE_SPHERE_GEOMETRY = new THREE.SphereGeometry(0.05, 10, 10)
@@ -17,7 +17,7 @@ interface ThreeRendererCreateArgs {
 
 interface ThreeRenderFrameArgs {
   enemies: EnemyRender[]
-  tanks: TankRender[]
+  tanks: CombatEnemyRender[]
   bullets: Bullet[]
   player: Player
   muzzleFlashAlpha: number
@@ -216,7 +216,7 @@ function drawHudOverlay(
   width: number,
   height: number,
   camera: THREE.PerspectiveCamera,
-  tanks: TankRender[],
+  tanks: CombatEnemyRender[],
   lockedTankId: number | null,
   lockOnWindowWidthPercent: number,
   lockOnWindowHeightPercent: number

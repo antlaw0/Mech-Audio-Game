@@ -1,6 +1,6 @@
 import { PLAYER_HEIGHT } from './constants.js'
 import { traceWorldHit3D, type WorldCollisionWorld } from './world-collision.js'
-import type { ObstructionAwareness, Player, SpriteObject, TankRender } from './types.js'
+import type { ObstructionAwareness, Player, SpriteObject, CombatEnemyRender } from './types.js'
 
 interface ObstacleHit {
   type: 'wall' | 'tree' | 'rock' | 'pillar'
@@ -20,8 +20,8 @@ function normalizeAngle(angle: number): number {
   return wrapped
 } // end function normalizeAngle
 
-function findNearestAliveTank(player: Player, tanks: TankRender[]): TankRender | null {
-  let nearest: TankRender | null = null
+function findNearestAliveTank(player: Player, tanks: CombatEnemyRender[]): CombatEnemyRender | null {
+  let nearest: CombatEnemyRender | null = null
   let nearestDistance = Number.POSITIVE_INFINITY
 
   for (const tank of tanks) {
@@ -86,7 +86,7 @@ function traceSpriteHit(
 
 export function computeObstructionAwareness(
   player: Player,
-  tanks: TankRender[],
+  tanks: CombatEnemyRender[],
   collisionWorld: WorldCollisionWorld,
   sprites: SpriteObject[]
 ): ObstructionAwareness {

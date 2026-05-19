@@ -44,10 +44,13 @@ export const AUDIO_CONFIG = {
     passiveRadarEchoGain: 0.12
   },
   enemy: {
-    maxDistance: 72,
+    maxDistance: 144,
     baseVolume: 0.9,
     idleFadeSeconds: 0.2,
     movementFadeSeconds: 0.15,
+    occlusionVolumeMultiplier: 0.62,
+    occlusionLowpassHz: 1100,
+    occlusionTransitionSeconds: 0.12,
     attackDucking: 0.9,
     attackDuckingSeconds: 0.2,
     passivePingMinMs: 1000,
@@ -86,7 +89,7 @@ export const AUDIO_NAVIGATION_CONFIG = {
   nearFieldRadius: 1.5,
   movementAwarenessRadius: 8,
   obstacleAudioMaxDistance: 12,
-  enemyAudioMaxDistance: 40,
+  enemyAudioMaxDistance: 50,
   enemyAudioDistanceExponent: 0.9,
   activePingObstacleDistance: 12,
   activePingEnemyDistance: 20,
