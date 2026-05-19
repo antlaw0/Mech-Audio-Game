@@ -23,6 +23,8 @@ import { type SpatialAudioEmitter, createSharedSpatialAudioScene } from './spati
 import type {
   AudioCategory,
   AudioController,
+  FrontBackSpatialDiagnostics,
+  FrontBackSpatialSettings,
   AudioVolumeChannel,
   EnemyAudioState,
   FlightLoopStartParams,
@@ -746,6 +748,9 @@ export function createAudioController(): AudioController {
 
   const rawContext = Tone.getContext().rawContext as AudioContext
   const spatialScene = createSharedSpatialAudioScene(rawContext)
+  spatialScene.setFrontBackEnhancementEnabled(AUDIO_CONFIG.enemy.frontBackEnhancement.enabled)
+  spatialScene.setFrontBackRearCueLayerEnabled(AUDIO_CONFIG.enemy.frontBackEnhancement.rearCueLayerEnabled)
+  spatialScene.setFrontBackEnhancementIntensity(AUDIO_CONFIG.enemy.frontBackEnhancement.intensity)
   const audioOcclusionSystem = new AudioOcclusionSystem({
     debugLogging: AUDIO_BROWSER_DEBUG_LOGS_ENABLED
   })
@@ -853,6 +858,12 @@ export function createAudioController(): AudioController {
   } // end function setDebugPitchScale
 
   const getDebugPitchScale = (): number => debugPitchScale
+
+  const getFrontBackDiagnostics = (emitterId: string): FrontBackSpatialDiagnostics | null => spatialScene.getFrontBackDiagnostics(emitterId)
+
+  const getAllFrontBackDiagnostics = (): FrontBackSpatialDiagnostics[] => spatialScene.getAllFrontBackDiagnostics()
+
+  const getFrontBackSettings = (): FrontBackSpatialSettings => spatialScene.getFrontBackSettings()
 
   const getCategoryVolume = (name: AudioCategory): number => {
     if (name === 'proximity') return proximityVolume
@@ -3977,6 +3988,26 @@ export function createAudioController(): AudioController {
     },
     getOcclusionDiagnostics: (emitterId) => audioOcclusionSystem.getEmitterDiagnostics(emitterId),
     getAllOcclusionDiagnostics: () => audioOcclusionSystem.getAllDiagnostics(),
+    setFrontBackEnhancementEnabled: (enabled: boolean) => {
+      spatialScene.setFrontBackEnhancementEnabled(enabled)
+    },
+    isFrontBackEnhancementEnabled: () => spatialScene.isFrontBackEnhancementEnabled(),
+    setFrontBackRearCueLayerEnabled: (enabled: boolean) => {
+      spatialScene.setFrontBackRearCueLayerEnabled(enabled)
+    },
+    isFrontBackRearCueLayerEnabled: () => spatialScene.isFrontBackRearCueLayerEnabled(),
+    setFrontBackEnhancementIntensity: (intensity: number) => {
+      spatialScene.setFrontBackEnhancementIntensity(intensity)
+      return spatialScene.getFrontBackEnhancementIntensity()
+    },
+    getFrontBackEnhancementIntensity: () => spatialScene.getFrontBackEnhancementIntensity(),
+    setFrontBackDebugLogging: (enabled: boolean) => {
+      spatialScene.setFrontBackDebugLogging(enabled)
+      spatialScene.setListenerDebugLogging(enabled)
+    },
+    getFrontBackSettings,
+    getFrontBackDiagnostics,
+    getAllFrontBackDiagnostics,
     updateIncomingProjectileAudio,
     playProjectileNearMiss,
     isAudioStarted: () => audioStarted,

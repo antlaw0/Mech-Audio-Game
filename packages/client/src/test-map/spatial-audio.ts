@@ -33,6 +33,29 @@ export interface SpatialListenerPose {
   }
 }
 
+export interface FrontBackSpatialEnhancementSettings {
+  enabled: boolean
+  rearCueLayerEnabled: boolean
+  intensity: number
+  debugLogging: boolean
+  debugFrameInterval: number
+}
+
+export interface FrontBackSpatialDiagnostics {
+  emitterId: string
+  distance: number
+  behindSigned: number
+  behindAmount: number
+  targetBehindAmount: number
+  turnBoost: number
+  lowpassHz: number
+  rearDiffuseGain: number
+  rearReflectionGain: number
+  rearWidthGain: number
+  enhancementEnabled: boolean
+  rearCueLayerEnabled: boolean
+}
+
 interface ResonanceSource {
   input: AudioNode
   setPosition(x: number, y: number, z: number): void
@@ -84,6 +107,89 @@ interface SpatialSceneSingletonStore {
 const FLOAT_EPSILON = 0.0001
 const LISTENER_DEBUG_FRAME_INTERVAL_DEFAULT = 30
 const SPATIAL_SCENE_SINGLETON_KEY = '__MECH_AUDIO_RESONANCE_SCENE_SINGLETON__'
+
+const FRONT_BACK_DEFAULT_REAR_ANGLE_START = 0.08
+const FRONT_BACK_DEFAULT_REAR_ANGLE_END = 0.9
+const FRONT_BACK_DEFAULT_REAR_LOW_PASS_FRONT_HZ = 18000
+const FRONT_BACK_DEFAULT_REAR_LOW_PASS_BACK_HZ = 7600
+const FRONT_BACK_DEFAULT_REAR_DIFFUSE_GAIN = 0.18
+const FRONT_BACK_DEFAULT_REAR_DIRECT_GAIN_REDUCTION = 0.1
+const FRONT_BACK_DEFAULT_REAR_REFLECTION_SECONDS = 0.007
+const FRONT_BACK_DEFAULT_REAR_REFLECTION_GAIN = 0.085
+const FRONT_BACK_DEFAULT_REAR_WIDTH_SECONDS = 0.0018
+const FRONT_BACK_DEFAULT_REAR_WIDTH_GAIN = 0.05
+const FRONT_BACK_DEFAULT_REAR_TURN_BOOST = 0.22
+const FRONT_BACK_DEFAULT_REAR_SMOOTHING = 0.18
+
+interface FrontBackEnhancementConfigInternal {
+  enabled: boolean
+  rearCueLayerEnabled: boolean
+  intensity: number
+  debugLogging: boolean
+  debugFrameInterval: number
+  rearAngleStart: number
+  rearAngleEnd: number
+  rearLowPassFrontHz: number
+  rearLowPassBackHz: number
+  rearDiffuseGain: number
+  rearDirectGainReduction: number
+  rearReflectionSeconds: number
+  rearReflectionGain: number
+  rearWidthSeconds: number
+  rearWidthGain: number
+  rearTurnBoost: number
+  rearSmoothing: number
+}
+
+interface FrontBackRuntimeState {
+  config: FrontBackEnhancementConfigInternal
+  turnBoost: number
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0
+  }
+  return Math.min(1, Math.max(0, value))
+}
+
+function clampRange(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return min
+  }
+  return Math.min(max, Math.max(min, value))
+}
+
+function smoothstep01(value: number): number {
+  const t = clamp01(value)
+  return (t * t) * (3 - (2 * t))
+}
+
+function lerp(from: number, to: number, amount: number): number {
+  return from + ((to - from) * amount)
+}
+
+function defaultFrontBackConfig(): FrontBackEnhancementConfigInternal {
+  return {
+    enabled: true,
+    rearCueLayerEnabled: true,
+    intensity: 1,
+    debugLogging: false,
+    debugFrameInterval: LISTENER_DEBUG_FRAME_INTERVAL_DEFAULT,
+    rearAngleStart: FRONT_BACK_DEFAULT_REAR_ANGLE_START,
+    rearAngleEnd: FRONT_BACK_DEFAULT_REAR_ANGLE_END,
+    rearLowPassFrontHz: FRONT_BACK_DEFAULT_REAR_LOW_PASS_FRONT_HZ,
+    rearLowPassBackHz: FRONT_BACK_DEFAULT_REAR_LOW_PASS_BACK_HZ,
+    rearDiffuseGain: FRONT_BACK_DEFAULT_REAR_DIFFUSE_GAIN,
+    rearDirectGainReduction: FRONT_BACK_DEFAULT_REAR_DIRECT_GAIN_REDUCTION,
+    rearReflectionSeconds: FRONT_BACK_DEFAULT_REAR_REFLECTION_SECONDS,
+    rearReflectionGain: FRONT_BACK_DEFAULT_REAR_REFLECTION_GAIN,
+    rearWidthSeconds: FRONT_BACK_DEFAULT_REAR_WIDTH_SECONDS,
+    rearWidthGain: FRONT_BACK_DEFAULT_REAR_WIDTH_GAIN,
+    rearTurnBoost: FRONT_BACK_DEFAULT_REAR_TURN_BOOST,
+    rearSmoothing: FRONT_BACK_DEFAULT_REAR_SMOOTHING
+  }
+}
 
 function hasMeaningfulDelta(a: number, b: number): boolean {
   if (!Number.isFinite(a) || !Number.isFinite(b)) {
@@ -198,6 +304,17 @@ export class SpatialAudioEmitter {
   private readonly onDispose?: () => void
   private readonly positionSmoothing: number
   private readonly positionTransform?: PositionTransform
+  private readonly frontBackRuntimeStateProvider?: () => FrontBackRuntimeState
+
+  private readonly inputGainNode: GainNode
+  private readonly directGainNode: GainNode
+  private readonly rearFilterNode: BiquadFilterNode
+  private readonly rearDiffuseGainNode: GainNode
+  private readonly rearReflectionDelayNode: DelayNode
+  private readonly rearReflectionFilterNode: BiquadFilterNode
+  private readonly rearReflectionGainNode: GainNode
+  private readonly rearWidthDelayNode: DelayNode
+  private readonly rearWidthGainNode: GainNode
 
   private disposed = false
   private isPlaying = false
@@ -225,17 +342,82 @@ export class SpatialAudioEmitter {
   private readonly audioForwardTemp: Vec3 = { x: 1, y: 0, z: 0 }
   private readonly audioUpTemp: Vec3 = { x: 0, y: 1, z: 0 }
 
-  constructor(source: ResonanceSource, options?: SpatialEmitterOptions, positionTransform?: PositionTransform) {
+  private frontBackBehindAmount = 0
+  private frontBackLastBehindAmount = -1
+  private frontBackDiagnostics: FrontBackSpatialDiagnostics
+  private frontBackDebugFrameCounter = 0
+
+  constructor(
+    source: ResonanceSource,
+    options?: SpatialEmitterOptions,
+    positionTransform?: PositionTransform,
+    frontBackRuntimeStateProvider?: () => FrontBackRuntimeState
+  ) {
     this.source = source
     this.id = options?.id ?? `spatial-emitter-${Math.random().toString(36).slice(2)}`
-    this.input = source.input
     this.onPlay = options?.onPlay
     this.onStop = options?.onStop
     this.onDispose = options?.onDispose
     this.positionTransform = positionTransform
+    this.frontBackRuntimeStateProvider = frontBackRuntimeStateProvider
     this.positionSmoothing = Number.isFinite(options?.positionSmoothing)
       ? Math.min(1, Math.max(0, options?.positionSmoothing ?? 0.35))
       : 0.35
+
+    const context = source.input.context
+    this.inputGainNode = context.createGain()
+    this.directGainNode = context.createGain()
+    this.rearFilterNode = context.createBiquadFilter()
+    this.rearFilterNode.type = 'lowpass'
+    this.rearDiffuseGainNode = context.createGain()
+    this.rearReflectionDelayNode = context.createDelay(0.05)
+    this.rearReflectionFilterNode = context.createBiquadFilter()
+    this.rearReflectionFilterNode.type = 'lowpass'
+    this.rearReflectionGainNode = context.createGain()
+    this.rearWidthDelayNode = context.createDelay(0.02)
+    this.rearWidthGainNode = context.createGain()
+
+    this.inputGainNode.connect(this.directGainNode)
+    this.directGainNode.connect(source.input)
+
+    this.inputGainNode.connect(this.rearFilterNode)
+    this.rearFilterNode.connect(this.rearDiffuseGainNode)
+    this.rearDiffuseGainNode.connect(source.input)
+
+    this.inputGainNode.connect(this.rearReflectionDelayNode)
+    this.rearReflectionDelayNode.connect(this.rearReflectionFilterNode)
+    this.rearReflectionFilterNode.connect(this.rearReflectionGainNode)
+    this.rearReflectionGainNode.connect(source.input)
+
+    this.inputGainNode.connect(this.rearWidthDelayNode)
+    this.rearWidthDelayNode.connect(this.rearWidthGainNode)
+    this.rearWidthGainNode.connect(source.input)
+
+    this.input = this.inputGainNode
+
+    this.rearFilterNode.frequency.value = FRONT_BACK_DEFAULT_REAR_LOW_PASS_FRONT_HZ
+    this.rearReflectionFilterNode.frequency.value = FRONT_BACK_DEFAULT_REAR_LOW_PASS_FRONT_HZ
+    this.rearReflectionDelayNode.delayTime.value = FRONT_BACK_DEFAULT_REAR_REFLECTION_SECONDS
+    this.rearWidthDelayNode.delayTime.value = FRONT_BACK_DEFAULT_REAR_WIDTH_SECONDS
+    this.directGainNode.gain.value = 1
+    this.rearDiffuseGainNode.gain.value = 0
+    this.rearReflectionGainNode.gain.value = 0
+    this.rearWidthGainNode.gain.value = 0
+
+    this.frontBackDiagnostics = {
+      emitterId: this.id,
+      distance: 0,
+      behindSigned: 0,
+      behindAmount: 0,
+      targetBehindAmount: 0,
+      turnBoost: 0,
+      lowpassHz: FRONT_BACK_DEFAULT_REAR_LOW_PASS_FRONT_HZ,
+      rearDiffuseGain: 0,
+      rearReflectionGain: 0,
+      rearWidthGain: 0,
+      enhancementEnabled: true,
+      rearCueLayerEnabled: true
+    }
 
     this.setGain(options?.gain ?? 1)
     this.setDistanceRange(options?.minDistance ?? 1, options?.maxDistance ?? 100)
@@ -282,6 +464,85 @@ export class SpatialAudioEmitter {
       mapWorldToAudioPoint(this.audioPositionTemp, this.positionX, this.positionY, this.positionZ)
     }
     this.source.setPosition(this.audioPositionTemp.x, this.audioPositionTemp.y, this.audioPositionTemp.z)
+    this.updateFrontBackEnhancementFromRelativePosition()
+  }
+
+  private updateFrontBackEnhancementFromRelativePosition(): void {
+    const runtime = this.frontBackRuntimeStateProvider?.()
+    const config = runtime?.config
+
+    if (!runtime || !config || !config.enabled || config.intensity <= FLOAT_EPSILON) {
+      if (this.frontBackLastBehindAmount < 0 || this.frontBackLastBehindAmount > FLOAT_EPSILON) {
+        this.directGainNode.gain.value = 1
+        this.rearFilterNode.frequency.value = FRONT_BACK_DEFAULT_REAR_LOW_PASS_FRONT_HZ
+        this.rearDiffuseGainNode.gain.value = 0
+        this.rearReflectionGainNode.gain.value = 0
+        this.rearWidthGainNode.gain.value = 0
+        this.frontBackBehindAmount = 0
+        this.frontBackLastBehindAmount = 0
+      }
+      this.frontBackDiagnostics.distance = 0
+      this.frontBackDiagnostics.behindSigned = 0
+      this.frontBackDiagnostics.behindAmount = 0
+      this.frontBackDiagnostics.targetBehindAmount = 0
+      this.frontBackDiagnostics.turnBoost = runtime?.turnBoost ?? 0
+      this.frontBackDiagnostics.lowpassHz = FRONT_BACK_DEFAULT_REAR_LOW_PASS_FRONT_HZ
+      this.frontBackDiagnostics.rearDiffuseGain = 0
+      this.frontBackDiagnostics.rearReflectionGain = 0
+      this.frontBackDiagnostics.rearWidthGain = 0
+      this.frontBackDiagnostics.enhancementEnabled = false
+      this.frontBackDiagnostics.rearCueLayerEnabled = config?.rearCueLayerEnabled ?? false
+      return
+    }
+
+    const distance = Math.hypot(this.audioPositionTemp.x, this.audioPositionTemp.y, this.audioPositionTemp.z)
+    const behindSigned = distance > FLOAT_EPSILON ? (this.audioPositionTemp.z / distance) : 0
+    const rearBlend = smoothstep01((behindSigned - config.rearAngleStart) / Math.max(FLOAT_EPSILON, config.rearAngleEnd - config.rearAngleStart))
+    const turnBoost = clamp01(runtime.turnBoost * config.rearTurnBoost)
+    const targetBehindAmount = clamp01((rearBlend + (turnBoost * rearBlend * 0.6)) * config.intensity)
+    this.frontBackBehindAmount += (targetBehindAmount - this.frontBackBehindAmount) * clamp01(config.rearSmoothing)
+
+    const directGain = 1 - (config.rearDirectGainReduction * this.frontBackBehindAmount)
+    const lowPassHz = lerp(config.rearLowPassFrontHz, config.rearLowPassBackHz, this.frontBackBehindAmount)
+    const diffuseGain = config.rearDiffuseGain * this.frontBackBehindAmount
+    const reflectionGain = config.rearCueLayerEnabled ? (config.rearReflectionGain * this.frontBackBehindAmount) : 0
+    const widthGain = config.rearCueLayerEnabled ? (config.rearWidthGain * this.frontBackBehindAmount) : 0
+
+    this.directGainNode.gain.value = directGain
+    this.rearFilterNode.frequency.value = lowPassHz
+    this.rearReflectionFilterNode.frequency.value = lowPassHz
+    this.rearReflectionDelayNode.delayTime.value = config.rearReflectionSeconds
+    this.rearWidthDelayNode.delayTime.value = config.rearWidthSeconds
+    this.rearDiffuseGainNode.gain.value = diffuseGain
+    this.rearReflectionGainNode.gain.value = reflectionGain
+    this.rearWidthGainNode.gain.value = widthGain
+
+    this.frontBackLastBehindAmount = this.frontBackBehindAmount
+    this.frontBackDiagnostics.distance = distance
+    this.frontBackDiagnostics.behindSigned = behindSigned
+    this.frontBackDiagnostics.behindAmount = this.frontBackBehindAmount
+    this.frontBackDiagnostics.targetBehindAmount = targetBehindAmount
+    this.frontBackDiagnostics.turnBoost = runtime.turnBoost
+    this.frontBackDiagnostics.lowpassHz = lowPassHz
+    this.frontBackDiagnostics.rearDiffuseGain = diffuseGain
+    this.frontBackDiagnostics.rearReflectionGain = reflectionGain
+    this.frontBackDiagnostics.rearWidthGain = widthGain
+    this.frontBackDiagnostics.enhancementEnabled = true
+    this.frontBackDiagnostics.rearCueLayerEnabled = config.rearCueLayerEnabled
+
+    if (config.debugLogging) {
+      this.frontBackDebugFrameCounter += 1
+      if (this.frontBackDebugFrameCounter % config.debugFrameInterval === 0) {
+        console.debug('[SpatialAudio] frontBack', {
+          emitterId: this.id,
+          behindSigned,
+          behindAmount: this.frontBackBehindAmount,
+          targetBehindAmount,
+          turnBoost: runtime.turnBoost,
+          lowpassHz: lowPassHz
+        })
+      }
+    }
   }
 
   setOrientation(forwardX: number, forwardY: number, forwardZ: number, upX: number, upY: number, upZ: number): void {
@@ -401,18 +662,28 @@ export class SpatialAudioEmitter {
   isDisposed(): boolean {
     return this.disposed
   }
+
+  getFrontBackDiagnostics(): FrontBackSpatialDiagnostics {
+    return this.frontBackDiagnostics
+  }
 }
 
 export class SharedSpatialAudioScene {
   private readonly scene: ResonanceScene
   private readonly managedEmitters = new Map<string, SpatialAudioEmitter>()
   private emitterIdCounter = 0
+  private readonly frontBackRuntimeState: FrontBackRuntimeState = {
+    config: defaultFrontBackConfig(),
+    turnBoost: 0
+  }
 
   private listenerWorldX = 0
   private listenerWorldY = 0
   private listenerWorldZ = 0
   private listenerWorldYaw = 0
   private listenerRelativeInitialized = false
+  private listenerLastYawRadians = 0
+  private listenerLastUpdateTimeMs = 0
 
   private listenerPosX = Number.NaN
   private listenerPosY = Number.NaN
@@ -451,6 +722,9 @@ export class SharedSpatialAudioScene {
       this.scene.setListenerOrientation(0, 0, -1, 0, 1, 0)
       this.listenerRelativeInitialized = true
     }
+
+    const nowMs = performance.now()
+    this.listenerLastUpdateTimeMs = nowMs
   }
 
   private transformWorldPointToListenerRelativeAudioSpace(x: number, y: number, z: number, out: Vec3): void {
@@ -493,7 +767,8 @@ export class SharedSpatialAudioScene {
       }
     }, USE_LISTENER_RELATIVE_POSITIONING
       ? (x: number, y: number, z: number, out: Vec3) => this.transformWorldPointToListenerRelativeAudioSpace(x, y, z, out)
-      : undefined)
+      : undefined,
+    () => this.frontBackRuntimeState)
 
     this.managedEmitters.set(emitterId, emitter)
     return emitter
@@ -505,10 +780,20 @@ export class SharedSpatialAudioScene {
   }
 
   updateListenerFromCamera(pose: SpatialListenerPose): void {
+    const nowMs = performance.now()
+    const dtSeconds = Math.max(0.001, (nowMs - this.listenerLastUpdateTimeMs) / 1000)
+    const yaw = Math.atan2(pose.orientation.forwardY, pose.orientation.forwardX)
+    const yawDelta = Math.atan2(Math.sin(yaw - this.listenerLastYawRadians), Math.cos(yaw - this.listenerLastYawRadians))
+    const yawVelocity = yawDelta / dtSeconds
+    this.frontBackRuntimeState.turnBoost = clamp01(Math.abs(yawVelocity) / 3.2)
+
     this.listenerWorldX = pose.position.x
     this.listenerWorldY = pose.position.y
     this.listenerWorldZ = pose.position.z
-    this.listenerWorldYaw = Math.atan2(pose.orientation.forwardY, pose.orientation.forwardX)
+    this.listenerWorldYaw = yaw
+
+    this.listenerLastYawRadians = yaw
+    this.listenerLastUpdateTimeMs = nowMs
 
     if (USE_LISTENER_RELATIVE_POSITIONING) {
       if (!this.listenerRelativeInitialized) {
@@ -602,10 +887,69 @@ export class SharedSpatialAudioScene {
             x: this.listenerRightTemp.x,
             y: this.listenerRightTemp.y,
             z: this.listenerRightTemp.z
-          }
+          },
+          yawRadians: this.listenerWorldYaw,
+          frontBackTurnBoost: this.frontBackRuntimeState.turnBoost
         })
       }
     }
+  }
+
+  setFrontBackEnhancementEnabled(enabled: boolean): void {
+    this.frontBackRuntimeState.config.enabled = enabled
+  }
+
+  isFrontBackEnhancementEnabled(): boolean {
+    return this.frontBackRuntimeState.config.enabled
+  }
+
+  setFrontBackRearCueLayerEnabled(enabled: boolean): void {
+    this.frontBackRuntimeState.config.rearCueLayerEnabled = enabled
+  }
+
+  isFrontBackRearCueLayerEnabled(): boolean {
+    return this.frontBackRuntimeState.config.rearCueLayerEnabled
+  }
+
+  setFrontBackEnhancementIntensity(intensity: number): void {
+    this.frontBackRuntimeState.config.intensity = clampRange(intensity, 0, 1.8)
+  }
+
+  getFrontBackEnhancementIntensity(): number {
+    return this.frontBackRuntimeState.config.intensity
+  }
+
+  setFrontBackDebugLogging(enabled: boolean, frameInterval: number = LISTENER_DEBUG_FRAME_INTERVAL_DEFAULT): void {
+    this.frontBackRuntimeState.config.debugLogging = enabled
+    this.frontBackRuntimeState.config.debugFrameInterval = Math.max(1, Math.floor(frameInterval))
+  }
+
+  getFrontBackSettings(): FrontBackSpatialEnhancementSettings {
+    return {
+      enabled: this.frontBackRuntimeState.config.enabled,
+      rearCueLayerEnabled: this.frontBackRuntimeState.config.rearCueLayerEnabled,
+      intensity: this.frontBackRuntimeState.config.intensity,
+      debugLogging: this.frontBackRuntimeState.config.debugLogging,
+      debugFrameInterval: this.frontBackRuntimeState.config.debugFrameInterval
+    }
+  }
+
+  getFrontBackDiagnostics(emitterId: string): FrontBackSpatialDiagnostics | null {
+    const emitter = this.managedEmitters.get(emitterId)
+    if (!emitter || emitter.isDisposed()) {
+      return null
+    }
+    return emitter.getFrontBackDiagnostics()
+  }
+
+  getAllFrontBackDiagnostics(): FrontBackSpatialDiagnostics[] {
+    const diagnostics: FrontBackSpatialDiagnostics[] = []
+    for (const emitter of this.managedEmitters.values()) {
+      if (!emitter.isDisposed()) {
+        diagnostics.push(emitter.getFrontBackDiagnostics())
+      }
+    }
+    return diagnostics
   }
 
   assertNoOrphanEmitters(): void {

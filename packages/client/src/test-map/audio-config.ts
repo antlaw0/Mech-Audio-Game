@@ -61,7 +61,12 @@ export const AUDIO_CONFIG = {
     altitudePitchScale: 0.014,
     altitudeFilterScale: 50,
     turnCueThresholdRadians: 0.08,
-    turnCueCooldownSeconds: 0.2
+    turnCueCooldownSeconds: 0.2,
+    frontBackEnhancement: {
+      enabled: true,
+      rearCueLayerEnabled: true,
+      intensity: 1.12
+    }
   },
   tank: {
     type: 'tank',

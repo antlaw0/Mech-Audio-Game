@@ -176,6 +176,29 @@ export interface AudioOcclusionDiagnostics {
   rays: AudioOcclusionRayDiagnostic[]
 } // end interface AudioOcclusionDiagnostics
 
+export interface FrontBackSpatialDiagnostics {
+  emitterId: string
+  distance: number
+  behindSigned: number
+  behindAmount: number
+  targetBehindAmount: number
+  turnBoost: number
+  lowpassHz: number
+  rearDiffuseGain: number
+  rearReflectionGain: number
+  rearWidthGain: number
+  enhancementEnabled: boolean
+  rearCueLayerEnabled: boolean
+} // end interface FrontBackSpatialDiagnostics
+
+export interface FrontBackSpatialSettings {
+  enabled: boolean
+  rearCueLayerEnabled: boolean
+  intensity: number
+  debugLogging: boolean
+  debugFrameInterval: number
+} // end interface FrontBackSpatialSettings
+
 export interface TargetLockState {
   currentTargetId: number | null
   lockProgress: number
@@ -433,4 +456,14 @@ export interface AudioController {
   setOcclusionDebugVisualizationHook: (hook: ((diagnostics: AudioOcclusionDiagnostics) => void) | null) => void
   getOcclusionDiagnostics: (emitterId: string | number) => AudioOcclusionDiagnostics | null
   getAllOcclusionDiagnostics: () => AudioOcclusionDiagnostics[]
+  setFrontBackEnhancementEnabled: (enabled: boolean) => void
+  isFrontBackEnhancementEnabled: () => boolean
+  setFrontBackRearCueLayerEnabled: (enabled: boolean) => void
+  isFrontBackRearCueLayerEnabled: () => boolean
+  setFrontBackEnhancementIntensity: (intensity: number) => number
+  getFrontBackEnhancementIntensity: () => number
+  setFrontBackDebugLogging: (enabled: boolean) => void
+  getFrontBackSettings: () => FrontBackSpatialSettings
+  getFrontBackDiagnostics: (emitterId: string) => FrontBackSpatialDiagnostics | null
+  getAllFrontBackDiagnostics: () => FrontBackSpatialDiagnostics[]
 } // end interface AudioController

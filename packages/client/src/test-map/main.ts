@@ -3482,6 +3482,7 @@ function startTestMap(): void {
 
   const getStateLines = (): string[] => {
     const centered = mapToCenteredCoordinates(player.x, player.y)
+    const frontBackSettings = audio.getFrontBackSettings()
 
     return [
       `paused = ${isPaused}`,
@@ -3492,6 +3493,7 @@ function startTestMap(): void {
       `music.track = ${audio.getMusicTrack()}`,
       `weapon = type:${playerWeapon.weaponType} accuracy:${playerWeapon.accuracy.toFixed(2)} pellets:${playerWeapon.projectileCount} spread:${playerWeapon.spreadDegrees.toFixed(1)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fullAuto:${playerWeapon.isFullAuto} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)} clip:${playerWeapon.ammoInClip}/${playerWeapon.clipSize} reloadCost:${getWeaponReloadCost(playerWeapon)}`,
       `ammo.universal = ${Math.round(universalAmmoResource)} reloading:${isReloading}`,
+      `audio frontBack = enabled:${frontBackSettings.enabled} rearCue:${frontBackSettings.rearCueLayerEnabled} intensity:${frontBackSettings.intensity.toFixed(2)} debug:${frontBackSettings.debugLogging}`,
       `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} music:${audio.getVolumeChannel('music').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)} energy:${audio.getVolumeChannel('energyStatus').toFixed(2)}`,
       `audio categories = proximity:${audio.getCategoryEnabled('proximity')}@${audio.getVolumeChannel('proximity').toFixed(2)} objects:${audio.getCategoryEnabled('objects')}@${audio.getVolumeChannel('objects').toFixed(2)} enemies:${audio.getCategoryEnabled('enemies')}@${audio.getVolumeChannel('enemies').toFixed(2)} navigation:${audio.getCategoryEnabled('navigation')}@${audio.getVolumeChannel('navigation').toFixed(2)}`
     ]
@@ -3869,6 +3871,32 @@ function startTestMap(): void {
       helpPath: ['Audio', 'Categories'],
       get: () => audio.getVolumeChannel('navigation'),
       set: (rawValue) => audio.setVolumeChannel('navigation', parseFiniteNumber(rawValue, 'audio.navigation.volume'))
+    },
+    'audio.frontBack.enabled': {
+      description: 'Enable or disable front/back perceptual enhancement for spatial emitters.',
+      helpPath: ['Audio', 'Spatial'],
+      get: () => audio.isFrontBackEnhancementEnabled(),
+      set: (rawValue) => {
+        const enabled = parseBooleanValue(rawValue)
+        audio.setFrontBackEnhancementEnabled(enabled)
+        return audio.isFrontBackEnhancementEnabled()
+      }
+    },
+    'audio.frontBack.rearCueLayer': {
+      description: 'Enable or disable subtle rear diffusion/reflection cue layer.',
+      helpPath: ['Audio', 'Spatial'],
+      get: () => audio.isFrontBackRearCueLayerEnabled(),
+      set: (rawValue) => {
+        const enabled = parseBooleanValue(rawValue)
+        audio.setFrontBackRearCueLayerEnabled(enabled)
+        return audio.isFrontBackRearCueLayerEnabled()
+      }
+    },
+    'audio.frontBack.intensity': {
+      description: 'Front/back enhancement intensity scalar from 0.0 to 1.8.',
+      helpPath: ['Audio', 'Spatial'],
+      get: () => audio.getFrontBackEnhancementIntensity(),
+      set: (rawValue) => audio.setFrontBackEnhancementIntensity(parseFiniteNumber(rawValue, 'audio.frontBack.intensity'))
     }
   })
 
@@ -4785,12 +4813,16 @@ function startTestMap(): void {
 
     if (normalizedCommand === 'audio.debug on') {
       devAudioDebugEnabled = true
+      audio.setFrontBackDebugLogging(true)
+      audio.setOcclusionDebugLogging(true)
       nextEventTag('Audio debug enabled')
       return ['audio.debug = on']
     } // end if audio.debug on command
 
     if (normalizedCommand === 'audio.debug off') {
       devAudioDebugEnabled = false
+      audio.setFrontBackDebugLogging(false)
+      audio.setOcclusionDebugLogging(false)
       nextEventTag('Audio debug disabled')
       return ['audio.debug = off']
     } // end if audio.debug off command
@@ -4901,6 +4933,8 @@ function startTestMap(): void {
       devPhysicsDebugEnabled = false
       devAudioDebugEnabled = false
       devEventsDebugEnabled = false
+      audio.setFrontBackDebugLogging(false)
+      audio.setOcclusionDebugLogging(false)
       for (const slot of DEV_PART_SLOTS) {
         devParts.set(slot, createPlaceholderPart(slot))
       }
