@@ -11,11 +11,13 @@ import {
   PLAYER_RADIUS,
   PLAYER_SPEED,
   TURN_SPEED,
+  WEAPON_MAX_CONE_RADIANS,
   WEAPON_DEFAULT_ACCURACY
 } from './constants.js'
 import { createAudioController } from './audio.js'
 import { AUDIO_NAVIGATION_CONFIG } from './audio-config.js'
 import {
+  applyDirectHitscanDamage,
   clearCombatEntities,
   createCombatEcsWorld,
   getCombatEntityCounts,
@@ -70,7 +72,8 @@ import {
   PLAYER_COLLISION_HEIGHT,
   resetWorldCollisionFrameMetrics,
   setWorldCollisionActiveChunks,
-  setWorldCollisionObserverPosition
+  setWorldCollisionObserverPosition,
+  traceWorldHit3D
 } from './world-collision.js'
 import { createWorldStreamingManager } from './world-streaming.js'
 import { createFrameUpdateScheduler } from './update-scheduler.js'
@@ -582,6 +585,23 @@ function startTestMap(): void {
   let devAudioPitchScale = 1
   let devAudioVolumeScale = 1
   let devEnergyStarved = false
+  let minigunShotAccumulator = 0
+  let minigunPendingShots = 0
+  let minigunSustainSeconds = 0
+  let minigunRecoveryDelaySeconds = 0
+  let minigunLastTriggerReleaseMs = 0
+  let minigunRaycastsThisSecond = 0
+  let minigunRaycastsPerSecond = 0
+  let minigunRaycastWindowSeconds = 0
+  let minigunFrameRaycasts = 0
+  let minigunFrameImpactEffects = 0
+  let minigunFrameTracerCount = 0
+  let minigunFrameProcessingMs = 0
+  let minigunShotSequence = 0
+  let minigunLastImpactX = Number.NaN
+  let minigunLastImpactY = Number.NaN
+  let minigunLastImpactZ = Number.NaN
+  let minigunLastImpactTimeMs = Number.NEGATIVE_INFINITY
   let targetingScheduleEventToken = 0
   let audioScheduleEventToken = 0
   let previousTargetingHotState = false
@@ -910,7 +930,7 @@ function startTestMap(): void {
   // --- SEED DEFAULT WEAPONS IN GARAGE IF MISSING ---
   const seedWeaponDefinitionsIfMissing = async (): Promise<void> => {
     // List of required weapon part IDs
-    const requiredWeaponIds: readonly string[] = ['basic.pistol', 'basic.sword', 'basic.plasma-cannon']
+    const requiredWeaponIds: readonly string[] = ['basic.pistol', 'basic.sword', 'basic.plasma-cannon', 'basic.minigun']
     const snapshot = garageStore.getSnapshot()
     const missingIds = requiredWeaponIds.filter((id) => !snapshot.catalog.some((def) => def.id === id))
     if (missingIds.length > 0) {
@@ -943,6 +963,7 @@ function startTestMap(): void {
     }
     ensureDefaultWeaponEquipped('RightHand', 'basic.pistol')
     ensureDefaultWeaponEquipped('LeftHand', 'basic.sword')
+    ensureDefaultWeaponEquipped('ShoulderLeft', 'basic.minigun')
     ensureDefaultWeaponEquipped('ShoulderRight', 'basic.plasma-cannon')
   })
 
@@ -1373,51 +1394,51 @@ function startTestMap(): void {
     return weaponLoadout.find((w) => w.id === partState.partId) ?? null
   } // end function resolveWeaponFromSlot
 
+  const getWeaponSlotSpeechLabel = (slot: WeaponMountSlot): string => {
+    if (slot === 'RightHand') {
+      return 'right hand'
+    }
+    if (slot === 'LeftHand') {
+      return 'left hand'
+    }
+    if (slot === 'ShoulderLeft') {
+      return 'left shoulder'
+    }
+    return 'right shoulder'
+  } // end function getWeaponSlotSpeechLabel
+
   const equipWeaponSlot = (requestedSlot: WeaponMountSlot): void => {
-    const snapshot = garageStore.getSnapshot()
-
-    // Key 2 (LeftHand): if two-handed weapon is in RightHand, switch to that instead
-    if (requestedSlot === 'LeftHand') {
-      if (garageStore.isTwoHandedWeaponEquipped()) {
-        requestedSlot = 'RightHand'
-      } else {
-        // Left hand only switchable if non-melee, non-passive weapon
-        const lhInstance = garageStore.getEquippedInWeaponSlot('LeftHand')
-        const lhDef = lhInstance ? garageStore.getDefinition(lhInstance.definitionId) : null
-        if (!lhDef || lhDef.isMelee || lhDef.isPassive) {
-          return
-        }
-      }
+    const slotLabel = getWeaponSlotSpeechLabel(requestedSlot)
+    const requestedInstance = garageStore.getEquippedInWeaponSlot(requestedSlot)
+    const requestedDefinition = requestedInstance ? garageStore.getDefinition(requestedInstance.definitionId) : null
+    if (!requestedInstance || !requestedDefinition) {
+      announceBlockedAction(`switch-${requestedSlot}-empty`, `Cannot switch. ${slotLabel} slot is unoccupied.`)
+      return
     }
 
-    // Key 4 (ShoulderLeft): if two-shouldered weapon is in ShoulderLeft, switch to that
-    if (requestedSlot === 'ShoulderLeft') {
-      if (garageStore.isTwoShoulderedWeaponEquipped()) {
-        // Already handled, ShoulderLeft is primary for two-shouldered
-      } else {
-        const slInstance = garageStore.getEquippedInWeaponSlot('ShoulderLeft')
-        const slDef = slInstance ? garageStore.getDefinition(slInstance.definitionId) : null
-        if (!slDef || slDef.isPassive) {
-          return
-        }
-      }
+    const requestedSlotState = devParts.get(requestedSlot)
+    if (!requestedSlotState || requestedSlotState.integrity <= 0) {
+      announceBlockedAction(`switch-${requestedSlot}-destroyed`, `Cannot switch. ${slotLabel} is destroyed.`)
+      return
+    }
+    if (!requestedSlotState.online) {
+      announceBlockedAction(`switch-${requestedSlot}-offline`, `Cannot switch. ${slotLabel} is offline.`)
+      return
     }
 
-    // Key 3 (ShoulderRight): skip if passive or blocked by two-shouldered
-    if (requestedSlot === 'ShoulderRight') {
-      if (garageStore.isTwoShoulderedWeaponEquipped()) {
-        requestedSlot = 'ShoulderLeft'
-      } else {
-        const srInstance = garageStore.getEquippedInWeaponSlot('ShoulderRight')
-        const srDef = srInstance ? garageStore.getDefinition(srInstance.definitionId) : null
-        if (!srDef || srDef.isPassive) {
-          return
-        }
-      }
+    if (requestedDefinition.isPassive) {
+      announceBlockedAction(`switch-${requestedSlot}-passive`, `Cannot switch. ${slotLabel} has passive equipment.`)
+      return
+    }
+
+    if (requestedSlot === 'LeftHand' && requestedDefinition.isMelee) {
+      announceBlockedAction('switch-left-hand-melee', 'Cannot switch. Left hand has a melee weapon.')
+      return
     }
 
     const nextWeapon = resolveWeaponFromSlot(requestedSlot)
     if (!nextWeapon) {
+      announceBlockedAction(`switch-${requestedSlot}-unavailable`, `Cannot switch. ${slotLabel} weapon is unavailable.`)
       return
     }
 
@@ -2674,6 +2695,94 @@ function startTestMap(): void {
     }
   } // end function sliceWrapped
 
+  const wrapAngle = (angle: number): number => {
+    let value = angle
+    while (value > Math.PI) {
+      value -= Math.PI * 2
+    }
+    while (value < -Math.PI) {
+      value += Math.PI * 2
+    }
+    return value
+  } // end function wrapAngle
+
+  const findNearestHitscanTargetAlongRay = (
+    originX: number,
+    originY: number,
+    originZ: number,
+    dirX: number,
+    dirY: number,
+    dirZ: number,
+    maxDistance: number,
+    targets: readonly TargetableEnemyRender[]
+  ): {
+    targetId: number
+    hitDistance: number
+    hitX: number
+    hitY: number
+    hitZ: number
+  } | null => {
+    let nearestHitDistance = Number.POSITIVE_INFINITY
+    let nearestTargetId = -1
+    let nearestX = 0
+    let nearestY = 0
+    let nearestZ = 0
+
+    for (const target of targets) {
+      if (!target.alive) {
+        continue
+      }
+
+      const centerX = target.x
+      const centerY = target.y
+      const centerZ = target.height + PLAYER_HEIGHT
+      const effectiveRadius = Math.max(0.2, Math.hypot(target.radius, 0.45))
+
+      const relX = centerX - originX
+      const relY = centerY - originY
+      const relZ = centerZ - originZ
+      const projection = (relX * dirX) + (relY * dirY) + (relZ * dirZ)
+      if (projection < 0 || projection > maxDistance) {
+        continue
+      }
+
+      const closestX = originX + (dirX * projection)
+      const closestY = originY + (dirY * projection)
+      const closestZ = originZ + (dirZ * projection)
+      const dX = centerX - closestX
+      const dY = centerY - closestY
+      const dZ = centerZ - closestZ
+      const distSq = (dX * dX) + (dY * dY) + (dZ * dZ)
+      const radiusSq = effectiveRadius * effectiveRadius
+      if (distSq > radiusSq) {
+        continue
+      }
+
+      const entryDistance = Math.max(0, projection - Math.sqrt(Math.max(0, radiusSq - distSq)))
+      if (entryDistance >= nearestHitDistance) {
+        continue
+      }
+
+      nearestHitDistance = entryDistance
+      nearestTargetId = target.id
+      nearestX = originX + (dirX * entryDistance)
+      nearestY = originY + (dirY * entryDistance)
+      nearestZ = originZ + (dirZ * entryDistance)
+    }
+
+    if (nearestTargetId < 0 || !Number.isFinite(nearestHitDistance)) {
+      return null
+    }
+
+    return {
+      targetId: nearestTargetId,
+      hitDistance: nearestHitDistance,
+      hitX: nearestX,
+      hitY: nearestY,
+      hitZ: nearestZ
+    }
+  } // end function findNearestHitscanTargetAlongRay
+
   const applySharedFlightHeight = (value: number): number => {
     const nextHeight = setSharedFlightHeight(value)
     syncDynamicFlightHeights(combatWorld)
@@ -3819,6 +3928,14 @@ function startTestMap(): void {
     const collisionDiagnostics = getWorldCollisionDiagnostics(collisionWorld)
     const streamingDiagnostics = worldStreaming.getDiagnostics()
     const schedulerDiagnostics = updateScheduler.getDiagnostics()
+    const audioDiagnostics = audio.getAudioDiagnostics()
+    const rendererDiagnostics = threeRenderer.getDiagnostics()
+    const tracerPoolUsagePercent = rendererDiagnostics.tracerPoolCapacity > 0
+      ? (rendererDiagnostics.activeTracers / rendererDiagnostics.tracerPoolCapacity) * 100
+      : 0
+    const impactPoolUsagePercent = rendererDiagnostics.impactPoolCapacity > 0
+      ? (rendererDiagnostics.activeImpactEffects / rendererDiagnostics.impactPoolCapacity) * 100
+      : 0
 
     // Compute distance to current target if available
     let targetDistance = null
@@ -3891,6 +4008,8 @@ function startTestMap(): void {
       `Scheduler Budget: ${schedulerDiagnostics.frame.spentMs.toFixed(3)} / ${schedulerDiagnostics.frame.budgetMs.toFixed(3)} ms (${(schedulerDiagnostics.frame.usageRatio * 100).toFixed(1)}%)`,
       `Scheduler Ops: ran ${schedulerDiagnostics.frame.executedCount}, deferred ${schedulerDiagnostics.frame.deferredCount}, skipped ${schedulerDiagnostics.frame.skippedCount}, queue ${schedulerDiagnostics.frame.queueSizeTotal}`,
       `Scheduler Worst: ${schedulerDiagnostics.frame.worstFrameMs.toFixed(3)} ms | over-budget frames ${schedulerDiagnostics.frame.overBudgetFrames}`,
+      `Minigun: sustain ${minigunSustainSeconds.toFixed(2)} s, pending ${minigunPendingShots}, raycasts/s ${minigunRaycastsPerSecond}, frame ${minigunFrameRaycasts}`,
+      `Minigun FX: tracers ${rendererDiagnostics.activeTracers}/${rendererDiagnostics.tracerPoolCapacity} (${tracerPoolUsagePercent.toFixed(1)}%), impacts ${rendererDiagnostics.activeImpactEffects}/${rendererDiagnostics.impactPoolCapacity} (${impactPoolUsagePercent.toFixed(1)}%), task ${minigunFrameProcessingMs.toFixed(3)} ms`,
       `Audio Voices: ~${audioVoicesEstimate} (estimated)`,
       `Active Timers: ${activeTimers}`,
       '',
@@ -3905,6 +4024,7 @@ function startTestMap(): void {
       `Current Audio Event: ${devLastEvent}`,
       'Playback Rate: 1.00 (TODO expose audio playback-rate metrics)',
       `Volume: master=${audio.getVolumeChannel('master').toFixed(2)} music=${audio.getVolumeChannel('music').toFixed(2)} ambience=${audio.getVolumeChannel('ambience').toFixed(2)}`,
+      `Audio Nodes: enemy runtimes ${audioDiagnostics.activeEnemyRuntimes}, occlusion emitters ${audioDiagnostics.occlusionEmitters}, minigun loop ${audioDiagnostics.minigunLoopNodes}`,
       `Loop State: ${loopState}`,
       '',
       'PART STATUS'
@@ -6194,6 +6314,10 @@ function startTestMap(): void {
     const headPart = getDevPartState('Head')
     const computerPart = getDevPartState('Computer')
     const utilityPart = getDevPartState('Utility1')
+    const isMinigunEquipped = playerWeapon.id === 'basic.minigun'
+    const minigunStabilityPenalty = isMinigunEquipped
+      ? clampNumber(minigunSustainSeconds / 2.8, 0, 0.55)
+      : 0
     const normalizedHeadRange = Math.max(0.4, (headPart.range ?? 100) / 100)
     const headTrackingStabilityBase = Math.max(0.4, normalizedHeadRange * 0.95)
     const computerLockMultiplier = Math.max(0.4, computerPart.lockOn ?? 1)
@@ -6206,7 +6330,7 @@ function startTestMap(): void {
     const isHeadOperational = isDevPartOperational('Head')
     const maxLockLevel: LockLevel = isHeadOperational ? 'Platinum' : 'Silver'
     const maxLockProgress = getLockMaxProgressForLevel(maxLockLevel)
-    const lockGainMultiplier = isHeadOperational ? 1 : 0.4
+    const lockGainMultiplier = (isHeadOperational ? 1 : 0.4) * (1 - (minigunStabilityPenalty * 0.55))
 
     const lockModifiers = {
       deltaSeconds,
@@ -6439,15 +6563,52 @@ function startTestMap(): void {
       input.firePending = false
     } // end if consume edge-trigger press
 
+    const minigunEquippedNow = playerWeapon.id === 'basic.minigun'
+    minigunFrameRaycasts = 0
+    minigunFrameImpactEffects = 0
+    minigunFrameTracerCount = 0
+    minigunFrameProcessingMs = 0
+
+    if (!minigunEquippedNow) {
+      minigunShotAccumulator = 0
+      minigunPendingShots = 0
+      minigunSustainSeconds = 0
+      minigunRecoveryDelaySeconds = 0
+      audio.stopMinigunFiringLoop()
+    } else if (!shouldAttemptShot) {
+      if (input.fireHeld === false) {
+        minigunLastTriggerReleaseMs = timestampMs
+        minigunRecoveryDelaySeconds = Math.max(minigunRecoveryDelaySeconds, 0.22)
+      }
+      audio.stopMinigunFiringLoop()
+    }
+
+    if (minigunRecoveryDelaySeconds > 0) {
+      minigunRecoveryDelaySeconds = Math.max(0, minigunRecoveryDelaySeconds - deltaSeconds)
+    } else if (!shouldAttemptShot || !minigunEquippedNow) {
+      const recoveryRate = timestampMs - minigunLastTriggerReleaseMs > 650 ? 1.4 : 0.9
+      minigunSustainSeconds = Math.max(0, minigunSustainSeconds - (deltaSeconds * recoveryRate))
+    }
+
+    minigunRaycastWindowSeconds += deltaSeconds
+    if (minigunRaycastWindowSeconds >= 1) {
+      minigunRaycastsPerSecond = minigunRaycastsThisSecond
+      minigunRaycastsThisSecond = 0
+      minigunRaycastWindowSeconds = 0
+    }
+
     if (!input.fireHeld) {
       hasPlayedEmptyClipForCurrentTriggerPull = false
     } // end if trigger is released
 
     if (shouldAttemptShot && isReloading) {
       announceBlockedAction('fire-reloading', 'Cannot fire while reloading.')
+      if (minigunEquippedNow) {
+        audio.stopMinigunFiringLoop()
+      }
     }
 
-    if (shouldAttemptShot && !isReloading && playerFireCooldownSeconds <= 0) {
+    if (shouldAttemptShot && !isReloading && (playerFireCooldownSeconds <= 0 || minigunEquippedNow)) {
       const ammoPerShot = Math.max(0, playerWeapon.ammoResourcePerRound)
       const weaponUsesAmmo = ammoPerShot > 0
       const shotEnergyCost = Math.max(0, playerWeapon.energyCostPerShot ?? 0)
@@ -6455,60 +6616,301 @@ function startTestMap(): void {
       if (isOverheatShutdownActive()) {
         audio.playNegativeActionTone()
         announceBlockedAction('fire-overheat', 'Cannot fire. Overheated.')
+        if (minigunEquippedNow) {
+          audio.stopMinigunFiringLoop()
+        }
       } else if (isEnergyStarved() && weaponUsesEnergy) {
         audio.playNegativeActionTone()
         announceBlockedAction('fire-energy-starved', 'Cannot fire. Energy starved.')
+        if (minigunEquippedNow) {
+          audio.stopMinigunFiringLoop()
+        }
       } else if (!canUseRangedSubsystem()) {
         audio.playNegativeActionTone()
         announceBlockedAction('fire-ranged-offline', 'Cannot fire. Right arm or right hand is offline.')
+        if (minigunEquippedNow) {
+          audio.stopMinigunFiringLoop()
+        }
       } else if (weaponUsesAmmo && playerWeapon.ammoInClip <= 0) {
         if (!hasPlayedEmptyClipForCurrentTriggerPull) {
           audio.fireGunshot(EMPTY_CLIP_SOUND_PATH)
           announceBlockedAction('fire-empty-clip', 'Cannot fire. Clip is empty.')
           hasPlayedEmptyClipForCurrentTriggerPull = true
         } // end if empty clip sound has not played for this trigger pull
+        if (minigunEquippedNow) {
+          audio.stopMinigunFiringLoop()
+        }
       } else if (weaponUsesEnergy && player.ep < shotEnergyCost) {
         audio.playNegativeActionTone()
         announceBlockedAction('fire-energy-cost', 'Cannot fire. Not enough energy.')
+        if (minigunEquippedNow) {
+          audio.stopMinigunFiringLoop()
+        }
       } else {
-      const playerSpeed = Math.hypot(player.x - previousPlayerX, player.y - previousPlayerY) / Math.max(deltaSeconds, 0.0001)
-      const maxMoveSpeed = player.isFlying ? flightSpeedLimit : PLAYER_SPEED
-      const speedFraction = Math.min(1, playerSpeed / maxMoveSpeed)
+        const playerSpeed = Math.hypot(player.x - previousPlayerX, player.y - previousPlayerY) / Math.max(deltaSeconds, 0.0001)
+        const maxMoveSpeed = player.isFlying ? flightSpeedLimit : PLAYER_SPEED
+        const speedFraction = Math.min(1, playerSpeed / maxMoveSpeed)
 
-      if (playerWeapon.weaponType === 'missile') {
-        const lockedTargetId = lockUpdate.lockedTarget?.id ?? null
-        if (missileRequiresLock && (!missileLockConfirmed || lockedTargetId === null)) {
-          audio.playNegativeActionTone()
-          announceBlockedAction('fire-missile-lock', 'Cannot fire missile. Lock is not confirmed.')
+        if (minigunEquippedNow) {
+          audio.startMinigunFiringLoop()
+          minigunRecoveryDelaySeconds = 0.24
+
+          if (!audio.isMinigunLoopActive()) {
+            minigunShotAccumulator = 0
+            minigunPendingShots = 0
+          } else {
+            minigunSustainSeconds = Math.min(4, minigunSustainSeconds + deltaSeconds)
+
+            const shotsPerSecond = Math.max(8, 1 / Math.max(0.01, playerWeapon.fireRateCooldownSeconds))
+            minigunShotAccumulator += deltaSeconds * shotsPerSecond
+            const newlyDueShots = Math.floor(minigunShotAccumulator)
+            if (newlyDueShots > 0) {
+              minigunPendingShots += newlyDueShots
+              minigunShotAccumulator -= newlyDueShots
+            }
+
+            const minigunTargets = lockTargets
+            updateScheduler.runTask({
+              id: 'combat.minigun-hitscan',
+              priority: 'critical',
+              intervalFrames: 1,
+              maxDeferralFrames: 1,
+              queueSize: minigunPendingShots,
+              run: () => {
+                const startMs = performance.now()
+                const maxRaycastsPerFrame = 14
+                const processCount = Math.max(0, Math.min(maxRaycastsPerFrame, minigunPendingShots))
+                if (processCount <= 0) {
+                  return
+                }
+
+              const minigunPenalty = clampNumber(minigunSustainSeconds / 2.6, 0, 0.6)
+              const effectiveStability = Math.max(0.15, (playerWeapon.stability ?? 1) * (1 - (minigunPenalty * 0.65)))
+              const baseAccuracy = Math.max(0.05, playerWeapon.accuracy - (minigunPenalty * 0.32))
+              const baseHalfAngle = WEAPON_MAX_CONE_RADIANS * Math.max(0, 1 - baseAccuracy)
+              const movementPenaltyFactor = speedFraction <= 0
+                ? 0
+                : speedFraction * (0.9 / effectiveStability)
+              const accuracyHalfAngle = baseHalfAngle * (1 + movementPenaltyFactor)
+
+              const playerEyeZ = (player.z ?? 0) + PLAYER_HEIGHT
+              const baseYaw = player.angle
+              const basePitch = player.pitch
+              let processedShots = 0
+
+              for (let shotIndex = 0; shotIndex < processCount; shotIndex += 1) {
+                if (weaponUsesAmmo && playerWeapon.ammoInClip < ammoPerShot) {
+                  break
+                }
+                if (weaponUsesEnergy && player.ep < shotEnergyCost) {
+                  break
+                }
+
+                minigunShotSequence += 1
+                const randomYaw = (Math.random() - 0.5) * accuracyHalfAngle * 2
+                const randomPitch = (Math.random() - 0.5) * accuracyHalfAngle * 0.65
+                const shotYaw = wrapAngle(baseYaw + randomYaw)
+                const shotPitch = clampNumber(basePitch + randomPitch, -MAX_LOOK_PITCH, MAX_LOOK_PITCH)
+
+                const dirX = Math.cos(shotYaw) * Math.cos(shotPitch)
+                const dirY = Math.sin(shotYaw) * Math.cos(shotPitch)
+                const dirZ = -Math.sin(shotPitch)
+                const maxRange = Math.max(1, playerWeapon.maxRange)
+                const shotEnd = {
+                  x: player.x + (dirX * maxRange),
+                  y: player.y + (dirY * maxRange),
+                  z: playerEyeZ + (dirZ * maxRange)
+                }
+
+                const worldHit = traceWorldHit3D(
+                  collisionWorld,
+                  { x: player.x, y: player.y, z: playerEyeZ },
+                  shotEnd,
+                  0.02
+                )
+                minigunFrameRaycasts += 1
+                minigunRaycastsThisSecond += 1
+
+                const worldHitDistance = worldHit?.distance ?? maxRange
+                const targetHit = findNearestHitscanTargetAlongRay(
+                  player.x,
+                  player.y,
+                  playerEyeZ,
+                  dirX,
+                  dirY,
+                  dirZ,
+                  worldHitDistance,
+                  minigunTargets
+                )
+
+                const tracerDistance = targetHit?.hitDistance ?? worldHitDistance
+                const tracerEndX = player.x + (dirX * tracerDistance)
+                const tracerEndY = player.y + (dirY * tracerDistance)
+                const tracerEndZ = playerEyeZ + (dirZ * tracerDistance)
+                const tracerModulo = minigunSustainSeconds > 1.4 ? 2 : 1
+                if (minigunShotSequence % tracerModulo === 0) {
+                  threeRenderer.submitMinigunTracer(
+                    player.x,
+                    playerEyeZ,
+                    player.y,
+                    tracerEndX,
+                    tracerEndZ,
+                    tracerEndY,
+                    0.08
+                  )
+                  minigunFrameTracerCount += 1
+                }
+
+                if (targetHit && targetHit.hitDistance <= worldHitDistance) {
+                  const hitResult = applyDirectHitscanDamage(
+                    combatWorld,
+                    targetHit.targetId,
+                    playerWeapon.damagePerShot,
+                    audio,
+                    player
+                  )
+                  if (hitResult) {
+                    const shouldSpawnImpact = minigunFrameImpactEffects < 6
+                      && (minigunShotSequence % (minigunSustainSeconds > 1.2 ? 5 : 3) === 0)
+                    if (shouldSpawnImpact) {
+                      const impactDist = Math.hypot(
+                        targetHit.hitX - minigunLastImpactX,
+                        targetHit.hitY - minigunLastImpactY,
+                        targetHit.hitZ - minigunLastImpactZ
+                      )
+                      if (!Number.isFinite(impactDist) || impactDist > 0.55 || (timestampMs - minigunLastImpactTimeMs) > 45) {
+                        threeRenderer.submitMinigunImpact(targetHit.hitX, targetHit.hitZ, targetHit.hitY, 0.08, 0.11)
+                        minigunFrameImpactEffects += 1
+                        minigunLastImpactX = targetHit.hitX
+                        minigunLastImpactY = targetHit.hitY
+                        minigunLastImpactZ = targetHit.hitZ
+                        minigunLastImpactTimeMs = timestampMs
+                      }
+                    }
+                    if (minigunShotSequence % 3 === 0) {
+                      audio.playImpact(hitResult.position.x, hitResult.position.y, player.x, player.y, player.angle)
+                    }
+                  }
+                } else if (worldHit) {
+                  const shouldSpawnImpact = minigunFrameImpactEffects < 5
+                    && (minigunShotSequence % (minigunSustainSeconds > 1.2 ? 6 : 4) === 0)
+                  if (shouldSpawnImpact) {
+                    threeRenderer.submitMinigunImpact(worldHit.x, worldHit.z, worldHit.y, 0.065, 0.1)
+                    minigunFrameImpactEffects += 1
+                  }
+                }
+
+                if (weaponUsesAmmo) {
+                  playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - ammoPerShot)
+                }
+                if (weaponUsesEnergy) {
+                  player.ep = Math.max(0, player.ep - shotEnergyCost)
+                }
+                processedShots += 1
+              }
+
+              minigunPendingShots = Math.max(0, minigunPendingShots - processedShots)
+              if (processedShots > 0) {
+                const totalHeatGain = getWeaponHeatPerShot(playerWeapon)
+                  * processedShots
+                  * Math.max(0, devHeatMultiplier)
+                devLastHeatGain = totalHeatGain
+                devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + totalHeatGain)
+                updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
+                if (weaponUsesAmmo && playerWeapon.ammoInClip <= 0) {
+                  hasPlayedEmptyClipForCurrentTriggerPull = true
+                }
+              }
+
+                minigunFrameProcessingMs += (performance.now() - startMs)
+              }
+            })
+          }
+        } else if (playerWeapon.weaponType === 'missile') {
+          audio.stopMinigunFiringLoop()
+          const lockedTargetId = lockUpdate.lockedTarget?.id ?? null
+          if (missileRequiresLock && (!missileLockConfirmed || lockedTargetId === null)) {
+            audio.playNegativeActionTone()
+            announceBlockedAction('fire-missile-lock', 'Cannot fire missile. Lock is not confirmed.')
+          } else {
+            audio.fireGunshot(playerWeapon.fireSoundPath)
+            updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
+            if (playerWeapon.fireRateCooldownSeconds > 0) {
+              playerFireCooldownSeconds = playerWeapon.fireRateCooldownSeconds
+            } // end if fire rate applies
+
+            const missilesPerShot = Math.max(1, Math.round(playerWeapon.projectileCount))
+            const effectiveMissileAccuracy = isBronzeLock ? 0 : playerWeapon.accuracy
+            for (let missileIndex = 0; missileIndex < missilesPerShot; missileIndex += 1) {
+              // Ticket 23: missile routing is always center-mass blast; subsystem routing is intentionally ignored.
+              spawnPlayerMissile(
+                combatWorld,
+                player,
+                lockedTargetId,
+                playerWeapon.damagePerShot,
+                playerWeapon.bulletSpeed,
+                playerWeapon.maxRange,
+                playerWeapon.projectileSize,
+                playerWeapon.trackingRating,
+                playerWeapon.explosionRadius,
+                playerWeapon.explosionDamage,
+                playerWeapon.explosionSounds,
+                playerWeapon.projectileType === 'rocket' ? 'rocket' : 'missile',
+                effectiveMissileAccuracy,
+                speedFraction,
+                playerWeapon.stability ?? 1
+              )
+            } // end for each missile in shot
+            if (shotEnergyCost > 0) {
+              player.ep = Math.max(0, player.ep - shotEnergyCost)
+            }
+            if (weaponUsesAmmo) {
+              playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
+            }
+            applyWeaponHeatGain(playerWeapon)
+          } // end if missile shot blocked or fired
         } else {
+          audio.stopMinigunFiringLoop()
+          const effectiveDirectFireAccuracy = isBronzeLock ? 0 : playerWeapon.accuracy
           audio.fireGunshot(playerWeapon.fireSoundPath)
           updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
           if (playerWeapon.fireRateCooldownSeconds > 0) {
             playerFireCooldownSeconds = playerWeapon.fireRateCooldownSeconds
           } // end if fire rate applies
-
-          const missilesPerShot = Math.max(1, Math.round(playerWeapon.projectileCount))
-          const effectiveMissileAccuracy = isBronzeLock ? 0 : playerWeapon.accuracy
-          for (let missileIndex = 0; missileIndex < missilesPerShot; missileIndex += 1) {
-            // Ticket 23: missile routing is always center-mass blast; subsystem routing is intentionally ignored.
-            spawnPlayerMissile(
+          if (lockUpdate.lockedTarget !== null) {
+            spawnPlayerBulletToward(
               combatWorld,
               player,
-              lockedTargetId,
+              lockUpdate.lockedTarget.x,
+              lockUpdate.lockedTarget.y,
+              lockUpdate.lockedTarget.height + PLAYER_HEIGHT,
+              effectiveDirectFireAccuracy,
+              speedFraction,
+              playerWeapon.stability ?? 1,
               playerWeapon.damagePerShot,
               playerWeapon.bulletSpeed,
               playerWeapon.maxRange,
               playerWeapon.projectileSize,
-              playerWeapon.trackingRating,
-              playerWeapon.explosionRadius,
-              playerWeapon.explosionDamage,
-              playerWeapon.explosionSounds,
-              playerWeapon.projectileType === 'rocket' ? 'rocket' : 'missile',
-              effectiveMissileAccuracy,
-              speedFraction,
-              playerWeapon.stability ?? 1
+              playerWeapon.projectileType,
+              playerWeapon.projectileCount,
+              playerWeapon.spreadDegrees
             )
-          } // end for each missile in shot
+          } else {
+            spawnPlayerBullet(
+              combatWorld,
+              player,
+              playerWeapon.damagePerShot,
+              playerWeapon.bulletSpeed,
+              playerWeapon.maxRange,
+              playerWeapon.projectileSize,
+              playerWeapon.projectileType,
+              effectiveDirectFireAccuracy,
+              speedFraction,
+              playerWeapon.stability ?? 1,
+              playerWeapon.projectileCount,
+              playerWeapon.spreadDegrees
+            )
+          } // end if locked target for accuracy cone
           if (shotEnergyCost > 0) {
             player.ep = Math.max(0, player.ep - shotEnergyCost)
           }
@@ -6516,56 +6918,7 @@ function startTestMap(): void {
             playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
           }
           applyWeaponHeatGain(playerWeapon)
-        } // end if missile shot blocked or fired
-      } else {
-        const effectiveDirectFireAccuracy = isBronzeLock ? 0 : playerWeapon.accuracy
-        audio.fireGunshot(playerWeapon.fireSoundPath)
-        updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
-        if (playerWeapon.fireRateCooldownSeconds > 0) {
-          playerFireCooldownSeconds = playerWeapon.fireRateCooldownSeconds
-        } // end if fire rate applies
-        if (lockUpdate.lockedTarget !== null) {
-          spawnPlayerBulletToward(
-            combatWorld,
-            player,
-            lockUpdate.lockedTarget.x,
-            lockUpdate.lockedTarget.y,
-            lockUpdate.lockedTarget.height + PLAYER_HEIGHT,
-            effectiveDirectFireAccuracy,
-            speedFraction,
-            playerWeapon.stability ?? 1,
-            playerWeapon.damagePerShot,
-            playerWeapon.bulletSpeed,
-            playerWeapon.maxRange,
-            playerWeapon.projectileSize,
-            playerWeapon.projectileType,
-            playerWeapon.projectileCount,
-            playerWeapon.spreadDegrees
-          )
-        } else {
-          spawnPlayerBullet(
-            combatWorld,
-            player,
-            playerWeapon.damagePerShot,
-            playerWeapon.bulletSpeed,
-            playerWeapon.maxRange,
-            playerWeapon.projectileSize,
-            playerWeapon.projectileType,
-            effectiveDirectFireAccuracy,
-            speedFraction,
-            playerWeapon.stability ?? 1,
-            playerWeapon.projectileCount,
-            playerWeapon.spreadDegrees
-          )
-        } // end if locked target for accuracy cone
-        if (shotEnergyCost > 0) {
-          player.ep = Math.max(0, player.ep - shotEnergyCost)
-        }
-        if (weaponUsesAmmo) {
-          playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
-        }
-        applyWeaponHeatGain(playerWeapon)
-      } // end if missile or ballistic firing mode
+        } // end if weapon firing mode
       } // end if weapon has ammo in clip and subsystem is online
     } // end if fire input and cooldown allow
 
@@ -6756,6 +7109,7 @@ function startTestMap(): void {
         enemies: combatRenderForDisplay.enemies,
         tanks: combatRenderForDisplay.tanks,
         bullets: combatRenderForDisplay.bullets,
+        deltaSeconds,
         player,
         muzzleFlashAlpha,
         lockedTankId: targetLockState.currentTargetId,

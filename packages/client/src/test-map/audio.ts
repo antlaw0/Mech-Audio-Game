@@ -1165,11 +1165,23 @@ export function createAudioController(): AudioController {
   const cardinalHeadingPlayerCache = new Map<string, Tone.Player>()
 
   const defaultPlayerFireSoundPath = 'assets/sounds/weapons/pistol_fire.ogg'
+  const minigunSpinUpPath = 'assets/sounds/weapons/minigun_spinUp.ogg'
+  const minigunLoopPath = 'assets/sounds/weapons/minigun_loop.ogg'
+  const minigunSpinDownPath = 'assets/sounds/weapons/minigun_spinDown.ogg'
   const playerFireSound = new Tone.Player(defaultPlayerFireSoundPath).toDestination()
   const playerFireSoundCache = new Map<string, Tone.Player>([[defaultPlayerFireSoundPath, playerFireSound]])
   const playerFireSoundVoicePools = new Map<string, Tone.Player[]>()
   const playerFireSoundVoiceCursors = new Map<string, number>()
   const playerFireSoundPendingLoads = new Set<string>()
+  const minigunLoopGain = new Tone.Gain(0.001).toDestination()
+  const minigunSpinUpPlayer = new Tone.Player(minigunSpinUpPath).connect(minigunLoopGain)
+  const minigunLoopPlayer = new Tone.Player(minigunLoopPath).connect(minigunLoopGain)
+  const minigunSpinDownPlayer = new Tone.Player(minigunSpinDownPath).connect(minigunLoopGain)
+  minigunLoopPlayer.loop = true
+  let minigunLoaded = false
+  let minigunLoadPromise: Promise<void> | null = null
+  let minigunLoopMode: 'idle' | 'spooling' | 'sustain' = 'idle'
+  let minigunStartLoopTimeoutId: number | null = null
   const reloadClipDurationMsCache = new Map<string, number>()
   const reloadServoLoopFallbackPath = 'assets/sounds/servomotor.ogg'
   const reloadServoPlayerCache = new Map<string, Tone.Player>()
@@ -2272,6 +2284,8 @@ export function createAudioController(): AudioController {
       stopAllFlightLoopPlayers()
     } // end if player flight loop was playing
 
+    stopMinigunLoopInternal(false)
+
     if (contextWasRunningBeforePause) {
       try {
         await rawContext.suspend()
@@ -3139,6 +3153,152 @@ export function createAudioController(): AudioController {
 
   } // end function fireGunshot
 
+  const updateMinigunLoopGain = (): void => {
+    const targetGain = clamp(masterVolume * objectsVolume * 0.7, 0, 1.3)
+    minigunLoopGain.gain.rampTo(targetGain, 0.03)
+  } // end function updateMinigunLoopGain
+
+  const ensureMinigunLoaded = (): Promise<void> => {
+    if (minigunLoaded) {
+      return Promise.resolve()
+    }
+    if (minigunLoadPromise) {
+      return minigunLoadPromise
+    }
+
+    minigunLoadPromise = Promise.all([
+      minigunSpinUpPlayer.load(minigunSpinUpPath),
+      minigunLoopPlayer.load(minigunLoopPath),
+      minigunSpinDownPlayer.load(minigunSpinDownPath)
+    ])
+      .then(() => {
+        minigunLoaded = true
+      })
+      .catch((error) => {
+        audioDebugWarn('Failed to load minigun loop audio.', { error })
+      })
+      .finally(() => {
+        minigunLoadPromise = null
+      })
+
+    return minigunLoadPromise
+  } // end function ensureMinigunLoaded
+
+  const stopMinigunLoopInternal = (playSpinDown: boolean): void => {
+    const hadActiveMinigunAudio = minigunLoopMode !== 'idle'
+      || minigunSpinUpPlayer.state === 'started'
+      || minigunLoopPlayer.state === 'started'
+
+    if (minigunStartLoopTimeoutId !== null) {
+      window.clearTimeout(minigunStartLoopTimeoutId)
+      minigunStartLoopTimeoutId = null
+    }
+
+    try {
+      if (minigunLoopPlayer.state === 'started') {
+        minigunLoopPlayer.stop()
+      }
+    } catch {
+      // Ignore stop races on browser audio threads.
+    }
+
+    try {
+      if (minigunSpinUpPlayer.state === 'started') {
+        minigunSpinUpPlayer.stop()
+      }
+    } catch {
+      // Ignore stop races on browser audio threads.
+    }
+
+    if (playSpinDown && hadActiveMinigunAudio && minigunLoaded && !audioPaused && isAudioContextRunning()) {
+      try {
+        if (minigunSpinDownPlayer.state === 'started') {
+          minigunSpinDownPlayer.stop()
+        }
+      } catch {
+        // Ignore stop races on browser audio threads.
+      }
+      minigunSpinDownPlayer.start()
+    }
+
+    minigunLoopMode = 'idle'
+    minigunLoopGain.gain.rampTo(0.001, 0.1)
+  } // end function stopMinigunLoopInternal
+
+  const startMinigunFiringLoop = (): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
+      return
+    } // end if minigun loop cannot start
+
+    updateMinigunLoopGain()
+    if (minigunLoopMode === 'sustain' || minigunLoopMode === 'spooling') {
+      return
+    }
+
+    void ensureMinigunLoaded().then(() => {
+      if (audioPaused || !isAudioContextRunning()) {
+        return
+      }
+
+      updateMinigunLoopGain()
+      if (minigunLoopMode === 'sustain' || minigunLoopMode === 'spooling') {
+        return
+      }
+
+      if (minigunStartLoopTimeoutId !== null) {
+        window.clearTimeout(minigunStartLoopTimeoutId)
+        minigunStartLoopTimeoutId = null
+      }
+
+      try {
+        if (minigunSpinDownPlayer.state === 'started') {
+          minigunSpinDownPlayer.stop()
+        }
+      } catch {
+        // Ignore stop races on browser audio threads.
+      }
+
+      try {
+        if (minigunSpinUpPlayer.state === 'started') {
+          minigunSpinUpPlayer.stop()
+        }
+      } catch {
+        // Ignore stop races on browser audio threads.
+      }
+      minigunSpinUpPlayer.start()
+      minigunLoopMode = 'spooling'
+
+      const spinUpDurationMs = Math.max(40, Math.round((minigunSpinUpPlayer.buffer?.duration ?? 0.18) * 1000))
+      minigunStartLoopTimeoutId = window.setTimeout(() => {
+        minigunStartLoopTimeoutId = null
+        if (audioPaused || !isAudioContextRunning()) {
+          return
+        }
+        if (minigunLoopMode !== 'spooling') {
+          return
+        }
+
+        try {
+          if (minigunLoopPlayer.state === 'started') {
+            minigunLoopPlayer.stop()
+          }
+        } catch {
+          // Ignore stop races on browser audio threads.
+        }
+        minigunLoopPlayer.start()
+        minigunLoopMode = 'sustain'
+      }, spinUpDurationMs)
+    })
+  } // end function startMinigunFiringLoop
+
+  const stopMinigunFiringLoop = (): void => {
+    stopMinigunLoopInternal(true)
+  } // end function stopMinigunFiringLoop
+
+  const isMinigunLoopActive = (): boolean => {
+    return minigunLoopMode === 'sustain' && minigunLoopPlayer.state === 'started'
+  } // end function isMinigunLoopActive
+
   const playProjectileNearMiss = (
     projectileType: 'bullet' | 'projectile',
     worldX: number,
@@ -3996,6 +4156,9 @@ export function createAudioController(): AudioController {
     playCollisionThud,
     playPitchCenterConfirm,
     fireGunshot,
+    startMinigunFiringLoop,
+    stopMinigunFiringLoop,
+    isMinigunLoopActive,
     playWeaponReloadSequence,
     playCardinalOrientationCue,
     setAimAssistEnabled,
@@ -4048,7 +4211,10 @@ export function createAudioController(): AudioController {
     getAllFrontBackDiagnostics,
     getAudioDiagnostics: () => ({
       activeEnemyRuntimes: enemyRuntimes.size,
-      occlusionEmitters: audioOcclusionSystem.getAllDiagnostics().length
+      occlusionEmitters: audioOcclusionSystem.getAllDiagnostics().length,
+      minigunLoopNodes: (minigunLoopMode === 'sustain' ? 1 : 0)
+        + (minigunSpinUpPlayer.state === 'started' ? 1 : 0)
+        + (minigunSpinDownPlayer.state === 'started' ? 1 : 0)
     }),
     updateIncomingProjectileAudio,
     playProjectileNearMiss,

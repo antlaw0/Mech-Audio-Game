@@ -382,6 +382,9 @@ export interface AudioController {
   playBump: () => void
   playPitchCenterConfirm: () => void
   fireGunshot: (soundPath?: string) => void
+  startMinigunFiringLoop: () => void
+  stopMinigunFiringLoop: () => void
+  isMinigunLoopActive: () => boolean
   playWeaponReloadSequence: (definition: WeaponReloadDefinition) => Promise<void>
   startFlightLoop: (params?: FlightLoopStartParams) => void
   stopFlightLoop: (params?: FlightLoopStopParams) => void
@@ -476,5 +479,6 @@ export interface AudioController {
   getAudioDiagnostics: () => {
     activeEnemyRuntimes: number
     occlusionEmitters: number
+    minigunLoopNodes: number
   }
 } // end interface AudioController

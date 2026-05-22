@@ -849,6 +849,57 @@ function applyDirectFireDamageToTankCore(tank: number, rawDamage: number): numbe
   return appliedDamage
 } // end function applyDirectFireDamageToTankCore
 
+export function applyDirectHitscanDamage(
+  world: CombatEcsWorld,
+  entity: number,
+  rawDamage: number,
+  audio: AudioController,
+  player: Player
+): {
+  appliedDamage: number
+  killed: boolean
+  position: { x: number; y: number }
+} | null {
+  const kind = Meta.kind[entity] ?? 0
+  if (kind !== KIND_TANK && kind !== KIND_ENEMY) {
+    return null
+  } // end if entity is not damageable by direct hitscan
+
+  if ((Meta.alive[entity] ?? 0) !== 1) {
+    return null
+  } // end if entity is already dead
+
+  const targetX = getNumber(Position.x, entity)
+  const targetY = getNumber(Position.y, entity)
+  if (targetX === null || targetY === null) {
+    return null
+  } // end if entity has no position data
+
+  const appliedDamage = Math.max(1, Math.round(rawDamage))
+  Health.hp[entity] = (Health.hp[entity] ?? 0) - appliedDamage
+  const killed = (Health.hp[entity] ?? 0) <= 0
+
+  if (kind === KIND_TANK) {
+    audio.playTankHitConfirm(targetX, targetY, player.x, player.y, player.angle)
+  }
+
+  if (killed) {
+    Meta.alive[entity] = 0
+    if (kind === KIND_TANK) {
+      TankExplosion.maxDuration[entity] = 0.7
+      TankExplosion.timeRemaining[entity] = 0.7
+      audio.playTankDeathConfirm(targetX, targetY, player.x, player.y, player.angle)
+    }
+  }
+
+  void world
+  return {
+    appliedDamage,
+    killed,
+    position: { x: targetX, y: targetY }
+  }
+} // end function applyDirectHitscanDamage
+
 function getFirstContactFraction(
   startX: number,
   startY: number,

@@ -464,7 +464,7 @@
     "energyDrain": 0,
     "deprecated": false,
     "isMelee": false,
-    "twoHanded": true,
+    "twoHanded": false,
     "isPassive": false,
     "damagePerShot": 11,
     "projectileType": "bullet",
@@ -708,7 +708,7 @@
     "ammoConsumedPerShot": 2,
     "energyPerShot": 0,
     "accuracy": 0.7,
-    "passiveBonuses": ["Dual shoulder mount required", "Full auto capable"],
+    "passiveBonuses": ["Single shoulder mount", "Full auto capable"],
     "activeAbilities": [],
     "specialEffects": []
   }

@@ -189,7 +189,9 @@ const createSeedInstances = (): { inventory: PartInstance[]; loadout: MechLoadou
 
   const equippedWeaponSlotIds: Partial<Record<WeaponMountSlot, string>> = {
     LeftHand: 'basic.sword',
-    RightHand: 'basic.pistol'
+    RightHand: 'basic.pistol',
+    ShoulderLeft: 'basic.minigun',
+    ShoulderRight: 'basic.plasma-cannon'
   }
 
   const bonusDefinitionIds: string[] = [

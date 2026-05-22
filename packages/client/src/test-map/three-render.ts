@@ -25,17 +25,43 @@ interface ThreeRenderFrameArgs {
   lockedTankId: number | null
   lockOnWindowWidthPercent: number
   lockOnWindowHeightPercent: number
+  deltaSeconds: number
 } // end interface ThreeRenderFrameArgs
 
 interface ThreeRenderSystem {
   renderFrame: (args: ThreeRenderFrameArgs) => void
   resize: (canvasWidth: number, canvasHeight: number) => void
   setChunkVisibility: (activeChunkKeys: readonly string[], dormantChunkKeys: readonly string[]) => void
-  getDiagnostics: () => { drawCalls: number; triangles: number }
+  submitMinigunTracer: (
+    startX: number,
+    startY: number,
+    startZ: number,
+    endX: number,
+    endY: number,
+    endZ: number,
+    lifetimeSeconds?: number
+  ) => void
+  submitMinigunImpact: (
+    x: number,
+    y: number,
+    z: number,
+    size?: number,
+    lifetimeSeconds?: number
+  ) => void
+  getDiagnostics: () => {
+    drawCalls: number
+    triangles: number
+    activeTracers: number
+    activeImpactEffects: number
+    tracerPoolCapacity: number
+    impactPoolCapacity: number
+  }
   dispose: () => void
 } // end interface ThreeRenderSystem
 
 const DEFAULT_RENDER_CHUNK_SIZE = 32
+const MINIGUN_TRACER_POOL_CAPACITY = 320
+const MINIGUN_IMPACT_POOL_CAPACITY = 220
 
 function toChunkCoord(value: number, chunkSize: number): number {
   return Math.floor(value / chunkSize)
@@ -448,6 +474,148 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
   scene.add(missileTrailGroup)
   const missileTrailPool: THREE.Group[] = []
 
+  const minigunTracerMesh = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.014, 0.014, 1, 6),
+    new THREE.MeshBasicMaterial({
+      color: 0xffcc78,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false
+    }),
+    MINIGUN_TRACER_POOL_CAPACITY
+  )
+  minigunTracerMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+  minigunTracerMesh.count = 0
+  minigunTracerMesh.frustumCulled = false
+  scene.add(minigunTracerMesh)
+
+  const minigunImpactMesh = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(0.05, 8, 8),
+    new THREE.MeshBasicMaterial({
+      color: 0xffb25a,
+      transparent: true,
+      opacity: 0.6,
+      depthWrite: false
+    }),
+    MINIGUN_IMPACT_POOL_CAPACITY
+  )
+  minigunImpactMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+  minigunImpactMesh.count = 0
+  minigunImpactMesh.frustumCulled = false
+  scene.add(minigunImpactMesh)
+
+  const tracerStartX = new Float32Array(MINIGUN_TRACER_POOL_CAPACITY)
+  const tracerStartY = new Float32Array(MINIGUN_TRACER_POOL_CAPACITY)
+  const tracerStartZ = new Float32Array(MINIGUN_TRACER_POOL_CAPACITY)
+  const tracerEndX = new Float32Array(MINIGUN_TRACER_POOL_CAPACITY)
+  const tracerEndY = new Float32Array(MINIGUN_TRACER_POOL_CAPACITY)
+  const tracerEndZ = new Float32Array(MINIGUN_TRACER_POOL_CAPACITY)
+  const tracerLife = new Float32Array(MINIGUN_TRACER_POOL_CAPACITY)
+  let tracerWriteCursor = 0
+
+  const impactX = new Float32Array(MINIGUN_IMPACT_POOL_CAPACITY)
+  const impactY = new Float32Array(MINIGUN_IMPACT_POOL_CAPACITY)
+  const impactZ = new Float32Array(MINIGUN_IMPACT_POOL_CAPACITY)
+  const impactSize = new Float32Array(MINIGUN_IMPACT_POOL_CAPACITY)
+  const impactLife = new Float32Array(MINIGUN_IMPACT_POOL_CAPACITY)
+  const impactStartLife = new Float32Array(MINIGUN_IMPACT_POOL_CAPACITY)
+  let impactWriteCursor = 0
+
+  const tracerUpAxis = new THREE.Vector3(0, 1, 0)
+  const tracerDirection = new THREE.Vector3()
+  const tracerMidpoint = new THREE.Vector3()
+  const tracerQuaternion = new THREE.Quaternion()
+  const tracerMatrixObject = new THREE.Object3D()
+  const impactMatrixObject = new THREE.Object3D()
+  let activeTracerCount = 0
+  let activeImpactCount = 0
+
+  const updateMinigunEffects = (deltaSeconds: number): void => {
+    const dt = Math.max(0, deltaSeconds)
+    let tracerInstanceIndex = 0
+
+    for (let slot = 0; slot < MINIGUN_TRACER_POOL_CAPACITY; slot += 1) {
+      const life = tracerLife[slot] ?? 0
+      if (life <= 0) {
+        continue
+      }
+
+      const nextLife = life - dt
+      tracerLife[slot] = nextLife
+      if (nextLife <= 0) {
+        continue
+      }
+
+      const startX = tracerStartX[slot] ?? 0
+      const startY = tracerStartY[slot] ?? 0
+      const startZ = tracerStartZ[slot] ?? 0
+      const endX = tracerEndX[slot] ?? 0
+      const endY = tracerEndY[slot] ?? 0
+      const endZ = tracerEndZ[slot] ?? 0
+
+      tracerDirection.set(
+        endX - startX,
+        endY - startY,
+        endZ - startZ
+      )
+      const tracerLength = tracerDirection.length()
+      if (tracerLength <= 0.0001) {
+        continue
+      }
+      tracerDirection.normalize()
+
+      tracerMidpoint.set(
+        (startX + endX) * 0.5,
+        (startY + endY) * 0.5,
+        (startZ + endZ) * 0.5
+      )
+      tracerQuaternion.setFromUnitVectors(tracerUpAxis, tracerDirection)
+
+      tracerMatrixObject.position.copy(tracerMidpoint)
+      tracerMatrixObject.quaternion.copy(tracerQuaternion)
+      tracerMatrixObject.scale.set(1, tracerLength, 1)
+      tracerMatrixObject.updateMatrix()
+      minigunTracerMesh.setMatrixAt(tracerInstanceIndex, tracerMatrixObject.matrix)
+      tracerInstanceIndex += 1
+    }
+
+    activeTracerCount = tracerInstanceIndex
+    minigunTracerMesh.count = activeTracerCount
+    minigunTracerMesh.instanceMatrix.needsUpdate = true
+
+    let impactInstanceIndex = 0
+    for (let slot = 0; slot < MINIGUN_IMPACT_POOL_CAPACITY; slot += 1) {
+      const life = impactLife[slot] ?? 0
+      if (life <= 0) {
+        continue
+      }
+
+      const nextLife = life - dt
+      impactLife[slot] = nextLife
+      if (nextLife <= 0) {
+        continue
+      }
+
+      const startLife = Math.max(0.001, impactStartLife[slot] ?? nextLife)
+      const ageRatio = 1 - Math.max(0, Math.min(1, nextLife / startLife))
+      const scale = Math.max(0.05, (impactSize[slot] ?? 0.08) * (0.9 + ageRatio * 1.6))
+      const impactPosX = impactX[slot] ?? 0
+      const impactPosY = impactY[slot] ?? 0
+      const impactPosZ = impactZ[slot] ?? 0
+
+      impactMatrixObject.position.set(impactPosX, impactPosY, impactPosZ)
+      impactMatrixObject.rotation.set(0, 0, 0)
+      impactMatrixObject.scale.setScalar(scale)
+      impactMatrixObject.updateMatrix()
+      minigunImpactMesh.setMatrixAt(impactInstanceIndex, impactMatrixObject.matrix)
+      impactInstanceIndex += 1
+    }
+
+    activeImpactCount = impactInstanceIndex
+    minigunImpactMesh.count = activeImpactCount
+    minigunImpactMesh.instanceMatrix.needsUpdate = true
+  } // end function updateMinigunEffects
+
   const hudCanvas = document.createElement('canvas')
   hudCanvas.width = canvasWidth
   hudCanvas.height = canvasHeight
@@ -483,10 +651,58 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
         group.visible = visibleKeys.has(key)
       }
     },
-    getDiagnostics(): { drawCalls: number; triangles: number } {
+    submitMinigunTracer(
+      startX: number,
+      startY: number,
+      startZ: number,
+      endX: number,
+      endY: number,
+      endZ: number,
+      lifetimeSeconds = 0.05
+    ): void {
+      const slot = tracerWriteCursor
+      tracerWriteCursor = (tracerWriteCursor + 1) % MINIGUN_TRACER_POOL_CAPACITY
+
+      tracerStartX[slot] = startX
+      tracerStartY[slot] = startY
+      tracerStartZ[slot] = startZ
+      tracerEndX[slot] = endX
+      tracerEndY[slot] = endY
+      tracerEndZ[slot] = endZ
+      tracerLife[slot] = Math.max(0.01, lifetimeSeconds)
+    },
+    submitMinigunImpact(
+      x: number,
+      y: number,
+      z: number,
+      size = 0.09,
+      lifetimeSeconds = 0.12
+    ): void {
+      const slot = impactWriteCursor
+      impactWriteCursor = (impactWriteCursor + 1) % MINIGUN_IMPACT_POOL_CAPACITY
+
+      impactX[slot] = x
+      impactY[slot] = y
+      impactZ[slot] = z
+      impactSize[slot] = Math.max(0.03, size)
+      impactLife[slot] = Math.max(0.03, lifetimeSeconds)
+      impactStartLife[slot] = impactLife[slot] ?? 0.12
+    },
+    getDiagnostics(): {
+      drawCalls: number
+      triangles: number
+      activeTracers: number
+      activeImpactEffects: number
+      tracerPoolCapacity: number
+      impactPoolCapacity: number
+    } {
       return {
         drawCalls: renderer.info.render.calls,
-        triangles: renderer.info.render.triangles
+        triangles: renderer.info.render.triangles,
+        activeTracers: activeTracerCount,
+        activeImpactEffects: activeImpactCount,
+        tracerPoolCapacity: MINIGUN_TRACER_POOL_CAPACITY,
+        impactPoolCapacity: MINIGUN_IMPACT_POOL_CAPACITY
       }
     },
     renderFrame(args: ThreeRenderFrameArgs): void {
@@ -498,7 +714,8 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
         muzzleFlashAlpha,
         lockedTankId,
         lockOnWindowWidthPercent,
-        lockOnWindowHeightPercent
+        lockOnWindowHeightPercent,
+        deltaSeconds
       } = args
 
       const playerZ = Math.max(0, player.z ?? 0)
@@ -665,6 +882,7 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
         } // end if trail puffs exist
       } // end for each bullet
 
+      updateMinigunEffects(deltaSeconds)
       renderer.render(scene, camera)
       drawHudOverlay(
         hudCtx,

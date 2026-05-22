@@ -136,11 +136,11 @@ export function bindInput(
       } // end if Digit2
 
       if (event.code === 'Digit3') {
-        input.selectedWeaponSlot = 'ShoulderRight'
+        input.selectedWeaponSlot = 'ShoulderLeft'
       } // end if Digit3
 
       if (event.code === 'Digit4') {
-        input.selectedWeaponSlot = 'ShoulderLeft'
+        input.selectedWeaponSlot = 'ShoulderRight'
       } // end if Digit4
 
       if (event.code === 'Numpad1') {
