@@ -1,0 +1,66 @@
+ Volume in drive C is OS
+ Volume Serial Number is B62F-0CE0
+
+ Directory of C:\Users\alawl\Desktop\Game Dev Projects\MechAudio\Mech-Audio-Game\assets\sounds
+
+05/22/2026  08:21 AM    <DIR>          .
+05/22/2026  08:21 AM    <DIR>          ..
+04/22/2026  03:37 PM    <DIR>          ambience
+04/12/2026  11:03 AM            19,290 armorImpact.ogg
+04/26/2026  09:08 AM           145,760 boostEngage.ogg
+05/22/2026  07:51 AM             4,286 bulletHitsDirt1.ogg
+05/22/2026  07:51 AM             4,238 bulletHitsDirt2.ogg
+05/22/2026  07:51 AM             4,321 bulletHitsDirt3.ogg
+05/22/2026  07:51 AM            18,138 bullethitsstone1.ogg
+05/22/2026  07:51 AM            19,132 bullethitsstone2.ogg
+05/22/2026  07:51 AM            18,609 bullethitsstone3.ogg
+05/22/2026  07:51 AM             8,331 bulletHitsWater1.ogg
+05/22/2026  07:51 AM             8,303 BulletHitsWater2.ogg
+05/22/2026  07:51 AM            10,166 bulletHitsWater3.ogg
+05/22/2026  07:51 AM             7,891 BulletHitsWater4.ogg
+05/22/2026  07:51 AM             7,627 bullethitswood1.ogg
+05/22/2026  07:51 AM             7,100 bullethitswood2.ogg
+05/22/2026  07:51 AM             7,563 bullethitswood3.ogg
+05/22/2026  07:51 AM             9,808 bullethitswood4.ogg
+04/12/2026  11:03 AM            17,043 bulletWiz.ogg
+04/17/2026  03:03 PM            46,846 coolSound.ogg
+04/12/2026  11:03 AM            34,091 damageSmall1.ogg
+04/12/2026  11:03 AM            40,650 damageSmall2.ogg
+05/22/2026  08:20 AM            47,194 dirt_suppression_loop.ogg
+04/29/2026  07:37 PM           154,660 energy.ogg
+04/17/2026  03:03 PM    <DIR>          explosions
+04/12/2026  11:04 AM            81,480 footstep.ogg
+04/28/2026  10:29 AM            21,494 footstep2.ogg
+04/28/2026  09:07 AM            93,843 footstep3.ogg
+04/14/2026  08:09 AM            33,419 hardLanding.ogg
+04/16/2026  08:40 AM            18,338 helicopterLoop.ogg
+04/13/2026  05:18 PM            70,985 jetLoop.ogg
+04/12/2026  11:03 AM            19,290 mechHit.ogg
+05/22/2026  08:20 AM            45,620 metal_suppression_loop.ogg
+04/21/2026  04:29 PM    <DIR>          nav
+05/22/2026  08:21 AM                 0 output.txt
+04/12/2026  11:03 AM            26,872 projectileWiz.ogg
+04/17/2026  03:03 PM            20,328 quickBoost.ogg
+03/06/2026  04:05 PM            42,522 RIC1.ogg
+03/06/2026  04:05 PM            46,046 RIC2.ogg
+03/06/2026  04:05 PM            32,821 ric3.ogg
+03/06/2026  04:05 PM            39,287 ric4.ogg
+03/06/2026  04:05 PM            39,837 ric5.ogg
+03/06/2026  04:05 PM            11,979 ricMetal1.ogg
+03/06/2026  04:05 PM            11,899 ricMetal2.ogg
+03/06/2026  04:05 PM            12,066 ricMetal3.ogg
+03/06/2026  04:05 PM            12,149 ricMetal4.ogg
+03/06/2026  04:05 PM            12,227 ricMetal5.ogg
+04/17/2026  03:03 PM            19,624 rocket.ogg
+05/07/2026  10:41 AM            92,814 servoBed.ogg
+04/08/2026  03:22 PM            39,295 servomotor.ogg
+05/07/2026  10:18 AM            67,332 servoSpinDown.ogg
+05/07/2026  10:14 AM            92,048 servoSpinUp.ogg
+04/27/2026  11:42 AM    <DIR>          steps
+05/22/2026  08:20 AM            38,012 stone_suppression_loop.ogg
+11/01/2015  09:50 PM           116,600 tankHit.ogg
+04/16/2026  08:48 AM           108,121 tankMoving.ogg
+05/21/2026  07:21 PM    <DIR>          weapons
+05/22/2026  08:20 AM            62,101 wood_suppression_loop.ogg
+              52 File(s)      1,969,496 bytes
+               7 Dir(s)   4,773,273,600 bytes free

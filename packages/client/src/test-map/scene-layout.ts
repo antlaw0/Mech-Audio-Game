@@ -191,6 +191,10 @@ function isInsideAnyUrbanDistrict(x: number, y: number): boolean {
   })
 } // end function isInsideAnyUrbanDistrict
 
+export function isInsideUrbanDistrictAtPosition(x: number, y: number): boolean {
+  return isInsideAnyUrbanDistrict(x, y)
+} // end function isInsideUrbanDistrictAtPosition
+
 function createRockSprites(random: () => number): SpriteObject[] {
   const sprites: SpriteObject[] = []
   const maxAttempts = 1400

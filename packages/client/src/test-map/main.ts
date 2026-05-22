@@ -75,6 +75,7 @@ import {
   setWorldCollisionObserverPosition,
   traceWorldHit3D
 } from './world-collision.js'
+import { SURFACE_MATERIAL, resolveWorldSurfaceMaterial } from './surface-material.js'
 import { createWorldStreamingManager } from './world-streaming.js'
 import { createFrameUpdateScheduler } from './update-scheduler.js'
 import type { GarageSnapshot, MechLoadout, PartCategory, PartDefinition, WeaponMountSlot } from '../data/parts/types.js'
@@ -2660,8 +2661,9 @@ function startTestMap(): void {
   let previousPlayerX = player.x
   let previousPlayerY = player.y
   let previousPlayerZ = player.z ?? 0
-  const worldOriginX = MAP_WIDTH / 2
-  const worldOriginY = MAP_HEIGHT / 2
+  // Centered coordinates use the initial player spawn as origin: (0, 0, 0).
+  const worldOriginX = player.x
+  const worldOriginY = player.y
 
   const mapToCenteredCoordinates = (mapX: number, mapY: number): { x: number; y: number } => {
     return {
@@ -3949,9 +3951,12 @@ function startTestMap(): void {
         targetDistance = Math.sqrt(dx*dx + dy*dy + dz*dz)
       }
     }
+    const centeredPlayerPosition = mapToCenteredCoordinates(player.x, player.y)
+
     const lines: string[] = [
       'PLAYER',
-      `Position: (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${(player.z ?? 0).toFixed(2)})`,
+      `Position: (${centeredPlayerPosition.x.toFixed(2)}, ${centeredPlayerPosition.y.toFixed(2)}, ${(player.z ?? 0).toFixed(2)})`,
+      `Map Position (internal): (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${(player.z ?? 0).toFixed(2)})`,
       `Velocity: (${devVelocityX.toFixed(2)}, ${devVelocityY.toFixed(2)}, ${devVelocityZ.toFixed(2)})`,
       `Heading: ${headingDegrees.toFixed(1)} deg`,
       `Grounded: ${player.flightState === 'grounded' ? 'true' : 'false'}`,
@@ -6728,10 +6733,29 @@ function startTestMap(): void {
                   shotEnd,
                   0.02
                 )
+                const terrainGroundHit = (() => {
+                  if (dirZ >= -0.0001) {
+                    return null
+                  }
+                  const distanceToGround = playerEyeZ / -dirZ
+                  if (!Number.isFinite(distanceToGround) || distanceToGround <= 0 || distanceToGround > maxRange) {
+                    return null
+                  }
+                  return {
+                    distance: distanceToGround,
+                    x: player.x + (dirX * distanceToGround),
+                    y: player.y + (dirY * distanceToGround),
+                    z: 0
+                  }
+                })()
                 minigunFrameRaycasts += 1
                 minigunRaycastsThisSecond += 1
 
-                const worldHitDistance = worldHit?.distance ?? maxRange
+                const worldHitDistance = Math.min(
+                  worldHit?.distance ?? Number.POSITIVE_INFINITY,
+                  terrainGroundHit?.distance ?? Number.POSITIVE_INFINITY,
+                  maxRange
+                )
                 const targetHit = findNearestHitscanTargetAlongRay(
                   player.x,
                   player.y,
@@ -6767,9 +6791,21 @@ function startTestMap(): void {
                     targetHit.targetId,
                     playerWeapon.damagePerShot,
                     audio,
-                    player
+                    player,
+                    true
                   )
                   if (hitResult) {
+                    audio.reportMinigunSuppressionImpact({
+                      worldX: targetHit.hitX,
+                      worldY: targetHit.hitY,
+                      worldZ: targetHit.hitZ,
+                      listenerX: player.x,
+                      listenerY: player.y,
+                      listenerAngle: player.angle,
+                      surfaceMaterial: SURFACE_MATERIAL.metal,
+                      isEnemyImpact: true,
+                      isPlayerEngagedTarget: true
+                    })
                     const shouldSpawnImpact = minigunFrameImpactEffects < 6
                       && (minigunShotSequence % (minigunSustainSeconds > 1.2 ? 5 : 3) === 0)
                     if (shouldSpawnImpact) {
@@ -6787,15 +6823,44 @@ function startTestMap(): void {
                         minigunLastImpactTimeMs = timestampMs
                       }
                     }
-                    if (minigunShotSequence % 3 === 0) {
-                      audio.playImpact(hitResult.position.x, hitResult.position.y, player.x, player.y, player.angle)
+                    if (minigunShotSequence % 10 === 0) {
+                      audio.playTankHitConfirm(hitResult.position.x, hitResult.position.y, player.x, player.y, player.angle)
                     }
                   }
                 } else if (worldHit) {
+                  audio.reportMinigunSuppressionImpact({
+                    worldX: worldHit.x,
+                    worldY: worldHit.y,
+                    worldZ: worldHit.z,
+                    listenerX: player.x,
+                    listenerY: player.y,
+                    listenerAngle: player.angle,
+                    surfaceMaterial: resolveWorldSurfaceMaterial(worldHit.x, worldHit.y, worldHit.obstacleType),
+                    isEnemyImpact: false,
+                    isPlayerEngagedTarget: false
+                  })
                   const shouldSpawnImpact = minigunFrameImpactEffects < 5
                     && (minigunShotSequence % (minigunSustainSeconds > 1.2 ? 6 : 4) === 0)
                   if (shouldSpawnImpact) {
                     threeRenderer.submitMinigunImpact(worldHit.x, worldHit.z, worldHit.y, 0.065, 0.1)
+                    minigunFrameImpactEffects += 1
+                  }
+                } else if (terrainGroundHit) {
+                  audio.reportMinigunSuppressionImpact({
+                    worldX: terrainGroundHit.x,
+                    worldY: terrainGroundHit.y,
+                    worldZ: terrainGroundHit.z,
+                    listenerX: player.x,
+                    listenerY: player.y,
+                    listenerAngle: player.angle,
+                    surfaceMaterial: resolveWorldSurfaceMaterial(terrainGroundHit.x, terrainGroundHit.y),
+                    isEnemyImpact: false,
+                    isPlayerEngagedTarget: false
+                  })
+                  const shouldSpawnImpact = minigunFrameImpactEffects < 5
+                    && (minigunShotSequence % (minigunSustainSeconds > 1.2 ? 6 : 4) === 0)
+                  if (shouldSpawnImpact) {
+                    threeRenderer.submitMinigunImpact(terrainGroundHit.x, terrainGroundHit.z, terrainGroundHit.y, 0.065, 0.1)
                     minigunFrameImpactEffects += 1
                   }
                 }

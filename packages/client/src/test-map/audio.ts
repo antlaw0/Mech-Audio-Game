@@ -23,6 +23,8 @@ import { type SpatialAudioEmitter, createSharedSpatialAudioScene } from './spati
 import type {
   AudioCategory,
   AudioController,
+  ImpactAudioOptions,
+  MinigunSuppressionImpactEvent,
   FrontBackSpatialDiagnostics,
   FrontBackSpatialSettings,
   AudioVolumeChannel,
@@ -41,6 +43,7 @@ import type {
   WorldPosition
 } from './types.js'
 import { findNearestDropEdgeContact, getTopSurfaceHeight, type WorldCollisionWorld } from './world-collision.js'
+import { SURFACE_MATERIAL, resolveWorldSurfaceMaterial, type SurfaceMaterial } from './surface-material.js'
 
 const AUDIO_BROWSER_DEBUG_LOGS_ENABLED = false
 
@@ -57,6 +60,75 @@ function audioDebugWarn(...args: unknown[]): void {
   } // end if browser debug logs are disabled
   console.warn(...args)
 } // end function audioDebugWarn
+
+const MATERIAL_IMPACT_SOUND_PATHS: Readonly<Record<SurfaceMaterial, readonly string[]>> = {
+  dirt: [
+    'assets/sounds/bulletHitsDirt1.ogg',
+    'assets/sounds/bulletHitsDirt2.ogg',
+    'assets/sounds/bulletHitsDirt3.ogg'
+  ],
+  stone: [
+    'assets/sounds/bullethitsstone1.ogg',
+    'assets/sounds/bullethitsstone2.ogg',
+    'assets/sounds/bullethitsstone3.ogg'
+  ],
+  wood: [
+    'assets/sounds/bullethitswood1.ogg',
+    'assets/sounds/bullethitswood2.ogg',
+    'assets/sounds/bullethitswood3.ogg',
+    'assets/sounds/bullethitswood4.ogg'
+  ],
+  water: [
+    'assets/sounds/bulletHitsWater1.ogg',
+    'assets/sounds/BulletHitsWater2.ogg',
+    'assets/sounds/bulletHitsWater3.ogg',
+    'assets/sounds/BulletHitsWater4.ogg'
+  ],
+  metal: [
+    'assets/sounds/ricMetal1.ogg',
+    'assets/sounds/ricMetal2.ogg',
+    'assets/sounds/ricMetal3.ogg',
+    'assets/sounds/ricMetal4.ogg',
+    'assets/sounds/ricMetal5.ogg'
+  ],
+  energy: ['assets/sounds/energy.ogg'],
+  shield: ['assets/sounds/energy.ogg'],
+  flesh: ['assets/sounds/damageSmall1.ogg', 'assets/sounds/damageSmall2.ogg'],
+  unknown: ['assets/sounds/tankHit.ogg']
+}
+
+const MATERIAL_IMPACT_PROJECTILE_GAIN_SCALE: Readonly<Partial<Record<SurfaceMaterial, number>>> = {
+  dirt: 2.1
+}
+
+const MATERIAL_IMPACT_PROJECTILE_PRIORITY_BOOST: Readonly<Partial<Record<SurfaceMaterial, number>>> = {
+  dirt: 0.22
+}
+
+const SUPPRESSION_LOOP_BY_MATERIAL: Readonly<Partial<Record<SurfaceMaterial, string>>> = {
+  dirt: 'assets/sounds/dirt_suppression_loop.ogg',
+  stone: 'assets/sounds/stone_suppression_loop.ogg',
+  wood: 'assets/sounds/wood_suppression_loop.ogg',
+  metal: 'assets/sounds/metal_suppression_loop.ogg'
+}
+
+const IMPACT_VOICE_POOL_SIZE = 6
+const PROJECTILE_IMPACT_GLOBAL_GAIN = 2.2
+const PROJECTILE_IMPACT_GAIN_COMPENSATION_MIN_DISTANCE = 6
+const PROJECTILE_IMPACT_GAIN_COMPENSATION_MAX_DISTANCE = 72
+const PROJECTILE_IMPACT_GAIN_COMPENSATION_MAX_GAIN = 2.4
+const IMPACT_CLUSTER_RADIUS = 2.6
+const IMPACT_CLUSTER_RETENTION_SECONDS = 0.45
+const IMPACT_DENSITY_WINDOW_SECONDS = 1
+const IMPACT_DENSITY_WINDOW_LIMIT = 28
+const MAX_IMPACT_CLUSTERS = 48
+const MAX_SUPPRESSION_REGIONS = 6
+const SUPPRESSION_REGION_MERGE_RADIUS = 6.5
+const SUPPRESSION_REGION_SCORE_ACTIVATION = 6
+const SUPPRESSION_REGION_SCORE_DECAY_PER_SECOND = 2.2
+const SUPPRESSION_REGION_IDLE_FADE_SECONDS = 0.24
+const SUPPRESSION_REGION_ACTIVE_FADE_SECONDS = 0.12
+const SUPPRESSION_REGION_IDLE_TIMEOUT_SECONDS = 0.34
 
 interface EnemySoundSet {
   idleLoop: Tone.Player
@@ -121,6 +193,42 @@ interface IncomingProjectileVoice {
   gain: Tone.Gain
   emitter: SpatialAudioEmitter
 } // end interface IncomingProjectileVoice
+
+interface MaterialImpactVoicePool {
+  material: SurfaceMaterial
+  emitter: SpatialAudioEmitter
+  gain: Tone.Gain
+  voices: Tone.Player[]
+  cursor: number
+} // end interface MaterialImpactVoicePool
+
+interface ImpactClusterState {
+  x: number
+  y: number
+  lastTimeSeconds: number
+  recentCount: number
+} // end interface ImpactClusterState
+
+interface SuppressionRegionRuntime {
+  id: string
+  material: SurfaceMaterial
+  emitter: SpatialAudioEmitter
+  gain: Tone.Gain
+  filter: Tone.Filter
+  loopPlayer: Tone.Player | null
+  loopPath: string
+  loopLoaded: boolean
+  loopLoadingPromise: Promise<void> | null
+  active: boolean
+  score: number
+  impactsThisWindow: number
+  centroidX: number
+  centroidY: number
+  centroidZ: number
+  lastImpactTimeSeconds: number
+  lastAccentTimeSeconds: number
+  nextOcclusionImportance: number
+} // end interface SuppressionRegionRuntime
 
 interface CardinalHeadingCue {
   id: 'north' | 'east' | 'south' | 'west'
@@ -710,7 +818,26 @@ export function createAudioController(): AudioController {
   let radarDetectionTremoloStarted = false
   let lastImpactTimeSeconds = -1
   let lastTankHitConfirmTimeSeconds = -1
+  let suppressedImpactCount = 0
+  let voicePriorityDrops = 0
+  let impactPlaybackWindowSeconds = 0
+  let impactPlaybackCountWindow = 0
+  let impactPlaybackDensityPerSecond = 0
   let suppressObjectNavigationIndicators = false
+  const impactClusters: ImpactClusterState[] = []
+  const materialHitCounts: Record<SurfaceMaterial, number> = {
+    dirt: 0,
+    stone: 0,
+    wood: 0,
+    metal: 0,
+    water: 0,
+    energy: 0,
+    shield: 0,
+    flesh: 0,
+    unknown: 0
+  }
+  const suppressionRegions: SuppressionRegionRuntime[] = []
+  const materialImpactPools = new Map<SurfaceMaterial, MaterialImpactVoicePool>()
   const movementSemanticState: {
     initialized: boolean
     activeMode: PlayerMobilityType
@@ -1113,15 +1240,69 @@ export function createAudioController(): AudioController {
   servoAudio.loop = true
   servoAudio.volume = AUDIO_CONFIG.player.servoVolume
 
-  const impactEmitter = createWorldEmitter(1, 96)
-
+  const impactFallbackEmitter = createWorldEmitter(2.5, 220)
   const impactSynth = new Tone.MetalSynth({
     envelope: { attack: 0.001, decay: 0.16, release: 0.25 },
     harmonicity: 5.1,
     modulationIndex: 14,
     resonance: 2800,
     octaves: 1.2
-  }).connect(impactEmitter.input)
+  }).connect(impactFallbackEmitter.input)
+
+  const createImpactVoicePool = (material: SurfaceMaterial): MaterialImpactVoicePool => {
+    const emitter = createWorldEmitter(2.5, 260)
+    const gain = new Tone.Gain(0.001).connect(emitter.input)
+    const candidates = MATERIAL_IMPACT_SOUND_PATHS[material]
+    const voices: Tone.Player[] = Array.from({ length: IMPACT_VOICE_POOL_SIZE }, (_, voiceIndex) => {
+      const clip = candidates[voiceIndex % Math.max(1, candidates.length)] ?? MATERIAL_IMPACT_SOUND_PATHS.unknown[0]!
+      return new Tone.Player(clip).connect(gain)
+    })
+    return {
+      material,
+      emitter,
+      gain,
+      voices,
+      cursor: 0
+    }
+  }
+
+  const ensureImpactPool = (material: SurfaceMaterial): MaterialImpactVoicePool => {
+    const existing = materialImpactPools.get(material)
+    if (existing) {
+      return existing
+    }
+    const created = createImpactVoicePool(material)
+    materialImpactPools.set(material, created)
+    return created
+  }
+
+  const createSuppressionRegionRuntime = (id: string, material: SurfaceMaterial, loopPath: string): SuppressionRegionRuntime => {
+    const emitter = createWorldEmitter(1.5, 130)
+    const gain = new Tone.Gain(0.001).connect(emitter.input)
+    const filter = new Tone.Filter({ type: 'lowpass', frequency: 16000, Q: 0.7 }).connect(gain)
+    const loopPlayer = new Tone.Player(loopPath).connect(filter)
+    loopPlayer.loop = true
+    return {
+      id,
+      material,
+      emitter,
+      gain,
+      filter,
+      loopPlayer,
+      loopPath,
+      loopLoaded: false,
+      loopLoadingPromise: null,
+      active: false,
+      score: 0,
+      impactsThisWindow: 0,
+      centroidX: 0,
+      centroidY: 0,
+      centroidZ: 0,
+      lastImpactTimeSeconds: Number.NEGATIVE_INFINITY,
+      lastAccentTimeSeconds: Number.NEGATIVE_INFINITY,
+      nextOcclusionImportance: 0.1
+    }
+  }
 
   const CARDINAL_HEADING_CUES: readonly CardinalHeadingCue[] = [
     { id: 'north', angle: -Math.PI / 2, path: 'assets/sounds/nav/north.ogg' },
@@ -2666,6 +2847,114 @@ export function createAudioController(): AudioController {
     passiveSweepAngle = normalizeAngle(passiveSweepAngle + stepAngle)
   } // end function runPassiveSweepTick
 
+  const updateSuppressionRegions = (
+    dt: number,
+    player: PlayerAudioState
+  ): Array<{ entityId: string; position: WorldPosition; importance: number }> => {
+    if (suppressionRegions.length <= 0) {
+      return []
+    }
+
+    const now = Tone.now()
+    const occlusionInputs: Array<{ entityId: string; position: WorldPosition; importance: number }> = []
+
+    for (let regionIndex = suppressionRegions.length - 1; regionIndex >= 0; regionIndex -= 1) {
+      const region = suppressionRegions[regionIndex]
+      if (!region) {
+        continue
+      }
+
+      region.score = Math.max(0, region.score - (dt * SUPPRESSION_REGION_SCORE_DECAY_PER_SECOND))
+      region.impactsThisWindow = Math.max(0, region.impactsThisWindow - Math.ceil(dt * 32))
+
+      const timeSinceImpact = now - region.lastImpactTimeSeconds
+      const shouldBeActive = timeSinceImpact <= SUPPRESSION_REGION_IDLE_TIMEOUT_SECONDS
+        && region.score >= SUPPRESSION_REGION_SCORE_ACTIVATION
+
+      if (shouldBeActive) {
+        region.active = true
+        void ensureSuppressionLoopLoaded(region).then(() => {
+          if (!region.loopPlayer || !region.loopLoaded || audioPaused || !isAudioContextRunning()) {
+            return
+          }
+          try {
+            if (region.loopPlayer.state !== 'started') {
+              region.loopPlayer.start()
+            }
+          } catch {
+            // Ignore loop start race.
+          }
+        })
+      } else if (timeSinceImpact > 2.4 && !region.active) {
+        region.emitter.dispose()
+        region.gain.dispose()
+        region.filter.dispose()
+        region.loopPlayer?.dispose()
+        suppressionRegions.splice(regionIndex, 1)
+        continue
+      }
+
+      const blend = clamp(dt * 9.5, 0, 1)
+      const targetX = region.centroidX
+      const targetY = region.centroidY
+      const targetZ = region.centroidZ
+      region.centroidX = (region.centroidX * (1 - blend)) + (targetX * blend)
+      region.centroidY = (region.centroidY * (1 - blend)) + (targetY * blend)
+      region.centroidZ = (region.centroidZ * (1 - blend)) + (targetZ * blend)
+      region.emitter.setPosition(region.centroidX, region.centroidY, Math.max(0, region.centroidZ))
+
+      const distanceToListener = Math.hypot(
+        region.centroidX - player.position.x,
+        region.centroidY - player.position.y,
+        region.centroidZ - player.position.z
+      )
+      const distanceGain = clamp(1 - (distanceToListener / 130), 0, 1)
+      const scoreGain = clamp((region.score - SUPPRESSION_REGION_SCORE_ACTIVATION) / 9, 0, 1)
+      const suppressionGain = shouldBeActive
+        ? clamp(objectsVolume * (0.16 + (scoreGain * 0.38)) * (0.24 + (distanceGain * 0.76)), 0.001, 0.85)
+        : 0.001
+
+      region.gain.gain.rampTo(
+        suppressionGain,
+        shouldBeActive ? SUPPRESSION_REGION_ACTIVE_FADE_SECONDS : SUPPRESSION_REGION_IDLE_FADE_SECONDS
+      )
+
+      if (!shouldBeActive && region.loopPlayer?.state === 'started') {
+        try {
+          region.loopPlayer.stop()
+        } catch {
+          // Ignore loop stop race.
+        }
+        region.active = false
+      }
+
+      if (region.active) {
+        occlusionInputs.push({
+          entityId: region.id,
+          position: {
+            x: region.centroidX,
+            y: region.centroidY,
+            z: Math.max(0, region.centroidZ)
+          },
+          importance: clamp(region.nextOcclusionImportance * (0.35 + (distanceGain * 0.65)), 0.12, 1)
+        })
+      }
+    }
+
+    return occlusionInputs
+  }
+
+  const applySuppressionOcclusion = (): void => {
+    for (const region of suppressionRegions) {
+      if (!region.active) {
+        continue
+      }
+      const occlusionAmount = audioOcclusionSystem.getOcclusionAmount(region.id)
+      const lowpassHz = 16000 + ((4200 - 16000) * clamp(occlusionAmount, 0, 1))
+      region.filter.frequency.rampTo(lowpassHz, 0.12)
+    }
+  }
+
   const updateFrameAudio = (
     dt: number,
     player: PlayerAudioState,
@@ -2735,6 +3024,8 @@ export function createAudioController(): AudioController {
       (nearestDropEdgeContact !== null && nearestDropEdgeContact.distance <= AUDIO_NAVIGATION_CONFIG.sonarSilenceDistance)
     )
 
+    const suppressionOcclusionInputs = updateSuppressionRegions(dt, player)
+
     audioOcclusionSystem.update({
       dtSeconds: dt,
       world: collisionWorld,
@@ -2743,22 +3034,27 @@ export function createAudioController(): AudioController {
         y: player.position.y,
         z: player.position.z
       },
-      emitters: enemies
-        .filter((enemy) => enemy.isAlive)
-        .map((enemy) => {
-          const distance = Math.hypot(
-            enemy.position.x - player.position.x,
-            enemy.position.y - player.position.y,
-            enemy.position.z - player.position.z
-          )
+      emitters: [
+        ...enemies
+          .filter((enemy) => enemy.isAlive)
+          .map((enemy) => {
+            const distance = Math.hypot(
+              enemy.position.x - player.position.x,
+              enemy.position.y - player.position.y,
+              enemy.position.z - player.position.z
+            )
 
-          return {
-            entityId: enemy.id,
-            position: enemy.position,
-            importance: clamp(1 - (distance / 52), 0.12, 1)
-          }
-        })
+            return {
+              entityId: enemy.id,
+              position: enemy.position,
+              importance: clamp(1 - (distance / 52), 0.12, 1)
+            }
+          }),
+        ...suppressionOcclusionInputs
+      ]
     })
+
+    applySuppressionOcclusion()
 
     const liveEnemyIds = new Set<string>()
     for (const enemy of enemies) {
@@ -3581,22 +3877,321 @@ export function createAudioController(): AudioController {
     playerX: number,
     playerY: number,
     playerAngle: number,
-    timeOffsetSeconds = 0
+    timeOffsetSeconds = 0,
+    options?: ImpactAudioOptions
   ): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     } // end if audio not started
 
     const now = Tone.now()
-    if (lastImpactTimeSeconds >= 0 && (now - lastImpactTimeSeconds) < 0.012) {
-      return
-    } // end if impacts are being emitted too densely
-    lastImpactTimeSeconds = now
+    const source = options?.source ?? 'projectile'
+    const material = options?.surfaceMaterial ?? resolveWorldSurfaceMaterial(worldX, worldY)
+    if (source !== 'minigun' && source !== 'suppressionAccent') {
+      materialHitCounts[material] = (materialHitCounts[material] ?? 0) + 1
+    }
 
-    impactEmitter.setPosition(worldX, worldY, 0)
-    impactSynth.volume.value = gainToDbSafe(objectsVolume)
-    impactSynth.triggerAttackRelease(220, '16n', now + timeOffsetSeconds)
+    for (let clusterIndex = impactClusters.length - 1; clusterIndex >= 0; clusterIndex -= 1) {
+      const cluster = impactClusters[clusterIndex]
+      if (!cluster || (now - cluster.lastTimeSeconds) <= IMPACT_CLUSTER_RETENTION_SECONDS) {
+        continue
+      }
+      impactClusters.splice(clusterIndex, 1)
+    }
+
+    let nearestCluster: ImpactClusterState | null = null
+    let nearestClusterDistance = Number.POSITIVE_INFINITY
+    for (const cluster of impactClusters) {
+      const distance = Math.hypot(cluster.x - worldX, cluster.y - worldY)
+      if (distance < IMPACT_CLUSTER_RADIUS && distance < nearestClusterDistance) {
+        nearestCluster = cluster
+        nearestClusterDistance = distance
+      }
+    }
+
+    if (!nearestCluster) {
+      if (impactClusters.length >= MAX_IMPACT_CLUSTERS) {
+        impactClusters.shift()
+      }
+      nearestCluster = {
+        x: worldX,
+        y: worldY,
+        lastTimeSeconds: now,
+        recentCount: 0
+      }
+      impactClusters.push(nearestCluster)
+    }
+
+    nearestCluster.x = (nearestCluster.x * 0.7) + (worldX * 0.3)
+    nearestCluster.y = (nearestCluster.y * 0.7) + (worldY * 0.3)
+    nearestCluster.lastTimeSeconds = now
+    nearestCluster.recentCount = Math.min(32, nearestCluster.recentCount + 1)
+
+    const listenerDistance = Math.hypot(worldX - playerX, worldY - playerY)
+    const distancePriority = clamp(1 - (listenerDistance / 80), 0, 1)
+    const clusterPenalty = clamp((nearestCluster.recentCount - 3) / 18, 0, 1)
+    const sourcePriority = source === 'suppressionAccent'
+      ? 0.45
+      : source === 'minigun'
+        ? 0.38
+        : source === 'explosion'
+          ? 1
+          : 0.7
+    const targetPriority = options?.isPlayerEngagedTarget ? 0.3 : 0
+    const enemyPriority = options?.isEnemyImpact ? 0.2 : 0
+    const priorityBoost = clamp(options?.priorityBoost ?? 0, 0, 1)
+    const materialPriorityBoost = source === 'projectile'
+      ? clamp(MATERIAL_IMPACT_PROJECTILE_PRIORITY_BOOST[material] ?? 0, 0, 0.5)
+      : 0
+    const priorityScore = clamp(
+      distancePriority + sourcePriority + targetPriority + enemyPriority + priorityBoost + materialPriorityBoost - (clusterPenalty * 0.65),
+      0,
+      1.5
+    )
+
+    if (impactPlaybackWindowSeconds <= 0) {
+      impactPlaybackWindowSeconds = now
+    }
+    const playbackWindowElapsed = now - impactPlaybackWindowSeconds
+    if (playbackWindowElapsed >= IMPACT_DENSITY_WINDOW_SECONDS) {
+      impactPlaybackDensityPerSecond = impactPlaybackCountWindow / playbackWindowElapsed
+      impactPlaybackCountWindow = 0
+      impactPlaybackWindowSeconds = now
+    }
+
+    const underHardLimit = impactPlaybackCountWindow < IMPACT_DENSITY_WINDOW_LIMIT
+    const shouldPlay = underHardLimit && (
+      priorityScore > 0.82
+      || source === 'explosion'
+      || Math.random() < clamp(priorityScore, 0.05, 0.95)
+    )
+
+    if (!shouldPlay) {
+      suppressedImpactCount += 1
+      if (!underHardLimit) {
+        voicePriorityDrops += 1
+      }
+      return
+    }
+
+    if (lastImpactTimeSeconds >= 0 && (now - lastImpactTimeSeconds) < 0.006 && source !== 'explosion') {
+      suppressedImpactCount += 1
+      return
+    }
+    lastImpactTimeSeconds = now
+    impactPlaybackCountWindow += 1
+
+    const pool = ensureImpactPool(material)
+    const voiceCount = Math.max(1, pool.voices.length)
+    const randomVoiceIndex = Math.floor(Math.random() * voiceCount)
+    let voice = pool.voices[randomVoiceIndex] ?? pool.voices[pool.cursor]
+    if (!voice) {
+      voice = pool.voices[0]
+    }
+    pool.cursor = (pool.cursor + 1) % voiceCount
+
+    if (!voice || !voice.loaded) {
+      impactFallbackEmitter.setPosition(worldX, worldY, 0)
+      impactSynth.volume.value = gainToDbSafe(objectsVolume * clamp(0.7 + (priorityScore * 0.22), 0.5, 1.15))
+      impactSynth.triggerAttackRelease(220, '16n', now + timeOffsetSeconds)
+      return
+    }
+
+    const pitchJitter = source === 'minigun'
+      ? (Math.random() * 0.1 - 0.05)
+      : (Math.random() * 0.14 - 0.07)
+    const volumeJitter = source === 'minigun'
+      ? (Math.random() * 0.08 - 0.05)
+      : (Math.random() * 0.12 - 0.06)
+    const sourceGainScale = source === 'suppressionAccent'
+      ? 0.62
+      : source === 'minigun'
+        ? 0.55
+        : 1
+    const projectileGlobalGain = source === 'projectile' ? PROJECTILE_IMPACT_GLOBAL_GAIN : 1
+    const projectileDistanceCompensation = source === 'projectile'
+      ? 1 + (clamp(
+        (listenerDistance - PROJECTILE_IMPACT_GAIN_COMPENSATION_MIN_DISTANCE)
+        / Math.max(0.001, PROJECTILE_IMPACT_GAIN_COMPENSATION_MAX_DISTANCE - PROJECTILE_IMPACT_GAIN_COMPENSATION_MIN_DISTANCE),
+        0,
+        1
+      ) * (PROJECTILE_IMPACT_GAIN_COMPENSATION_MAX_GAIN - 1))
+      : 1
+    const materialProjectileGainScale = source === 'projectile'
+      ? clamp(MATERIAL_IMPACT_PROJECTILE_GAIN_SCALE[material] ?? 1, 0.6, 3)
+      : 1
+
+    pool.emitter.setPosition(worldX, worldY, 0)
+    pool.gain.gain.value = clamp(
+      objectsVolume
+      * sourceGainScale
+      * projectileGlobalGain
+      * projectileDistanceCompensation
+      * materialProjectileGainScale
+      * (0.86 + volumeJitter),
+      0.001,
+      3
+    )
+    setPlaybackRateSafely(voice, 1 + pitchJitter)
+    voice.volume.value = gainToDbSafe(0.94 + volumeJitter)
+
+    try {
+      if (voice.state === 'started') {
+        voice.stop()
+      }
+      voice.start(now + Math.max(0, timeOffsetSeconds))
+    } catch {
+      impactFallbackEmitter.setPosition(worldX, worldY, 0)
+      impactSynth.volume.value = gainToDbSafe(objectsVolume * clamp(0.68 + (priorityScore * 0.25), 0.45, 1.1))
+      impactSynth.triggerAttackRelease(220, '16n', now + timeOffsetSeconds)
+    }
   } // end function playImpact
+
+  let suppressionRegionIdSequence = 0
+
+  const getOrCreateSuppressionRegion = (
+    material: SurfaceMaterial,
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+    now: number
+  ): SuppressionRegionRuntime | null => {
+    const loopPath = SUPPRESSION_LOOP_BY_MATERIAL[material]
+    if (!loopPath) {
+      return null
+    }
+
+    let bestRegion: SuppressionRegionRuntime | null = null
+    let bestDistance = Number.POSITIVE_INFINITY
+    for (const region of suppressionRegions) {
+      if (region.material !== material) {
+        continue
+      }
+      const distance = Math.hypot(region.centroidX - worldX, region.centroidY - worldY)
+      if (distance <= SUPPRESSION_REGION_MERGE_RADIUS && distance < bestDistance) {
+        bestDistance = distance
+        bestRegion = region
+      }
+    }
+
+    if (bestRegion) {
+      return bestRegion
+    }
+
+    if (suppressionRegions.length >= MAX_SUPPRESSION_REGIONS) {
+      suppressionRegions.sort((a, b) => a.lastImpactTimeSeconds - b.lastImpactTimeSeconds)
+      const recycled = suppressionRegions.shift()
+      if (recycled) {
+        try {
+          recycled.loopPlayer?.stop()
+        } catch {
+          // Ignore stop races when reclaiming suppression slots.
+        }
+        recycled.emitter.dispose()
+        recycled.gain.dispose()
+        recycled.filter.dispose()
+        recycled.loopPlayer?.dispose()
+      }
+    }
+
+    const region = createSuppressionRegionRuntime(`suppression-region-${suppressionRegionIdSequence++}`, material, loopPath)
+    region.centroidX = worldX
+    region.centroidY = worldY
+    region.centroidZ = worldZ
+    region.lastImpactTimeSeconds = now
+    suppressionRegions.push(region)
+    return region
+  }
+
+  const ensureSuppressionLoopLoaded = (region: SuppressionRegionRuntime): Promise<void> => {
+    if (!region.loopPlayer) {
+      return Promise.resolve()
+    }
+    if (region.loopLoaded) {
+      return Promise.resolve()
+    }
+    if (region.loopLoadingPromise) {
+      return region.loopLoadingPromise
+    }
+
+    region.loopLoadingPromise = region.loopPlayer.load(region.loopPath)
+      .then(() => {
+        region.loopLoaded = true
+      })
+      .catch((error) => {
+        audioDebugWarn('Failed to load suppression loop.', { regionId: region.id, path: region.loopPath, error })
+      })
+      .finally(() => {
+        region.loopLoadingPromise = null
+      })
+
+    return region.loopLoadingPromise
+  }
+
+  const reportMinigunSuppressionImpact = (event: MinigunSuppressionImpactEvent): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning()) {
+      return
+    }
+
+    const now = Tone.now()
+    const worldZ = event.worldZ ?? 0
+    const material = event.surfaceMaterial
+    materialHitCounts[material] = (materialHitCounts[material] ?? 0) + 1
+    const region = getOrCreateSuppressionRegion(material, event.worldX, event.worldY, worldZ, now)
+
+    if (region) {
+      const impactWeight = 1
+        + (event.isEnemyImpact ? 0.6 : 0)
+        + (event.isPlayerEngagedTarget ? 0.4 : 0)
+      region.score = Math.min(20, region.score + impactWeight)
+      region.impactsThisWindow = Math.min(200, region.impactsThisWindow + 1)
+      region.lastImpactTimeSeconds = now
+      region.nextOcclusionImportance = clamp(0.2 + (region.score * 0.03), 0.15, 1)
+      const centroidBlend = clamp(0.18 + (impactWeight * 0.08), 0.2, 0.45)
+      region.centroidX = (region.centroidX * (1 - centroidBlend)) + (event.worldX * centroidBlend)
+      region.centroidY = (region.centroidY * (1 - centroidBlend)) + (event.worldY * centroidBlend)
+      region.centroidZ = (region.centroidZ * (1 - centroidBlend)) + (worldZ * centroidBlend)
+    }
+
+    const shouldPlayTransient = region === null || region.score < SUPPRESSION_REGION_SCORE_ACTIVATION
+    if (shouldPlayTransient) {
+      playImpact(
+        event.worldX,
+        event.worldY,
+        event.listenerX,
+        event.listenerY,
+        event.listenerAngle,
+        0,
+        {
+          source: 'minigun',
+          surfaceMaterial: material,
+          isEnemyImpact: event.isEnemyImpact,
+          isPlayerEngagedTarget: event.isPlayerEngagedTarget,
+          priorityBoost: event.isEnemyImpact ? 0.15 : 0
+        }
+      )
+      return
+    }
+
+    if ((now - region.lastAccentTimeSeconds) >= 0.12 && Math.random() < 0.22) {
+      region.lastAccentTimeSeconds = now
+      playImpact(
+        event.worldX,
+        event.worldY,
+        event.listenerX,
+        event.listenerY,
+        event.listenerAngle,
+        0,
+        {
+          source: 'suppressionAccent',
+          surfaceMaterial: material,
+          isEnemyImpact: event.isEnemyImpact,
+          isPlayerEngagedTarget: event.isPlayerEngagedTarget,
+          priorityBoost: 0.08
+        }
+      )
+    }
+  }
 
   const startServo = (): void => {
     if (audioPaused || servoPlaying) {
@@ -4176,6 +4771,7 @@ export function createAudioController(): AudioController {
     playTankHitConfirm,
     playTankDeathConfirm,
     playImpact,
+    reportMinigunSuppressionImpact,
     playPlayerMechHit,
     playPlayerHealthStatusTone,
     updatePlayerHealthStatusAudio,
@@ -4214,7 +4810,25 @@ export function createAudioController(): AudioController {
       occlusionEmitters: audioOcclusionSystem.getAllDiagnostics().length,
       minigunLoopNodes: (minigunLoopMode === 'sustain' ? 1 : 0)
         + (minigunSpinUpPlayer.state === 'started' ? 1 : 0)
-        + (minigunSpinDownPlayer.state === 'started' ? 1 : 0)
+        + (minigunSpinDownPlayer.state === 'started' ? 1 : 0),
+      activeSuppressionRegions: suppressionRegions.length,
+      activeSuppressionLoops: suppressionRegions.filter((region) => region.active).length,
+      impactClusterCount: impactClusters.length,
+      suppressedImpacts: suppressedImpactCount,
+      activeImpactEmitters: materialImpactPools.size,
+      impactPlaybackDensityPerSecond,
+      voicePriorityDrops,
+      materialHitCounts: {
+        dirt: materialHitCounts.dirt,
+        stone: materialHitCounts.stone,
+        wood: materialHitCounts.wood,
+        metal: materialHitCounts.metal,
+        water: materialHitCounts.water,
+        energy: materialHitCounts.energy,
+        shield: materialHitCounts.shield,
+        flesh: materialHitCounts.flesh,
+        unknown: materialHitCounts.unknown
+      }
     }),
     updateIncomingProjectileAudio,
     playProjectileNearMiss,

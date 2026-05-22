@@ -1,6 +1,7 @@
 export type PlayerFlightState = 'grounded' | 'ascending' | 'airborne' | 'descending'
 import { type WorldCollisionWorld } from './world-collision.js'
 import type { WeaponMountSlot } from '../data/parts/types.js'
+import type { SurfaceMaterial } from './surface-material.js'
 
 
 export interface Player {
@@ -303,6 +304,7 @@ export interface TargetableEnemyRender {
   y: number
   radius: number
   height: number
+  surfaceMaterial: SurfaceMaterial
   alive: boolean
 } // end interface TargetableEnemyRender
 
@@ -317,11 +319,34 @@ export interface CombatEnemyRender extends TargetableEnemyRender {
   health: number
   maxHealth: number
   explosionIntensity: number
+  surfaceMaterial: SurfaceMaterial
   positionalLoopSound?: string
   loopSoundPauseIntervalMs?: number
   loopSoundMaxDistance?: number
   stopLoopSoundWhileStationary?: boolean
 } // end interface CombatEnemyRender
+
+export type ImpactSourceType = 'projectile' | 'minigun' | 'suppressionAccent' | 'explosion'
+
+export interface ImpactAudioOptions {
+  surfaceMaterial?: SurfaceMaterial
+  source?: ImpactSourceType
+  isEnemyImpact?: boolean
+  isPlayerEngagedTarget?: boolean
+  priorityBoost?: number
+} // end interface ImpactAudioOptions
+
+export interface MinigunSuppressionImpactEvent {
+  worldX: number
+  worldY: number
+  worldZ?: number
+  listenerX: number
+  listenerY: number
+  listenerAngle: number
+  surfaceMaterial: SurfaceMaterial
+  isEnemyImpact?: boolean
+  isPlayerEngagedTarget?: boolean
+} // end interface MinigunSuppressionImpactEvent
 
 export interface IncomingProjectileAudioState {
   id: number
@@ -408,7 +433,16 @@ export interface AudioController {
   emitEnvironmentalSonar: (echoes: SonarEcho[]) => void
   playTankHitConfirm: (worldX: number, worldY: number, playerX: number, playerY: number, playerAngle: number) => void
   playTankDeathConfirm: (worldX: number, worldY: number, playerX: number, playerY: number, playerAngle: number) => void
-  playImpact: (worldX: number, worldY: number, playerX: number, playerY: number, playerAngle: number, timeOffsetSeconds?: number) => void
+  playImpact: (
+    worldX: number,
+    worldY: number,
+    playerX: number,
+    playerY: number,
+    playerAngle: number,
+    timeOffsetSeconds?: number,
+    options?: ImpactAudioOptions
+  ) => void
+  reportMinigunSuppressionImpact: (event: MinigunSuppressionImpactEvent) => void
   playPlayerMechHit: () => void
   updateIncomingProjectileAudio: (projectiles: IncomingProjectileAudioState[], playerX: number, playerY: number, playerAngle: number) => void
   playProjectileNearMiss: (
@@ -480,5 +514,13 @@ export interface AudioController {
     activeEnemyRuntimes: number
     occlusionEmitters: number
     minigunLoopNodes: number
+    activeSuppressionRegions: number
+    activeSuppressionLoops: number
+    impactClusterCount: number
+    suppressedImpacts: number
+    activeImpactEmitters: number
+    impactPlaybackDensityPerSecond: number
+    voicePriorityDrops: number
+    materialHitCounts: Record<SurfaceMaterial, number>
   }
 } // end interface AudioController

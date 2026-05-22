@@ -22,7 +22,7 @@ import {
 import {
   hasWorldLineOfSight3D,
   isPlayerBlocked,
-  isWorldBlockedAtHeight,
+  traceWorldHit3D,
   type WorldCollisionWorld
 } from './world-collision.js'
 import {
@@ -33,6 +33,7 @@ import {
 import type { EnemyDefinitionConfig, EnemyId } from './enemies/enemyTypes.js'
 import type { AudioController, Bullet, EnemyRender, IncomingProjectileAudioState, Player, CombatEnemyRender, TrailPoint } from './types.js'
 import { getLayoutIdForEntityType } from './target-layout.js'
+import { SURFACE_MATERIAL, resolveWorldSurfaceMaterial } from './surface-material.js'
 
 function getAutomaticFireDefinition(definition: unknown): EnemyDefinitionConfig['automaticFire'] {
   if (typeof definition !== 'object' || definition === null || !('automaticFire' in definition)) {
@@ -854,7 +855,8 @@ export function applyDirectHitscanDamage(
   entity: number,
   rawDamage: number,
   audio: AudioController,
-  player: Player
+  player: Player,
+  suppressHitConfirm = false
 ): {
   appliedDamage: number
   killed: boolean
@@ -879,7 +881,7 @@ export function applyDirectHitscanDamage(
   Health.hp[entity] = (Health.hp[entity] ?? 0) - appliedDamage
   const killed = (Health.hp[entity] ?? 0) <= 0
 
-  if (kind === KIND_TANK) {
+  if (kind === KIND_TANK && !suppressHitConfirm) {
     audio.playTankHitConfirm(targetX, targetY, player.x, player.y, player.angle)
   }
 
@@ -1334,7 +1336,20 @@ export function stepCombatEcsWorld(
       audio.playPlayerMechHit()
     } // end if player was inside explosion radius
 
-    audio.playImpact(worldX, worldY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
+    audio.playImpact(
+      worldX,
+      worldY,
+      player.x,
+      player.y,
+      player.angle,
+      impactFrameCount * IMPACT_STAGGER_SECONDS,
+      {
+        source: 'explosion',
+        surfaceMaterial: resolveWorldSurfaceMaterial(worldX, worldY),
+        isEnemyImpact: true,
+        priorityBoost: 0.35
+      }
+    )
     audio.playExplosion(worldX, worldY, player.x, player.y, player.angle, sounds)
     impactFrameCount++
     Meta.alive[entity] = 0
@@ -1445,7 +1460,19 @@ export function stepCombatEcsWorld(
         const hitX = currentX + cosA * step * hitFraction
         const hitY = currentY + sinA * step * hitFraction
         Meta.alive[entity] = 0
-        audio.playImpact(hitX, hitY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
+        audio.playImpact(
+          hitX,
+          hitY,
+          player.x,
+          player.y,
+          player.angle,
+          impactFrameCount * IMPACT_STAGGER_SECONDS,
+          {
+            source: 'projectile',
+            surfaceMaterial: resolveWorldSurfaceMaterial(hitX, hitY),
+            isEnemyImpact: false
+          }
+        )
         impactFrameCount++
         continue
       } // end if floor or ceiling impact
@@ -1454,12 +1481,30 @@ export function stepCombatEcsWorld(
         continue
       } // end if max distance reached
     }
-    if (isWorldBlockedAtHeight(collisionWorld, nextX, nextY, nextHeight, Math.max(0.02, bulletRadius * 0.55))) {
+    const worldHit = traceWorldHit3D(
+      collisionWorld,
+      { x: currentX, y: currentY, z: currentHeight },
+      { x: nextX, y: nextY, z: nextHeight },
+      Math.max(0.02, bulletRadius * 0.55)
+    )
+    if (worldHit) {
       if (kind === KIND_MISSILE) {
-        triggerMissileExplosion(entity, nextX, nextY, Math.max(0, nextHeight))
+        triggerMissileExplosion(entity, worldHit.x, worldHit.y, Math.max(0, worldHit.z))
       } else {
         Meta.alive[entity] = 0
-        audio.playImpact(nextX, nextY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
+        audio.playImpact(
+          worldHit.x,
+          worldHit.y,
+          player.x,
+          player.y,
+          player.angle,
+          impactFrameCount * IMPACT_STAGGER_SECONDS,
+          {
+            source: 'projectile',
+            surfaceMaterial: resolveWorldSurfaceMaterial(worldHit.x, worldHit.y, worldHit.obstacleType),
+            isEnemyImpact: (ProjectileStats.owner[entity] ?? 0) !== PROJECTILE_OWNER_PLAYER
+          }
+        )
         impactFrameCount++
       } // end if missile or non-missile world collision
       continue
@@ -1487,7 +1532,21 @@ export function stepCombatEcsWorld(
           Meta.alive[entity] = 0
           const projectileDamage = getNumber(ProjectileStats.damage, entity) ?? 10
           applyDirectFireDamageToTankCore(tank, projectileDamage)
-          audio.playImpact(targetX, targetY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
+          audio.playImpact(
+            targetX,
+            targetY,
+            player.x,
+            player.y,
+            player.angle,
+            impactFrameCount * IMPACT_STAGGER_SECONDS,
+            {
+              source: 'projectile',
+              surfaceMaterial: SURFACE_MATERIAL.metal,
+              isEnemyImpact: true,
+              isPlayerEngagedTarget: true,
+              priorityBoost: 0.25
+            }
+          )
           impactFrameCount++
           audio.playTankHitConfirm(targetX, targetY, player.x, player.y, player.angle)
 
@@ -1597,7 +1656,20 @@ export function stepCombatEcsWorld(
         ProjectileStats.nearMissPlayed[entity] = 1
         const impactX = currentX + ((nextX - currentX) * impactFraction)
         const impactY = currentY + ((nextY - currentY) * impactFraction)
-        audio.playImpact(impactX, impactY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
+        audio.playImpact(
+          impactX,
+          impactY,
+          player.x,
+          player.y,
+          player.angle,
+          impactFrameCount * IMPACT_STAGGER_SECONDS,
+          {
+            source: 'projectile',
+            surfaceMaterial: SURFACE_MATERIAL.metal,
+            isEnemyImpact: true,
+            priorityBoost: 0.2
+          }
+        )
         impactFrameCount++
         audio.playPlayerMechHit()
         continue
@@ -1727,6 +1799,7 @@ export function getCombatRenderState(world: CombatEcsWorld): {
         y,
         radius,
         height: 0,
+        surfaceMaterial: SURFACE_MATERIAL.metal,
         alive: true
       })
       continue
@@ -1774,6 +1847,7 @@ export function getCombatRenderState(world: CombatEcsWorld): {
       health: Math.max(0, hp),
       maxHealth: profile.maxHp,
       alive,
+      surfaceMaterial: SURFACE_MATERIAL.metal,
       explosionIntensity: !alive && explosionMaxDuration > 0
         ? Math.max(0, Math.min(1, explosionTimeRemaining / explosionMaxDuration))
         : 0,
