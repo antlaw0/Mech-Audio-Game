@@ -35,18 +35,70 @@ const createInstanceId = (): string => {
   return `part-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
+const isSwappableWeaponDefinition = (definition: PartDefinition): boolean => {
+  return (definition.category === 'HandWeapon' || definition.category === 'ShoulderWeapon')
+    && !definition.deprecated
+    && !definition.isPassive
+}
+
+const mergeWeaponAuthoritativeSeedFields = (
+  mergedDefinition: PartDefinition,
+  seedDefinition: PartDefinition | undefined
+): PartDefinition => {
+  if (!seedDefinition || !isSwappableWeaponDefinition(seedDefinition)) {
+    return mergedDefinition
+  }
+
+  // Weapon stats/sounds in parts.json are authoritative on each load.
+  return {
+    ...mergedDefinition,
+    damagePerShot: seedDefinition.damagePerShot,
+    fireRateCooldownSeconds: seedDefinition.fireRateCooldownSeconds,
+    projectileCount: seedDefinition.projectileCount,
+    projectileType: seedDefinition.projectileType,
+    spreadDegrees: seedDefinition.spreadDegrees,
+    bulletSpeed: seedDefinition.bulletSpeed,
+    clipSize: seedDefinition.clipSize,
+    fireSound: seedDefinition.fireSound,
+    reloadSound: seedDefinition.reloadSound,
+    damageType: seedDefinition.damageType,
+    firingMode: seedDefinition.firingMode,
+    lockboxWidth: seedDefinition.lockboxWidth,
+    lockboxHeight: seedDefinition.lockboxHeight,
+    effectiveRange: seedDefinition.effectiveRange,
+    ammoConsumedPerShot: seedDefinition.ammoConsumedPerShot,
+    energyPerShot: seedDefinition.energyPerShot,
+    accuracy: seedDefinition.accuracy,
+    stability: seedDefinition.stability,
+    heatGeneration: seedDefinition.heatGeneration,
+    energyDrain: seedDefinition.energyDrain,
+    passiveBonuses: Array.isArray(seedDefinition.passiveBonuses) ? [...seedDefinition.passiveBonuses] : [],
+    activeAbilities: Array.isArray(seedDefinition.activeAbilities) ? [...seedDefinition.activeAbilities] : [],
+    specialEffects: Array.isArray(seedDefinition.specialEffects) ? [...seedDefinition.specialEffects] : []
+  }
+}
+
 const normalizeDefinition = (definition: PartDefinition): PartDefinition => {
   const seedDefinition = seedCatalogById.get(definition.id)
   const mergedDefinition = {
     ...(seedDefinition ?? {}),
     ...definition
   } as PartDefinition
+  const normalizedDefinition = mergeWeaponAuthoritativeSeedFields(mergedDefinition, seedDefinition)
+
+  const normalizedSpreadDegrees =
+    (normalizedDefinition.category === 'HandWeapon' || normalizedDefinition.category === 'ShoulderWeapon')
+    && !normalizedDefinition.isMelee
+    && Math.max(1, Math.round(normalizedDefinition.projectileCount ?? 1)) <= 1
+      ? 0
+      : normalizedDefinition.spreadDegrees
 
   return {
-    ...mergedDefinition,
-    passiveBonuses: Array.isArray(mergedDefinition.passiveBonuses) ? [...mergedDefinition.passiveBonuses] : [],
-    activeAbilities: Array.isArray(mergedDefinition.activeAbilities) ? [...mergedDefinition.activeAbilities] : [],
-    specialEffects: Array.isArray(mergedDefinition.specialEffects) ? [...mergedDefinition.specialEffects] : []
+    ...normalizedDefinition,
+    spreadDegrees: normalizedSpreadDegrees,
+    passiveBonuses: Array.isArray(normalizedDefinition.passiveBonuses) ? [...normalizedDefinition.passiveBonuses] : [],
+    activeAbilities: Array.isArray(normalizedDefinition.activeAbilities) ? [...normalizedDefinition.activeAbilities] : [],
+    specialEffects: Array.isArray(normalizedDefinition.specialEffects) ? [...normalizedDefinition.specialEffects] : []
   }
 }
 
@@ -90,7 +142,14 @@ export const loadPartCatalog = (): PartDefinition[] => {
   if (!Array.isArray(stored) || stored.length === 0) {
     return seedCatalog.map(normalizeDefinition)
   }
-  return stored.map(normalizeDefinition)
+
+  const normalizedStored = stored.map(normalizeDefinition)
+  const knownIds = new Set(normalizedStored.map((entry) => entry.id))
+  const missingSeedEntries = seedCatalog
+    .filter((seedEntry) => !knownIds.has(seedEntry.id))
+    .map((seedEntry) => normalizeDefinition(seedEntry))
+
+  return [...normalizedStored, ...missingSeedEntries]
 }
 
 export const savePartCatalog = (catalog: PartDefinition[]): void => {
@@ -121,6 +180,7 @@ const createSeedInstances = (): { inventory: PartInstance[]; loadout: MechLoadou
     Computer: 'basic.computer',
     Core: 'basic.exoshell',
     Generator: 'basic.generator',
+    ThermalRegulator: 'basic.thermal',
     LeftArm: 'basic.left-arm',
     RightArm: 'basic.right-arm',
     Utility1: 'basic.utility1',
@@ -137,6 +197,7 @@ const createSeedInstances = (): { inventory: PartInstance[]; loadout: MechLoadou
     'tactical.computer',
     'heavy.exoshell',
     'high.output.generator',
+    'overclocked.thermal',
     'reinforced.left-arm',
     'stabilized.right-arm',
     'sensor.utility1',
@@ -195,6 +256,22 @@ const createSeedInstances = (): { inventory: PartInstance[]; loadout: MechLoadou
     })
   })
 
+  const ownedDefinitionIds = new Set(inventory.map((entry) => entry.definitionId))
+  for (const definition of seedCatalog) {
+    if (!isSwappableWeaponDefinition(definition) || ownedDefinitionIds.has(definition.id)) {
+      continue
+    }
+    inventory.push({
+      instanceId: createInstanceId(),
+      definitionId: definition.id,
+      currentIntegrity: definition.integrity,
+      modifiers: [],
+      installedChips: [],
+      rngSeed: Math.floor(Math.random() * 1_000_000)
+    })
+    ownedDefinitionIds.add(definition.id)
+  }
+
   return { inventory, loadout }
 }
 
@@ -228,7 +305,7 @@ export const loadGarageInventory = (catalog: PartDefinition[]): { inventory: Par
     .filter((entry): entry is PartInstance => entry !== null)
 
   const loadout: MechLoadout = {}
-  for (const category of ['Head', 'Computer', 'Core', 'Generator', 'LeftArm', 'RightArm', 'Utility1', 'Utility2'] as const) {
+  for (const category of ['Head', 'Computer', 'Core', 'Generator', 'ThermalRegulator', 'LeftArm', 'RightArm', 'Utility1', 'Utility2'] as const) {
     const instanceId = storedLoadout[category]
     if (typeof instanceId === 'string' && normalizedInventory.some((entry) => entry.instanceId === instanceId)) {
       loadout[category] = instanceId
@@ -239,6 +316,47 @@ export const loadGarageInventory = (catalog: PartDefinition[]): { inventory: Par
     if (typeof instanceId === 'string' && normalizedInventory.some((entry) => entry.instanceId === instanceId)) {
       loadout[slot] = instanceId
     }
+  }
+
+  const thermalInstances = normalizedInventory.filter((entry) => {
+    const definition = catalog.find((candidate) => candidate.id === entry.definitionId)
+    return definition?.category === 'ThermalRegulator'
+  })
+  if (thermalInstances.length === 0) {
+    const defaultThermal = catalog.find((entry) => entry.id === 'basic.thermal' && entry.category === 'ThermalRegulator')
+    if (defaultThermal) {
+      const thermalInstanceId = createInstanceId()
+      normalizedInventory.push({
+        instanceId: thermalInstanceId,
+        definitionId: defaultThermal.id,
+        currentIntegrity: defaultThermal.integrity,
+        modifiers: [],
+        installedChips: [],
+        rngSeed: Math.floor(Math.random() * 1_000_000)
+      })
+      loadout.ThermalRegulator = thermalInstanceId
+    }
+  } else if (!loadout.ThermalRegulator) {
+    const firstThermal = thermalInstances[0]
+    if (firstThermal) {
+      loadout.ThermalRegulator = firstThermal.instanceId
+    }
+  }
+
+  const ownedDefinitionIds = new Set(normalizedInventory.map((entry) => entry.definitionId))
+  for (const definition of catalog) {
+    if (!isSwappableWeaponDefinition(definition) || ownedDefinitionIds.has(definition.id)) {
+      continue
+    }
+    normalizedInventory.push({
+      instanceId: createInstanceId(),
+      definitionId: definition.id,
+      currentIntegrity: definition.integrity,
+      modifiers: [],
+      installedChips: [],
+      rngSeed: Math.floor(Math.random() * 1_000_000)
+    })
+    ownedDefinitionIds.add(definition.id)
   }
 
   return { inventory: normalizedInventory, loadout }

@@ -29,6 +29,7 @@ export interface InputState {
   turnRight: boolean
   lookUp: boolean
   lookDown: boolean
+  subsystemSelectModifier: boolean
   pitchResetPending: boolean
   fireHeld: boolean
   firePending: boolean
@@ -206,6 +207,7 @@ export interface TargetLockState {
   targetScore: number
   retainedTargetId: number | null
   retentionActive: boolean
+  selectedSubsystem: string | null
 } // end interface TargetLockState
 
 export interface WeaponStats {
@@ -221,6 +223,8 @@ export interface WeaponStats {
   lockOnRange: number
   /** Hit damage applied per shot. */
   damagePerShot: number
+  /** Movement accuracy mitigation multiplier. Higher values reduce movement-induced inaccuracy. */
+  stability: number
   /** Number of projectiles fired simultaneously for each shot. */
   projectileCount: number
   /** Half-angle of the per-projectile spread cone in degrees. */
@@ -293,6 +297,8 @@ export interface TargetableEnemyRender {
   id: number
   enemyClass: string
   enemyType: string
+  /** Ticket 23A: layout used for subsystem targeting navigation. */
+  layoutId: import('./target-layout.js').TargetLayoutId
   x: number
   y: number
   radius: number
@@ -467,4 +473,8 @@ export interface AudioController {
   getFrontBackSettings: () => FrontBackSpatialSettings
   getFrontBackDiagnostics: (emitterId: string) => FrontBackSpatialDiagnostics | null
   getAllFrontBackDiagnostics: () => FrontBackSpatialDiagnostics[]
+  getAudioDiagnostics: () => {
+    activeEnemyRuntimes: number
+    occlusionEmitters: number
+  }
 } // end interface AudioController

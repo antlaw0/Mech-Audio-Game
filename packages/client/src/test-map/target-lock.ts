@@ -3,10 +3,12 @@ import { hasWorldLineOfSight3D, type WorldCollisionWorld } from './world-collisi
 import type { Player, TargetLockState, TargetableEnemyRender } from './types.js'
 
 const TARGET_LOCK_HYSTERESIS_THRESHOLD = 0.08
-const BASE_LOCK_GAIN_PER_SECOND = 34
+const BASE_LOCK_REFINEMENT_RATE = 12
 const BASE_LOCK_DECAY_PER_SECOND = 21
 const BRONZE_LOCK_ENTRY_PROGRESS = 2
 const LOCK_MAX_PROGRESS = 100
+const ECM_INTERFERENCE_MIN_OBSTRUCTION = 0.0001
+const LOCK_CENTER_FACTOR_EXPONENT = 2
 
 const LOCK_LEVEL_CAP_PROGRESS: Readonly<Record<LockLevel, number>> = {
   Bronze: 24,
@@ -69,22 +71,25 @@ function getTargetMovementPenalty(target: LockableTarget): number {
   return clamp01(1 - Math.min(1, speed / 9))
 }
 
-function computeLockGainPerSecond(
-  alignment: number,
-  distanceWeight: number,
-  targetMovementPenalty: number,
+function computeLockRefinementPerSecond(
+  centerFactor: number,
+  distanceFactor: number,
+  stabilityFactor: number,
   targetEcmResistanceFactor: number,
   modifiers: TargetLockModifiers
 ): number {
-  const gainMultiplier =
+  const systemMultiplier =
     modifiers.headLockAcquisition
-    * modifiers.headTrackingStability
     * modifiers.computerProcessorSpeed
     * modifiers.chipLockMultiplier
     * modifiers.lockGainMultiplier
     * targetEcmResistanceFactor
-  const geometryFactor = (alignment * 0.52) + (distanceWeight * 0.25) + (targetMovementPenalty * 0.23)
-  return BASE_LOCK_GAIN_PER_SECOND * gainMultiplier * clamp01(geometryFactor)
+
+  return BASE_LOCK_REFINEMENT_RATE
+    * systemMultiplier
+    * Math.pow(clamp01(centerFactor), LOCK_CENTER_FACTOR_EXPONENT)
+    * clamp01(distanceFactor)
+    * clamp01(stabilityFactor)
 }
 
 function computeLockDecayPerSecond(modifiers: TargetLockModifiers): number {
@@ -105,6 +110,7 @@ function computeTargetScore(
   verticalAlignment: number
   crosshairAlignment: number
   distanceWeight: number
+  centerFactor: number
 } {
   const dx = target.x - player.x
   const dy = target.y - player.y
@@ -129,6 +135,17 @@ function computeTargetScore(
   const pitchDelta = desiredPitch - player.pitch
   const verticalAlignment = maxVerticalPitch <= 0 ? 0 : clamp01(1 - (Math.abs(pitchDelta) / maxVerticalPitch))
 
+  // Normalize target position within outer lockbox to [-1, 1] on each axis.
+  const normalizedX = maxHorizontalAngle <= 0
+    ? 0
+    : Math.max(-1, Math.min(1, angleDelta / maxHorizontalAngle))
+  const normalizedY = maxVerticalPitch <= 0
+    ? 0
+    : Math.max(-1, Math.min(1, pitchDelta / maxVerticalPitch))
+
+  const centerDistance = Math.hypot(normalizedX, normalizedY)
+  const centerFactor = 1 - clamp01(centerDistance)
+
   const crosshairAlignment = (horizontalAlignment + verticalAlignment) / 2
   const distanceWeight = clamp01(1 - (dist / Math.max(1, lockOnRange)))
   const targetSizeWeight = clamp01(target.radius / 1.5)
@@ -138,7 +155,8 @@ function computeTargetScore(
     horizontalAlignment,
     verticalAlignment,
     crosshairAlignment,
-    distanceWeight
+    distanceWeight,
+    centerFactor
   }
 } // end function computeTargetScore
 
@@ -148,7 +166,8 @@ export function createTargetLockState(): TargetLockState {
     lockProgress: 0,
     targetScore: 0,
     retainedTargetId: null,
-    retentionActive: false
+    retentionActive: false,
+    selectedSubsystem: null
   } // end object target lock state
 } // end function createTargetLockState
 
@@ -202,7 +221,9 @@ export function updateTargetLock(
     crosshairAlignment: number
     distanceWeight: number
     movementPenalty: number
+    centerFactor: number
     ecmResistanceFactor: number
+    ecmInterferenceActive: boolean
   }
 
   let bestCandidate: Candidate | null = null
@@ -268,6 +289,7 @@ export function updateTargetLock(
     const movementPenalty = getTargetMovementPenalty(target)
     const ecmObstruction = clamp01(target.ecmObstruction ?? 0)
     const ecmResistanceFactor = clamp01(1 - (ecmObstruction * (1 / Math.max(0.0001, resolvedModifiers.ecmResistance))))
+    const ecmInterferenceActive = ecmObstruction >= ECM_INTERFERENCE_MIN_OBSTRUCTION
 
     const candidate: Candidate = {
       target,
@@ -275,7 +297,9 @@ export function updateTargetLock(
       crosshairAlignment: scoreData.crosshairAlignment,
       distanceWeight: scoreData.distanceWeight,
       movementPenalty,
-      ecmResistanceFactor
+      centerFactor: scoreData.centerFactor,
+      ecmResistanceFactor,
+      ecmInterferenceActive
     }
 
     if (target.id === previousLockedId) {
@@ -307,25 +331,31 @@ export function updateTargetLock(
   const hasLock = newLockedId !== null
   const resolvedScore = Number.isFinite(selectedScore) ? Math.max(0, selectedScore) : 0
 
-  const maxProgress = getMaxProgressForLevel(resolvedModifiers.maxLockLevel)
+  const modifierMaxProgress = getMaxProgressForLevel(resolvedModifiers.maxLockLevel)
   let nextProgress = 0
 
   if (selectedCandidate) {
+    const targetMaxProgress = selectedCandidate.ecmInterferenceActive
+      ? Math.min(modifierMaxProgress, getMaxProgressForLevel('Bronze'))
+      : modifierMaxProgress
     const canResumeRetained = previousLockedId === null && previousRetainedId === selectedCandidate.target.id
     const startsFromPreviousTarget = previousLockedId === selectedCandidate.target.id || canResumeRetained
     const baseProgress = startsFromPreviousTarget ? previousProgress : 0
-    const gainPerSecond = computeLockGainPerSecond(
-      selectedCandidate.crosshairAlignment,
+    const trackingStabilityFactor = clamp01(Math.min(1.5, resolvedModifiers.headTrackingStability) / 1.2)
+    const stabilityFactor = clamp01((selectedCandidate.movementPenalty * 0.8) + (trackingStabilityFactor * 0.2))
+    const refinementRate = computeLockRefinementPerSecond(
+      selectedCandidate.centerFactor,
       selectedCandidate.distanceWeight,
-      selectedCandidate.movementPenalty,
+      stabilityFactor,
       selectedCandidate.ecmResistanceFactor,
       resolvedModifiers
     )
 
-    nextProgress = Math.min(maxProgress, baseProgress + (gainPerSecond * resolvedModifiers.deltaSeconds))
+    nextProgress = Math.min(targetMaxProgress, baseProgress + (refinementRate * resolvedModifiers.deltaSeconds))
     if (baseProgress <= 0) {
       nextProgress = Math.max(BRONZE_LOCK_ENTRY_PROGRESS, nextProgress)
     }
+
     state.retainedTargetId = newLockedId
     state.retentionActive = false
   } else {
@@ -343,7 +373,7 @@ export function updateTargetLock(
   }
 
   state.currentTargetId = newLockedId
-  state.lockProgress = Math.max(0, Math.min(maxProgress, nextProgress))
+  state.lockProgress = Math.max(0, Math.min(modifierMaxProgress, nextProgress))
   state.targetScore = resolvedScore
 
   const justLocked = previousLockedId === null && newLockedId !== null

@@ -3,6 +3,7 @@ export const PART_CATEGORIES = [
   'Computer',
   'Core',
   'Generator',
+  'ThermalRegulator',
   'LeftArm',
   'RightArm',
   'Utility1',
@@ -41,6 +42,8 @@ export type PartDefinition = {
   powerOutput?: number
   heatGeneration?: number
   heatDissipation?: number
+  heatCapacity?: number
+  emergencyCooling?: number
   liftCapacity?: number
   flightType?: string
   rotorCount?: number
@@ -51,7 +54,7 @@ export type PartDefinition = {
   range?: number
   lockOn?: number
   stability?: number
-  meleePower?: number
+  meleeDamage?: number
   accuracy?: number
   sensorStrength?: number
   twoHanded?: boolean
@@ -89,6 +92,7 @@ export type MechLoadout = {
   Computer?: string
   Core?: string
   Generator?: string
+  ThermalRegulator?: string
   LeftArm?: string
   RightArm?: string
   Utility1?: string
@@ -136,6 +140,8 @@ export const PART_DEFINITION_NUMERIC_KEYS = [
   'powerOutput',
   'heatGeneration',
   'heatDissipation',
+  'heatCapacity',
+  'emergencyCooling',
   'liftCapacity',
   'rotorCount',
   'verticalTakeoffTime',
@@ -145,7 +151,7 @@ export const PART_DEFINITION_NUMERIC_KEYS = [
   'range',
   'lockOn',
   'stability',
-  'meleePower',
+  'meleeDamage',
   'accuracy',
   'sensorStrength',
   'damagePerShot',
@@ -168,6 +174,7 @@ export const CATEGORY_LABELS: Record<PartCategory, string> = {
   Computer: 'Computer',
   Core: 'Core',
   Generator: 'Generator',
+  ThermalRegulator: 'Thermal Regulator',
   LeftArm: 'Left Arm',
   RightArm: 'Right Arm',
   Utility1: 'Utility 1',

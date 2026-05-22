@@ -57,6 +57,10 @@ export function bindInput(
     if (!keys[event.code]) {
       keys[event.code] = true
 
+      if (event.code === 'AltLeft' || event.code === 'AltRight') {
+        input.subsystemSelectModifier = true
+      } // end if subsystem selection modifier key pressed
+
       if (event.code === 'KeyW') {
         input.moveForward = true
       } // end if KeyW
@@ -231,6 +235,10 @@ export function bindInput(
     } // end if typing in editable field
 
     keys[event.code] = false
+
+    if (event.code === 'AltLeft' || event.code === 'AltRight') {
+      input.subsystemSelectModifier = !!keys.AltLeft || !!keys.AltRight
+    } // end if subsystem selection modifier key released
 
     if (event.code === 'KeyW') {
       input.moveForward = false

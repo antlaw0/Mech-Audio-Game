@@ -32,6 +32,7 @@ import {
 } from './enemies/index.js'
 import type { EnemyDefinitionConfig, EnemyId } from './enemies/enemyTypes.js'
 import type { AudioController, Bullet, EnemyRender, IncomingProjectileAudioState, Player, CombatEnemyRender, TrailPoint } from './types.js'
+import { getLayoutIdForEntityType } from './target-layout.js'
 
 function getAutomaticFireDefinition(definition: unknown): EnemyDefinitionConfig['automaticFire'] {
   if (typeof definition !== 'object' || definition === null || !('automaticFire' in definition)) {
@@ -73,6 +74,11 @@ export type IncomingDamageType = 'physical' | 'energy' | 'explosive' | 'incoming
 export interface PlayerDamageEvent {
   amount: number
   damageType: IncomingDamageType
+}
+
+export interface CombatSimulationOptions {
+  shouldSimulateTank?: (x: number, y: number) => boolean
+  shouldSimulateProjectile?: (x: number, y: number) => boolean
 }
 
 const Position = defineComponent({
@@ -564,6 +570,7 @@ export function spawnPlayerBullet(
   projectileVisualType: 'bullet' | 'rocket' | 'missile' | 'laserBeam' = 'bullet',
   accuracy = 1,
   playerSpeedFraction = 0,
+  stability = 1,
   projectileCount = 1,
   spreadDegrees = 0
 ): void {
@@ -574,6 +581,7 @@ export function spawnPlayerBullet(
     player.pitch,
     accuracy,
     playerSpeedFraction,
+    stability,
     projectileCount,
     spreadDegrees,
     damage,
@@ -649,6 +657,7 @@ function spawnPlayerProjectileBurst(
   basePitch: number,
   accuracy: number,
   playerSpeedFraction: number,
+  stability: number,
   projectileCount: number,
   spreadDegrees: number,
   damage: number,
@@ -658,8 +667,13 @@ function spawnPlayerProjectileBurst(
   projectileVisualType: 'bullet' | 'rocket' | 'missile' | 'laserBeam'
 ): void {
   const clampedAccuracy = Math.max(0, Math.min(1, accuracy))
+  const clampedSpeedFraction = Math.max(0, Math.min(1, playerSpeedFraction))
+  const clampedStability = Math.max(0.1, stability)
   const baseHalfAngle = WEAPON_MAX_CONE_RADIANS * Math.max(0, 1 - clampedAccuracy)
-  const accuracyHalfAngle = baseHalfAngle * (1 + Math.min(1, playerSpeedFraction) * WEAPON_MOVEMENT_ACCURACY_PENALTY)
+  const movementPenaltyFactor = clampedSpeedFraction <= 0
+    ? 0
+    : clampedSpeedFraction * (WEAPON_MOVEMENT_ACCURACY_PENALTY / clampedStability)
+  const accuracyHalfAngle = baseHalfAngle * (1 + movementPenaltyFactor)
   const accuracyOffset = sampleConeOffset(accuracyHalfAngle)
   const spreadHalfAngle = Math.max(0, spreadDegrees) * (Math.PI / 180)
   const projectileTotal = Math.max(1, Math.round(projectileCount))
@@ -695,6 +709,7 @@ export function spawnPlayerBulletToward(
   targetZ: number,
   accuracy: number,
   playerSpeedFraction: number,
+  stability = 1,
   damage = 10,
   speed = BULLET_SPEED,
   maxDistance = BULLET_MAX_DIST,
@@ -713,6 +728,7 @@ export function spawnPlayerBulletToward(
     basePitch,
     accuracy,
     playerSpeedFraction,
+    stability,
     projectileCount,
     spreadDegrees,
     damage,
@@ -737,7 +753,8 @@ export function spawnPlayerMissile(
   explosionSounds: string[],
   projectileVisualType: 'rocket' | 'missile' = 'missile',
   accuracy = 1,
-  playerSpeedFraction = 0
+  playerSpeedFraction = 0,
+  stability = 1
 ): void {
   const hasValidTarget = targetTankId !== null && (Meta.alive[targetTankId] ?? 0) === 1
   const targetX = hasValidTarget ? (getNumber(Position.x, targetTankId) ?? player.x) : player.x
@@ -748,8 +765,13 @@ export function spawnPlayerMissile(
   const angle = hasValidTarget ? Math.atan2(targetY - player.y, targetX - player.x) : player.angle
   const originHeight = (player.z ?? 0) + PLAYER_HEIGHT
   const clampedAccuracy = Math.max(0, Math.min(1, accuracy))
+  const clampedSpeedFraction = Math.max(0, Math.min(1, playerSpeedFraction))
+  const clampedStability = Math.max(0.1, stability)
   const baseHalfAngle = WEAPON_MAX_CONE_RADIANS * Math.max(0, 1 - clampedAccuracy)
-  const accuracyHalfAngle = baseHalfAngle * (1 + Math.min(1, playerSpeedFraction) * WEAPON_MOVEMENT_ACCURACY_PENALTY)
+  const movementPenaltyFactor = clampedSpeedFraction <= 0
+    ? 0
+    : clampedSpeedFraction * (WEAPON_MOVEMENT_ACCURACY_PENALTY / clampedStability)
+  const accuracyHalfAngle = baseHalfAngle * (1 + movementPenaltyFactor)
   const launchOffset = sampleConeOffset(accuracyHalfAngle)
   const missile = addEntity(world)
   addComponent(world, Position, missile)
@@ -819,6 +841,13 @@ function getPitchToTarget(
   const horizontalDistance = Math.hypot(targetX - originX, targetY - originY)
   return clampProjectilePitch(Math.atan2(originZ - targetZ, Math.max(horizontalDistance, 0.0001)))
 } // end function getPitchToTarget
+
+function applyDirectFireDamageToTankCore(tank: number, rawDamage: number): number {
+  // Ticket 23: direct-fire damage routes to Core while subsystem routing is not yet implemented.
+  const appliedDamage = Math.max(1, Math.round(rawDamage))
+  Health.hp[tank] = (Health.hp[tank] ?? 0) - appliedDamage
+  return appliedDamage
+} // end function applyDirectFireDamageToTankCore
 
 function getFirstContactFraction(
   startX: number,
@@ -946,7 +975,8 @@ export function stepCombatEcsWorld(
   audio: AudioController,
   player: Player,
   deltaSeconds: number,
-  onPlayerDamaged?: (event: PlayerDamageEvent) => void
+  onPlayerDamaged?: (event: PlayerDamageEvent) => void,
+  options?: CombatSimulationOptions
 ): void {
   player.maxHp = Math.max(1, player.maxHp ?? 100)
   player.hp = Math.max(0, Math.min(player.maxHp, player.hp ?? player.maxHp))
@@ -969,6 +999,10 @@ export function stepCombatEcsWorld(
     if (tankX === null || tankY === null || tankHp === undefined) {
       continue
     } // end if tank invalid
+
+    if (options?.shouldSimulateTank && !options.shouldSimulateTank(tankX, tankY)) {
+      continue
+    } // end if tank chunk is not active this frame
 
     if (tankHp <= 0) {
       const timeLeft = TankExplosion.timeRemaining[tank] ?? 0
@@ -1280,6 +1314,11 @@ export function stepCombatEcsWorld(
       continue
     } // end if missing projectile data
 
+    if (options?.shouldSimulateProjectile && !options.shouldSimulateProjectile(currentX, currentY)) {
+      Meta.alive[entity] = 0
+      continue
+    } // end if projectile left streamed simulation region
+
     const speed = getNumber(ProjectileStats.speed, entity) ?? (kind === KIND_TANK_PROJECTILE ? getEnemyDefinition('tank').projectileSpeed : BULLET_SPEED)
     const maxDist = getNumber(ProjectileStats.maxDistance, entity) ?? BULLET_MAX_DIST
     const originHeight = getNumber(ProjectileStats.originHeight, entity) ?? PLAYER_HEIGHT
@@ -1396,7 +1435,7 @@ export function stepCombatEcsWorld(
         if (Math.hypot(dx, dy) < targetRadius + bulletRadius && Math.abs(nextHeight - tankCenterHeight) <= TANK_HIT_HALF_HEIGHT) {
           Meta.alive[entity] = 0
           const projectileDamage = getNumber(ProjectileStats.damage, entity) ?? 10
-          Health.hp[tank] = (Health.hp[tank] ?? 0) - Math.max(1, Math.round(projectileDamage))
+          applyDirectFireDamageToTankCore(tank, projectileDamage)
           audio.playImpact(targetX, targetY, player.x, player.y, player.angle, impactFrameCount * IMPACT_STAGGER_SECONDS)
           impactFrameCount++
           audio.playTankHitConfirm(targetX, targetY, player.x, player.y, player.angle)
@@ -1632,6 +1671,7 @@ export function getCombatRenderState(world: CombatEcsWorld): {
         id: entity,
         enemyClass: 'enemy',
         enemyType: 'enemy',
+        layoutId: getLayoutIdForEntityType('enemy'),
         x,
         y,
         radius,
@@ -1671,6 +1711,7 @@ export function getCombatRenderState(world: CombatEcsWorld): {
       id: tank,
       enemyClass: 'enemy',
       enemyType: profile.id,
+      layoutId: getLayoutIdForEntityType(profile.id),
       x,
       y,
       radius,

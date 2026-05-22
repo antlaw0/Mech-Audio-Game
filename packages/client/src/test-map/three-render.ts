@@ -13,6 +13,7 @@ interface ThreeRendererCreateArgs {
   canvasHeight: number
   mapData: Uint8Array
   sprites: SpriteObject[]
+  chunkSize?: number
 } // end interface ThreeRendererCreateArgs
 
 interface ThreeRenderFrameArgs {
@@ -29,8 +30,20 @@ interface ThreeRenderFrameArgs {
 interface ThreeRenderSystem {
   renderFrame: (args: ThreeRenderFrameArgs) => void
   resize: (canvasWidth: number, canvasHeight: number) => void
+  setChunkVisibility: (activeChunkKeys: readonly string[], dormantChunkKeys: readonly string[]) => void
+  getDiagnostics: () => { drawCalls: number; triangles: number }
   dispose: () => void
 } // end interface ThreeRenderSystem
+
+const DEFAULT_RENDER_CHUNK_SIZE = 32
+
+function toChunkCoord(value: number, chunkSize: number): number {
+  return Math.floor(value / chunkSize)
+}
+
+function toChunkKey(chunkX: number, chunkY: number): string {
+  return `${chunkX},${chunkY}`
+}
 
 function createTreeMesh(radius: number): THREE.Group {
   const group = new THREE.Group()
@@ -166,17 +179,18 @@ function syncPool<T extends THREE.Object3D>(
   factory: () => T
 ): void {
   while (pool.length < targetCount) {
-    const mesh = factory()
-    pool.push(mesh)
-    parent.add(mesh)
+    const obj = factory()
+    obj.visible = false
+    pool.push(obj)
+    parent.add(obj)
   } // end while grow pool
 
-  while (pool.length > targetCount) {
-    const mesh = pool.pop()
-    if (mesh) {
-      parent.remove(mesh)
-    } // end if removed mesh exists
-  } // end while shrink pool
+  for (let i = 0; i < pool.length; i += 1) {
+    const obj = pool[i]
+    if (obj) {
+      obj.visible = i < targetCount
+    }
+  } // end for each pooled object
 } // end function syncPool
 
 function toScreenPoint(vector: THREE.Vector3, width: number, height: number): { x: number; y: number } {
@@ -317,6 +331,7 @@ function drawHudOverlay(
 
 export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): ThreeRenderSystem {
   const { canvas, canvasWidth, canvasHeight, mapData, sprites } = createArgs
+  const chunkSize = Math.max(8, Math.floor(createArgs.chunkSize ?? DEFAULT_RENDER_CHUNK_SIZE))
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false })
   renderer.setSize(canvasWidth, canvasHeight, false)
@@ -361,6 +376,23 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
   })
 
   const wallGeometry = new THREE.BoxGeometry(1, WORLD_WALL_HEIGHT, 1)
+  const staticChunkGroups = new Map<string, THREE.Group>()
+
+  const getOrCreateStaticChunkGroup = (chunkX: number, chunkY: number): THREE.Group => {
+    const key = toChunkKey(chunkX, chunkY)
+    const existing = staticChunkGroups.get(key)
+    if (existing) {
+      return existing
+    }
+
+    const group = new THREE.Group()
+    group.visible = true
+    group.frustumCulled = true
+    staticChunkGroups.set(key, group)
+    scene.add(group)
+    return group
+  }
+
   for (let row = 0; row < MAP_HEIGHT; row += 1) {
     for (let col = 0; col < MAP_WIDTH; col += 1) {
       if (getCell(mapData, col, row) === 0) {
@@ -370,30 +402,34 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
       const boundary = row === 0 || col === 0 || row === MAP_HEIGHT - 1 || col === MAP_WIDTH - 1
       const wall = new THREE.Mesh(wallGeometry, boundary ? boundaryMaterial : wallMaterial)
       wall.position.set(col + 0.5, WORLD_WALL_HEIGHT / 2, row + 0.5)
-      scene.add(wall)
+      const chunkGroup = getOrCreateStaticChunkGroup(toChunkCoord(col, chunkSize), toChunkCoord(row, chunkSize))
+      chunkGroup.add(wall)
     } // end for each column
   } // end for each row
 
-  const decorGroup = new THREE.Group()
-  scene.add(decorGroup)
   for (const sprite of sprites) {
+    const chunkGroup = getOrCreateStaticChunkGroup(
+      toChunkCoord(sprite.x, chunkSize),
+      toChunkCoord(sprite.y, chunkSize)
+    )
+
     if (sprite.type === 'tree') {
       const tree = createTreeMesh(sprite.radius)
       tree.position.set(sprite.x, 0, sprite.y)
-      decorGroup.add(tree)
+      chunkGroup.add(tree)
       continue
     } // end if tree
 
     if (sprite.type === 'pillar') {
       const pillar = createPillarMesh(sprite.radius)
       pillar.position.set(sprite.x, 0, sprite.y)
-      decorGroup.add(pillar)
+      chunkGroup.add(pillar)
       continue
     } // end if pillar
 
     const rock = createRockMesh(sprite.radius)
     rock.position.set(sprite.x, Math.max(0.15, sprite.radius * 0.55), sprite.y)
-    decorGroup.add(rock)
+    chunkGroup.add(rock)
   } // end for each sprite
 
   const enemyGroup = new THREE.Group()
@@ -440,6 +476,18 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
       hudCanvas.height = nextHeight
       hudCanvas.style.left = `${canvas.offsetLeft}px`
       hudCanvas.style.top = `${canvas.offsetTop}px`
+    },
+    setChunkVisibility(activeChunkKeys: readonly string[], dormantChunkKeys: readonly string[]): void {
+      const visibleKeys = new Set<string>([...activeChunkKeys, ...dormantChunkKeys])
+      for (const [key, group] of staticChunkGroups.entries()) {
+        group.visible = visibleKeys.has(key)
+      }
+    },
+    getDiagnostics(): { drawCalls: number; triangles: number } {
+      return {
+        drawCalls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles
+      }
     },
     renderFrame(args: ThreeRenderFrameArgs): void {
       const {
@@ -525,11 +573,17 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
       } // end for each stale tank
 
       const aliveBullets = bullets.filter((bullet) => bullet.alive)
+      const aliveMissileRockets = aliveBullets.filter((b) => b.kind === 'missile' || b.kind === 'rocket')
       syncPool(aliveBullets.length, bulletPool, bulletGroup, createBulletMesh)
-      syncPool(aliveBullets.length, missileTrailPool, missileTrailGroup, createMissileTrailPuffs)
+      syncPool(aliveMissileRockets.length, missileTrailPool, missileTrailGroup, createMissileTrailPuffs)
+      let missileTrailSlot = 0
       for (const [index, bullet] of aliveBullets.entries()) {
         const mesh = bulletPool[index]
-        const trailPuffs = missileTrailPool[index]
+        const isMissileOrRocket = bullet.kind === 'missile' || bullet.kind === 'rocket'
+        const trailPuffs = isMissileOrRocket ? missileTrailPool[missileTrailSlot] : undefined
+        if (isMissileOrRocket) {
+          missileTrailSlot += 1
+        }
         if (!mesh) {
           continue
         } // end if pool mismatch

@@ -34,7 +34,16 @@ import {
   syncDynamicFlightHeights,
   stepCombatEcsWorld
 } from './combat-ecs.js'
-import { createTargetLockState, updateTargetLock, type LockLevel } from './target-lock.js'
+import { createTargetLockState, updateTargetLock, type LockLevel, type TargetLockUpdate } from './target-lock.js'
+import {
+  getAdjacentSubsystem,
+  getExposedSubsystems,
+  getFallbackSubsystem,
+  getTargetLayout,
+  type TargetLayoutDirection,
+  type TargetLayoutEntity,
+  type TargetLayoutId
+} from './target-layout.js'
 import { getEnemyDefinition } from './enemies/index.js'
 import type { EnemyDefinitionConfig, EnemyMovementPattern } from './enemies/enemyTypes.js'
 import type { EnemyId } from './enemies/enemyTypes.js'
@@ -54,7 +63,17 @@ import { createGarageStore } from '../ui/garage/store.js'
 import { createThreeRenderSystem } from './three-render.js'
 import { createUpdateState, updateFrame } from './update.js'
 import { createWorldMapOverlay } from './world-map-overlay.js'
-import { createWorldCollisionWorld, isPlayerBlocked, PLAYER_COLLISION_HEIGHT } from './world-collision.js'
+import {
+  createWorldCollisionWorld,
+  getWorldCollisionDiagnostics,
+  isPlayerBlocked,
+  PLAYER_COLLISION_HEIGHT,
+  resetWorldCollisionFrameMetrics,
+  setWorldCollisionActiveChunks,
+  setWorldCollisionObserverPosition
+} from './world-collision.js'
+import { createWorldStreamingManager } from './world-streaming.js'
+import { createFrameUpdateScheduler } from './update-scheduler.js'
 import type { GarageSnapshot, MechLoadout, PartCategory, PartDefinition, WeaponMountSlot } from '../data/parts/types.js'
 import type { AudioCategory, AudioVolumeChannel } from './types.js'
 import type { WorldPosition } from './types.js'
@@ -114,6 +133,9 @@ interface KnownPoi {
 
 type PauseDebugTabId = 'runtime' | 'events' | 'tuning' | 'loadout'
 type HeatState = 'NORMAL' | 'HOT' | 'CRITICAL' | 'DANGER' | 'OVERHEAT'
+
+const EMERGENCY_COOLING_ENGAGE_RATIO = 0.95
+const EMERGENCY_COOLING_DISENGAGE_RATIO = 0.7
 
 type LoadoutViewId =
   | 'Head'
@@ -370,17 +392,31 @@ function startTestMap(): void {
   const weaponEditorModalElement = document.getElementById('weaponEditorModal')
   const weaponEditorApplyButtonElement = document.getElementById('weaponEditorApplyButton')
   const weaponEditorCancelButtonElement = document.getElementById('weaponEditorCancelButton')
+  const weaponTypeSelect = getSelect('weaponType')
+  const weaponDamageTypeInput = getInput('weaponDamageType')
+  const weaponProjectileTypeSelect = getSelect('weaponProjectileType')
+  const weaponFireSoundPathInput = getInput('weaponFireSoundPath')
   const weaponAccuracyInput = getInput('weaponAccuracy')
+  const weaponStabilityInput = getInput('weaponStability')
   const weaponDamageInput = getInput('weaponDamage')
   const weaponProjectileCountInput = getInput('weaponProjectileCount')
   const weaponSpreadInput = getInput('weaponSpread')
   const weaponBulletSpeedInput = getInput('weaponBulletSpeed')
   const weaponMaxRangeInput = getInput('weaponMaxRange')
+  const weaponProjectileSizeInput = getInput('weaponProjectileSize')
   const weaponFireRateInput = getInput('weaponFireRate')
   const weaponFullAutoInput = getInput('weaponFullAuto')
+  const weaponClipSizeInput = getInput('weaponClipSize')
+  const weaponAmmoResourcePerRoundInput = getInput('weaponAmmoResourcePerRound')
+  const weaponHeatPerShotInput = getInput('weaponHeatPerShot')
+  const weaponEnergyCostPerShotInput = getInput('weaponEnergyCostPerShot')
   const weaponLockOnRangeInput = getInput('weaponLockOnRange')
   const weaponLockOnWindowWidthInput = getInput('weaponLockOnWindowWidth')
   const weaponLockOnWindowHeightInput = getInput('weaponLockOnWindowHeight')
+  const weaponLockOnTimeMsInput = getInput('weaponLockOnTimeMs')
+  const weaponTrackingRatingInput = getInput('weaponTrackingRating')
+  const weaponExplosionRadiusInput = getInput('weaponExplosionRadius')
+  const weaponExplosionDamageInput = getInput('weaponExplosionDamage')
 
   const editorNameInput = getInput('editorName')
   const editorMaxHpInput = getInput('editorMaxHp')
@@ -408,12 +444,27 @@ function startTestMap(): void {
   const mapData = createMapData()
   const sprites = createSprites()
   const collisionWorld = createWorldCollisionWorld(mapData, sprites)
+  const worldStreaming = createWorldStreamingManager({
+    mapData,
+    sprites,
+    mapWidth: MAP_WIDTH,
+    mapHeight: MAP_HEIGHT,
+    config: {
+      chunkSize: 32,
+      activeRadiusChunks: 2,
+      dormantRadiusChunks: 4,
+      maxActivationsPerFrame: 2,
+      maxTransitionsPerFrame: 10
+    }
+  })
+  const updateScheduler = createFrameUpdateScheduler({ frameBudgetMs: 6.25 })
   const threeRenderer = createThreeRenderSystem({
     canvas,
     canvasWidth: currentCanvasWidth,
     canvasHeight: currentCanvasHeight,
     mapData,
-    sprites
+    sprites,
+    chunkSize: 32
   })
 
   const resizeViewport = (): void => {
@@ -504,6 +555,14 @@ function startTestMap(): void {
   let devApproxAcceleration = 0
   let devTargetLockedId: number | null = null
   let devTargetLockedName = 'None'
+  let previousSubsystemTargetId: number | null = null
+  let previousSubsystemNavLeft = false
+  let previousSubsystemNavRight = false
+  let previousSubsystemNavUp = false
+  let previousSubsystemNavDown = false
+  let wasSubsystemSelectionUnlocked = false
+  let lastAnnouncedSubsystemTargetId: number | null = null
+  let lastAnnouncedSubsystemNodeId: string | null = null
   let devLastKnownLockTargetName = 'None'
   let devTargetLockMaxProgress = 100
   let devEnemyCount = 0
@@ -515,6 +574,7 @@ function startTestMap(): void {
   let devHeatMultiplier = 1
   let devEnergyRegenRate = 1
   let devCoolingRate = 1
+  let devEmergencyCoolingActive = false
   let devMovementScale = 1
   let devStaggerScale = 1
   let devTractionMultiplier = 1
@@ -522,6 +582,12 @@ function startTestMap(): void {
   let devAudioPitchScale = 1
   let devAudioVolumeScale = 1
   let devEnergyStarved = false
+  let targetingScheduleEventToken = 0
+  let audioScheduleEventToken = 0
+  let previousTargetingHotState = false
+  let previousTargetCount = 0
+  let targetRefinementSliceCursor = 0
+  let ambienceSliceCursor = 0
 
   const DEV_PART_SLOTS = [
     'Head',
@@ -562,6 +628,7 @@ function startTestMap(): void {
     mobilityType?: string
     heatGeneration?: number
     heatDissipation?: number
+    emergencyCooling?: number
     powerOutput?: number
     ratedLoad?: number
     liftCapacity?: number
@@ -1013,6 +1080,7 @@ function startTestMap(): void {
     input.turnRight = false
     input.lookUp = false
     input.lookDown = false
+    input.subsystemSelectModifier = false
     input.pitchResetPending = false
     input.fireHeld = false
     input.firePending = false
@@ -1095,13 +1163,56 @@ function startTestMap(): void {
     return heatGain
   } // end function applyIncomingDamageHeatGain
 
+  const speakSystemAnnouncement = (message: string): void => {
+    if (runtimeDebugSpeechStatusElement instanceof HTMLElement) {
+      runtimeDebugSpeechStatusElement.textContent = message
+    }
+    if (!('speechSynthesis' in window)) {
+      return
+    }
+    const utterance = new SpeechSynthesisUtterance(message)
+    utterance.rate = 1
+    utterance.pitch = 1
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utterance)
+  } // end function speakSystemAnnouncement
+
+  const updateEmergencyCoolingState = (): void => {
+    const thermalPart = getDevPartState('ThermalRegulator')
+    const emergencyCoolingAvailable = thermalPart.online && thermalPart.integrity > 0
+    const heatRatio = devCurrentHeat / Math.max(1, devMaxHeat)
+    const wasEmergencyCoolingActive = devEmergencyCoolingActive
+
+    if (!emergencyCoolingAvailable) {
+      devEmergencyCoolingActive = false
+    } else if (devEmergencyCoolingActive) {
+      if (heatRatio <= EMERGENCY_COOLING_DISENGAGE_RATIO) {
+        devEmergencyCoolingActive = false
+      }
+    } else if (heatRatio >= EMERGENCY_COOLING_ENGAGE_RATIO) {
+      devEmergencyCoolingActive = true
+    }
+
+    if (devEmergencyCoolingActive !== wasEmergencyCoolingActive) {
+      if (devEmergencyCoolingActive) {
+        nextEventTag('Emergency cooling engaged')
+        speakSystemAnnouncement('Emergency Cooling Engaged')
+      } else {
+        nextEventTag('Emergency cooling disengaged')
+        speakSystemAnnouncement('Emergency Cooling disengaged')
+      }
+    }
+  } // end function updateEmergencyCoolingState
+
   const getPassiveCoolingRatePerSecond = (): number => {
     const thermalPart = getDevPartState('ThermalRegulator')
     if (!thermalPart.online || thermalPart.integrity <= 0) {
       return 0
     }
 
-    const baseCooling = Math.max(0, thermalPart.heatDissipation ?? 0)
+    const baseCooling = devEmergencyCoolingActive
+      ? Math.max(0, thermalPart.emergencyCooling ?? 0)
+      : Math.max(0, thermalPart.heatDissipation ?? 0)
     return baseCooling * Math.max(0, devCoolingRate)
   } // end function getPassiveCoolingRatePerSecond
 
@@ -1482,6 +1593,7 @@ function startTestMap(): void {
       '',
       `Max Heat: ${formatLoadoutNumber(stats.maxHeat)}`,
       `Cooling Rate: ${formatLoadoutNumber(getPassiveCoolingRatePerSecond(), 2)}`,
+      `Emergency Cooling: ${devEmergencyCoolingActive ? 'ENGAGED' : 'STANDBY'}`,
       '',
       `Mobility Type: ${movementProfile.mobilityType}`,
       '',
@@ -1532,6 +1644,12 @@ function startTestMap(): void {
     }
     if (part.heatDissipation !== undefined) {
       lines.push(`Heat Dissipation: ${formatLoadoutNumber(part.heatDissipation, 2)}`)
+    }
+    if (part.heatCapacity !== undefined) {
+      lines.push(`Max Heat: ${formatLoadoutNumber(part.heatCapacity, 1)}`)
+    }
+    if (part.emergencyCooling !== undefined) {
+      lines.push(`Emergency Cooling: ${formatLoadoutNumber(part.emergencyCooling, 2)}`)
     }
     if (part.powerOutput !== undefined) {
       lines.push(`Power Output: ${formatLoadoutNumber(part.powerOutput, 1)}`)
@@ -1876,50 +1994,79 @@ function startTestMap(): void {
   } // end function setWeaponEditorModalVisible
 
   const populateWeaponEditorForm = (stats: WeaponStats): void => {
+    if (weaponTypeSelect) weaponTypeSelect.value = playerWeapon.weaponType
+    if (weaponDamageTypeInput) weaponDamageTypeInput.value = playerWeapon.damageType
+    if (weaponProjectileTypeSelect) weaponProjectileTypeSelect.value = playerWeapon.projectileType
+    if (weaponFireSoundPathInput) weaponFireSoundPathInput.value = playerWeapon.fireSoundPath
     if (weaponAccuracyInput) weaponAccuracyInput.value = String(stats.accuracy)
+    if (weaponStabilityInput) weaponStabilityInput.value = String(stats.stability)
     if (weaponDamageInput) weaponDamageInput.value = String(stats.damagePerShot)
     if (weaponProjectileCountInput) weaponProjectileCountInput.value = String(stats.projectileCount)
     if (weaponSpreadInput) weaponSpreadInput.value = String(stats.spreadDegrees)
     if (weaponBulletSpeedInput) weaponBulletSpeedInput.value = String(stats.bulletSpeed)
     if (weaponMaxRangeInput) weaponMaxRangeInput.value = String(stats.maxRange)
-    if (weaponFireRateInput) weaponFireRateInput.value = String(stats.fireRateCooldownSeconds)
+    if (weaponProjectileSizeInput) weaponProjectileSizeInput.value = String(stats.projectileSize)
+    if (weaponFireRateInput) weaponFireRateInput.value = String(Math.round(stats.fireRateCooldownSeconds * 1000))
     if (weaponFullAutoInput) weaponFullAutoInput.checked = stats.isFullAuto
+    if (weaponClipSizeInput) weaponClipSizeInput.value = String(stats.clipSize)
+    if (weaponAmmoResourcePerRoundInput) weaponAmmoResourcePerRoundInput.value = String(stats.ammoResourcePerRound)
+    if (weaponHeatPerShotInput) weaponHeatPerShotInput.value = stats.heatPerShot === undefined ? '' : String(stats.heatPerShot)
+    if (weaponEnergyCostPerShotInput) weaponEnergyCostPerShotInput.value = stats.energyCostPerShot === undefined ? '' : String(stats.energyCostPerShot)
     if (weaponLockOnRangeInput) weaponLockOnRangeInput.value = String(stats.lockOnRange)
     if (weaponLockOnWindowWidthInput) weaponLockOnWindowWidthInput.value = String(stats.lockOnWindowWidthPercent)
     if (weaponLockOnWindowHeightInput) weaponLockOnWindowHeightInput.value = String(stats.lockOnWindowHeightPercent)
+    if (weaponLockOnTimeMsInput) weaponLockOnTimeMsInput.value = String(stats.lockOnTimeMs)
+    if (weaponTrackingRatingInput) weaponTrackingRatingInput.value = String(stats.trackingRating)
+    if (weaponExplosionRadiusInput) weaponExplosionRadiusInput.value = String(stats.explosionRadius)
+    if (weaponExplosionDamageInput) weaponExplosionDamageInput.value = String(stats.explosionDamage)
   } // end function populateWeaponEditorForm
 
-  const readWeaponEditorForm = (): WeaponStats => {
+  const readWeaponEditorForm = (): PlayerWeaponDefinition => {
     const parseNum = (input: HTMLInputElement | null, fallback: number): number => {
       if (!input) return fallback
       const val = parseFloat(input.value)
       return isFinite(val) ? val : fallback
     } // end function parseNum
+    const parseOptionalNum = (input: HTMLInputElement | null): number | undefined => {
+      if (!input) return undefined
+      const trimmedValue = input.value.trim()
+      if (trimmedValue.length === 0) {
+        return undefined
+      }
+      const parsedValue = parseFloat(trimmedValue)
+      return isFinite(parsedValue) ? parsedValue : undefined
+    } // end function parseOptionalNum
     return {
-      weaponType: playerWeapon.weaponType,
-      damageType: playerWeapon.damageType,
-      projectileType: playerWeapon.projectileType,
+      id: playerWeapon.id,
+      name: playerWeapon.name,
+      selectionKey: playerWeapon.selectionKey,
+      fireSoundPath: weaponFireSoundPathInput?.value.trim() || playerWeapon.fireSoundPath,
+      weaponType: (weaponTypeSelect?.value as PlayerWeaponDefinition['weaponType']) ?? playerWeapon.weaponType,
+      damageType: weaponDamageTypeInput?.value.trim() || playerWeapon.damageType,
+      projectileType: (weaponProjectileTypeSelect?.value as PlayerWeaponDefinition['projectileType']) ?? playerWeapon.projectileType,
       accuracy: Math.max(0.01, Math.min(1, parseNum(weaponAccuracyInput, playerWeapon.accuracy))),
+      stability: Math.max(0.1, parseNum(weaponStabilityInput, playerWeapon.stability)),
       damagePerShot: Math.max(1, Math.round(parseNum(weaponDamageInput, playerWeapon.damagePerShot))),
       projectileCount: Math.max(1, Math.round(parseNum(weaponProjectileCountInput, playerWeapon.projectileCount))),
       spreadDegrees: Math.max(0, parseNum(weaponSpreadInput, playerWeapon.spreadDegrees)),
       bulletSpeed: Math.max(1, parseNum(weaponBulletSpeedInput, playerWeapon.bulletSpeed)),
       maxRange: Math.max(1, parseNum(weaponMaxRangeInput, playerWeapon.maxRange)),
       isFullAuto: weaponFullAutoInput?.checked ?? playerWeapon.isFullAuto,
-      fireRateCooldownSeconds: Math.max(0, parseNum(weaponFireRateInput, playerWeapon.fireRateCooldownSeconds)),
-      projectileSize: Math.max(0.03, playerWeapon.projectileSize),
+      fireRateCooldownSeconds: Math.max(0, parseNum(weaponFireRateInput, playerWeapon.fireRateCooldownSeconds * 1000) / 1000),
+      projectileSize: Math.max(0.03, parseNum(weaponProjectileSizeInput, playerWeapon.projectileSize)),
       lockOnRange: Math.max(1, parseNum(weaponLockOnRangeInput, playerWeapon.lockOnRange)),
       lockOnWindowWidthPercent: Math.max(0, Math.min(100, Math.round(parseNum(weaponLockOnWindowWidthInput, playerWeapon.lockOnWindowWidthPercent)))),
       lockOnWindowHeightPercent: Math.max(0, Math.min(100, Math.round(parseNum(weaponLockOnWindowHeightInput, playerWeapon.lockOnWindowHeightPercent)))),
-      lockOnTimeMs: playerWeapon.lockOnTimeMs,
-      trackingRating: playerWeapon.trackingRating,
-      explosionRadius: playerWeapon.explosionRadius,
-      explosionDamage: playerWeapon.explosionDamage,
+      lockOnTimeMs: Math.max(0, Math.round(parseNum(weaponLockOnTimeMsInput, playerWeapon.lockOnTimeMs))),
+      trackingRating: Math.max(0, Math.min(1, parseNum(weaponTrackingRatingInput, playerWeapon.trackingRating))),
+      explosionRadius: Math.max(0, parseNum(weaponExplosionRadiusInput, playerWeapon.explosionRadius)),
+      explosionDamage: Math.max(0, Math.round(parseNum(weaponExplosionDamageInput, playerWeapon.explosionDamage))),
       explosionSounds: [...playerWeapon.explosionSounds],
-      clipSize: playerWeapon.clipSize,
+      clipSize: Math.max(0, Math.round(parseNum(weaponClipSizeInput, playerWeapon.clipSize))),
       ammoInClip: playerWeapon.ammoInClip,
-      ammoResourcePerRound: playerWeapon.ammoResourcePerRound,
-      energyCostPerShot: playerWeapon.energyCostPerShot,
+      ammoResourcePerRound: Math.max(0, Math.round(parseNum(weaponAmmoResourcePerRoundInput, playerWeapon.ammoResourcePerRound))),
+      heatPerShot: parseOptionalNum(weaponHeatPerShotInput),
+      energyCostPerShot: parseOptionalNum(weaponEnergyCostPerShotInput),
       reloadDefinition: {
         timeline: playerWeapon.reloadDefinition.timeline.map((segment) => ({ ...segment })),
         servoLoopSoundPath: playerWeapon.reloadDefinition.servoLoopSoundPath,
@@ -1932,7 +2079,7 @@ function startTestMap(): void {
     populateWeaponEditorForm(playerWeapon)
     setWeaponEditorModalVisible(true)
     isWeaponEditorOpen = true
-    weaponAccuracyInput?.focus()
+    weaponTypeSelect?.focus()
   } // end function openWeaponEditor
 
   const closeWeaponEditor = (): void => {
@@ -2087,15 +2234,46 @@ function startTestMap(): void {
   bindInput(input, audio, () => isPaused || isWeaponEditorOpen || isConsoleOpen || isNavigationMenuOpen || isWorldMapVisible)
 
   const primeAudioFromUserGesture = (): void => {
-    const unlock = (): void => {
-      void audio.ensureAudio().catch(() => undefined)
+    const removeUnlockListeners = (): void => {
       document.removeEventListener('pointerdown', unlock)
       document.removeEventListener('keydown', unlock)
       document.removeEventListener('touchstart', unlock)
+      document.removeEventListener('mousedown', unlock)
+      document.removeEventListener('wheel', unlock)
+      window.removeEventListener('focus', attemptAutostart)
+      window.removeEventListener('pageshow', attemptAutostart)
+      document.removeEventListener('visibilitychange', attemptVisibilityAutostart)
+    } // end function removeUnlockListeners
+
+    const attemptAutostart = (): void => {
+      void audio.ensureAudio().then(() => {
+        if (audio.isAudioStarted()) {
+          removeUnlockListeners()
+        }
+      }).catch(() => undefined)
+    } // end function attemptAutostart
+
+    const attemptVisibilityAutostart = (): void => {
+      if (document.visibilityState === 'visible') {
+        attemptAutostart()
+      }
+    } // end function attemptVisibilityAutostart
+
+    const unlock = (): void => {
+      attemptAutostart()
     }
+
+    // Best-effort startup on refresh/tab focus. Some browsers will still require a user gesture.
+    attemptAutostart()
+    window.addEventListener('focus', attemptAutostart)
+    window.addEventListener('pageshow', attemptAutostart)
+    document.addEventListener('visibilitychange', attemptVisibilityAutostart)
+
     document.addEventListener('pointerdown', unlock, { passive: true })
     document.addEventListener('keydown', unlock)
     document.addEventListener('touchstart', unlock, { passive: true })
+    document.addEventListener('mousedown', unlock, { passive: true })
+    document.addEventListener('wheel', unlock, { passive: true })
   } // end function primeAudioFromUserGesture
 
   primeAudioFromUserGesture()
@@ -2416,16 +2594,44 @@ function startTestMap(): void {
   spawnEnemyAtPosition(combatWorld, 268, 496, 'striker')
 
   const targetLockState = createTargetLockState()
+  let latestLockUpdate: TargetLockUpdate = {
+    justLocked: false,
+    justLost: false,
+    switchedTarget: false,
+    lockedTarget: null,
+    currentTargetId: null,
+    lockProgress: 0,
+    targetScore: 0
+  }
+  let latestCombatRender = getCombatRenderState(combatWorld)
   const resetTargetLockState = (): void => {
     targetLockState.currentTargetId = null
     targetLockState.lockProgress = 0
     targetLockState.targetScore = 0
     targetLockState.retainedTargetId = null
     targetLockState.retentionActive = false
+    targetLockState.selectedSubsystem = null
+    previousSubsystemTargetId = null
+    previousSubsystemNavLeft = false
+    previousSubsystemNavRight = false
+    previousSubsystemNavUp = false
+    previousSubsystemNavDown = false
+    wasSubsystemSelectionUnlocked = false
+    lastAnnouncedSubsystemTargetId = null
+    lastAnnouncedSubsystemNodeId = null
     devTargetLockedId = null
     devTargetLockedName = 'None'
     devLastKnownLockTargetName = 'None'
     devTargetLockMaxProgress = 100
+    latestLockUpdate = {
+      justLocked: false,
+      justLost: false,
+      switchedTarget: false,
+      lockedTarget: null,
+      currentTargetId: null,
+      lockProgress: 0,
+      targetScore: 0
+    }
     audio.resetTargetLockProgressAudio()
   } // end function resetTargetLockState
 
@@ -2449,6 +2655,24 @@ function startTestMap(): void {
       y: worldOriginY - centeredY
     } // end object map coordinates
   } // end function centeredToMapCoordinates
+
+  const sliceWrapped = <T,>(items: T[], cursor: number, maxItems: number): { slice: T[]; nextCursor: number } => {
+    if (items.length <= 0 || maxItems <= 0) {
+      return { slice: [], nextCursor: 0 }
+    }
+
+    const clampedStart = ((Math.floor(cursor) % items.length) + items.length) % items.length
+    const count = Math.max(1, Math.min(items.length, Math.floor(maxItems)))
+    const next: T[] = []
+    for (let i = 0; i < count; i += 1) {
+      next.push(items[(clampedStart + i) % items.length]!)
+    }
+
+    return {
+      slice: next,
+      nextCursor: (clampedStart + count) % items.length
+    }
+  } // end function sliceWrapped
 
   const applySharedFlightHeight = (value: number): number => {
     const nextHeight = setSharedFlightHeight(value)
@@ -2562,6 +2786,29 @@ function startTestMap(): void {
     window.speechSynthesis.cancel()
     window.speechSynthesis.speak(utterance)
   } // end function announceBlockedAction
+
+  const formatSubsystemSpeechLabel = (nodeId: string): string => {
+    return nodeId
+      .replace(/_/g, ' ')
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .trim()
+  } // end function formatSubsystemSpeechLabel
+
+  const announceSelectedSubsystem = (nodeId: string): void => {
+    if (!('speechSynthesis' in window)) {
+      return
+    } // end if speech synthesis unavailable
+
+    const label = formatSubsystemSpeechLabel(nodeId)
+    if (runtimeDebugSpeechStatusElement instanceof HTMLElement) {
+      runtimeDebugSpeechStatusElement.textContent = `Target subsystem: ${label}`
+    } // end if screen-reader status element exists
+    const utterance = new SpeechSynthesisUtterance(label)
+    utterance.rate = 1
+    utterance.pitch = 1
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utterance)
+  } // end function announceSelectedSubsystem
 
   const speakPercent = (label: string, value: number, maxValue: number): void => {
     if (!('speechSynthesis' in window)) {
@@ -2777,6 +3024,7 @@ function startTestMap(): void {
       mobilityType: typeof safeSource.mobilityType === 'string' ? safeSource.mobilityType : undefined,
       heatGeneration: safeSource.heatGeneration === undefined ? undefined : readNumber(safeSource.heatGeneration, 0),
       heatDissipation: safeSource.heatDissipation === undefined ? undefined : readNumber(safeSource.heatDissipation, 0),
+      emergencyCooling: safeSource.emergencyCooling === undefined ? undefined : readNumber(safeSource.emergencyCooling, 0),
       powerOutput: safeSource.powerOutput === undefined ? undefined : readNumber(safeSource.powerOutput, 0),
       ratedLoad: safeSource.ratedLoad === undefined ? undefined : readNumber(safeSource.ratedLoad, 0),
       liftCapacity: safeSource.liftCapacity === undefined ? undefined : readNumber(safeSource.liftCapacity, 0),
@@ -3233,6 +3481,7 @@ function startTestMap(): void {
     Computer: 'Computer',
     Core: 'ExoShell',
     Generator: 'Generator',
+    ThermalRegulator: 'ThermalRegulator',
     LeftArm: 'LeftArm',
     RightArm: 'RightArm',
     Utility1: 'Utility1',
@@ -3240,7 +3489,7 @@ function startTestMap(): void {
   }
 
   const getManagedGarageCategories = (): Array<keyof MechLoadout & PartCategory> => {
-    return ['Head', 'Computer', 'Core', 'Generator', 'LeftArm', 'RightArm', 'Utility1', 'Utility2'] as (keyof MechLoadout & PartCategory)[]
+    return ['Head', 'Computer', 'Core', 'Generator', 'ThermalRegulator', 'LeftArm', 'RightArm', 'Utility1', 'Utility2'] as (keyof MechLoadout & PartCategory)[]
   } // end function getManagedGarageCategories
 
   const getManagedGarageWeight = (snapshot: GarageSnapshot): number => {
@@ -3309,6 +3558,8 @@ function startTestMap(): void {
         energyCapacity: resolved.energyCapacity,
         heatGeneration: resolved.heatGeneration,
         heatDissipation: resolved.heatDissipation,
+        heatCapacity: resolved.heatCapacity,
+        emergencyCooling: resolved.emergencyCooling,
         powerOutput: resolved.powerOutput,
         liftCapacity: resolved.liftCapacity,
         flightType: resolved.flightType,
@@ -3474,6 +3725,60 @@ function startTestMap(): void {
     return 100
   } // end function getLockMaxProgressForLevel
 
+  const getLockLevelFromProgress = (lockProgress: number): LockLevel => {
+    if (lockProgress >= 85) {
+      return 'Platinum'
+    }
+    if (lockProgress >= 60) {
+      return 'Gold'
+    }
+    if (lockProgress >= 25) {
+      return 'Silver'
+    }
+    return 'Bronze'
+  } // end function getLockLevelFromProgress
+
+  const getInitialSelectedSubsystem = (entity: TargetLayoutEntity): string | null => {
+    const layout = getTargetLayout(entity)
+    if (layout === null) {
+      return null
+    } // end if layout is unavailable
+
+    const exposedNodes = getExposedSubsystems(entity)
+    if (exposedNodes.length <= 0) {
+      return null
+    } // end if no exposed subsystem node exists
+
+    if (exposedNodes.some((node) => node.nodeId === layout.defaultNode)) {
+      return layout.defaultNode
+    } // end if default node is exposed
+
+    const fallbackNode = getFallbackSubsystem(entity)
+    if (fallbackNode !== null && exposedNodes.some((node) => node.nodeId === fallbackNode.nodeId)) {
+      return fallbackNode.nodeId
+    } // end if fallback node is exposed
+
+    return exposedNodes[0]?.nodeId ?? null
+  } // end function getInitialSelectedSubsystem
+
+  const resolveValidSelectedSubsystem = (entity: TargetLayoutEntity, selectedSubsystem: string | null): string | null => {
+    const exposedNodes = getExposedSubsystems(entity)
+    if (exposedNodes.length <= 0) {
+      return null
+    } // end if no exposed subsystem node exists
+
+    if (selectedSubsystem !== null && exposedNodes.some((node) => node.nodeId === selectedSubsystem)) {
+      return selectedSubsystem
+    } // end if selected subsystem remains exposed
+
+    const fallbackNode = getFallbackSubsystem(entity)
+    if (fallbackNode !== null && exposedNodes.some((node) => node.nodeId === fallbackNode.nodeId)) {
+      return fallbackNode.nodeId
+    } // end if fallback node is exposed
+
+    return exposedNodes[0]?.nodeId ?? null
+  } // end function resolveValidSelectedSubsystem
+
   const getLockTargetDisplayName = (target: TargetableEnemyRender | null): string => {
     if (!target) {
       return 'None'
@@ -3511,6 +3816,9 @@ function startTestMap(): void {
     const loopState = player.isFlying
       ? (player.isBoosting ? 'flight+boost' : 'flight')
       : (audio.isServoPlaying() ? 'servo' : 'idle')
+    const collisionDiagnostics = getWorldCollisionDiagnostics(collisionWorld)
+    const streamingDiagnostics = worldStreaming.getDiagnostics()
+    const schedulerDiagnostics = updateScheduler.getDiagnostics()
 
     // Compute distance to current target if available
     let targetDistance = null
@@ -3571,6 +3879,18 @@ function startTestMap(): void {
       `FPS: ${devFps.toFixed(1)}`,
       `Entity Count: ${1 + devEnemyCount + devProjectileCount}`,
       `Projectile Count: ${devProjectileCount}`,
+      `BVH Raycasts (frame): ${collisionDiagnostics.frame.raycastCount}`,
+      `BVH Raycast Time (frame): ${collisionDiagnostics.frame.raycastTotalMs.toFixed(3)} ms avg ${collisionDiagnostics.frame.raycastAverageMs.toFixed(3)} ms max ${collisionDiagnostics.frame.raycastMaxMs.toFixed(3)} ms`,
+      `BVH Active Chunks: ${collisionDiagnostics.frame.activeChunkCount} | observer ${collisionDiagnostics.observerChunk.chunkX},${collisionDiagnostics.observerChunk.chunkY}`,
+      `BVH Build: ${collisionDiagnostics.totalChunks} chunks, ${collisionDiagnostics.totalTriangles} tris, ${collisionDiagnostics.bvhBuildMs.toFixed(2)} ms`,
+      `Streaming Chunks: active ${streamingDiagnostics.activeChunkCount}, dormant ${streamingDiagnostics.dormantChunkCount}, unloaded ${streamingDiagnostics.unloadedChunkCount}`,
+      `Chunk Transitions: ${streamingDiagnostics.frameTransitions} (${streamingDiagnostics.frameActivationMs.toFixed(3)} ms)`,
+      `Entity Updates: AI ${streamingDiagnostics.frameCounters.simulatedAiCount}, render ${streamingDiagnostics.frameCounters.renderedEntityCount}, projectiles ${streamingDiagnostics.frameCounters.projectileUpdateCount}`,
+      `Audio/Lock Updates: emitters ${streamingDiagnostics.frameCounters.audioEmitterCount}, target refine ${streamingDiagnostics.frameCounters.targetRefinementCount}, audio nodes ${streamingDiagnostics.pipeline.audioNodeCount}`,
+      `Renderer: draw calls ${streamingDiagnostics.pipeline.drawCalls}`,
+      `Scheduler Budget: ${schedulerDiagnostics.frame.spentMs.toFixed(3)} / ${schedulerDiagnostics.frame.budgetMs.toFixed(3)} ms (${(schedulerDiagnostics.frame.usageRatio * 100).toFixed(1)}%)`,
+      `Scheduler Ops: ran ${schedulerDiagnostics.frame.executedCount}, deferred ${schedulerDiagnostics.frame.deferredCount}, skipped ${schedulerDiagnostics.frame.skippedCount}, queue ${schedulerDiagnostics.frame.queueSizeTotal}`,
+      `Scheduler Worst: ${schedulerDiagnostics.frame.worstFrameMs.toFixed(3)} ms | over-budget frames ${schedulerDiagnostics.frame.overBudgetFrames}`,
       `Audio Voices: ~${audioVoicesEstimate} (estimated)`,
       `Active Timers: ${activeTimers}`,
       '',
@@ -4082,6 +4402,12 @@ function startTestMap(): void {
       description: 'List runtime entities and diagnostics grouped by topic.',
       helpPath: ['Console', 'Reference'],
       examples: ['list parts', 'list slots', 'list audio', 'list events']
+    },
+    {
+      syntax: 'target.layout <layoutId>',
+      description: 'Inspect a targeting layout definition and exposed nodes (Ticket 23A).',
+      helpPath: ['Enemies', 'Spawning'],
+      examples: ['target.layout HumanoidMech', 'target.layout Tank', 'target.layout Helicopter']
     },
     {
       syntax: 'get <path>',
@@ -4596,6 +4922,34 @@ function startTestMap(): void {
     const bindings = getConsoleBindings()
     const normalizedCommand = commandLine.trim().replace(/\s+/g, ' ').toLowerCase()
 
+    const getTargetLayoutExpressionMatch = commandLine.trim().match(/^getTargetLayout\s*\(\s*\{\s*layoutId\s*:\s*['\"]([A-Za-z-]+)['\"]\s*}\s*\)\s*$/)
+    if (getTargetLayoutExpressionMatch) {
+      const requestedLayoutId = getTargetLayoutExpressionMatch[1] as TargetLayoutId
+      const entity: TargetLayoutEntity = { layoutId: requestedLayoutId }
+      const layout = getTargetLayout(entity)
+      if (layout === null) {
+        throw new Error(`Unknown layoutId: ${requestedLayoutId}`)
+      } // end if layout id invalid
+
+      const exposedNodes = getExposedSubsystems(entity)
+      const fallbackNode = getFallbackSubsystem(entity)
+      const defaultNode = layout.nodes.find((node) => node.nodeId === layout.defaultNode) ?? null
+      const rightNeighbor = defaultNode ? getAdjacentSubsystem(entity, defaultNode.nodeId, 'right') : null
+      const leftNeighbor = defaultNode ? getAdjacentSubsystem(entity, defaultNode.nodeId, 'left') : null
+      const upNeighbor = defaultNode ? getAdjacentSubsystem(entity, defaultNode.nodeId, 'up') : null
+      const downNeighbor = defaultNode ? getAdjacentSubsystem(entity, defaultNode.nodeId, 'down') : null
+
+      return [
+        `layoutId = ${layout.layoutId}`,
+        `nodes = ${layout.nodes.length}`,
+        `edges = ${layout.edges.length}`,
+        `defaultNode = ${layout.defaultNode}`,
+        `fallbackNode = ${fallbackNode?.nodeId ?? 'none'}`,
+        `exposed = ${exposedNodes.map((node) => node.nodeId).join(', ')}`,
+        `adjacent(default): left=${leftNeighbor?.nodeId ?? 'none'} right=${rightNeighbor?.nodeId ?? 'none'} up=${upNeighbor?.nodeId ?? 'none'} down=${downNeighbor?.nodeId ?? 'none'}`
+      ]
+    } // end if getTargetLayout expression alias
+
     if (normalizedCommand === 'list systems') {
       return [
         'systems:',
@@ -4656,6 +5010,37 @@ function startTestMap(): void {
       return ['events:', `  ${devLastEvent}`]
     } // end if list events command
 
+    if (normalizedCommand.startsWith('target.layout ')) {
+      const requestedLayoutId = commandLine.trim().split(/\s+/)[1] as TargetLayoutId | undefined
+      if (!requestedLayoutId) {
+        throw new Error('Usage: target.layout <HumanoidMech|Tank|Helicopter|APC|Drone>')
+      } // end if missing layout id
+
+      const entity: TargetLayoutEntity = { layoutId: requestedLayoutId }
+      const layout = getTargetLayout(entity)
+      if (layout === null) {
+        throw new Error(`Unknown layoutId: ${requestedLayoutId}`)
+      } // end if layout id invalid
+
+      const exposedNodes = getExposedSubsystems(entity)
+      const fallbackNode = getFallbackSubsystem(entity)
+      const defaultNode = layout.nodes.find((node) => node.nodeId === layout.defaultNode) ?? null
+      const rightNeighbor = defaultNode ? getAdjacentSubsystem(entity, defaultNode.nodeId, 'right') : null
+      const leftNeighbor = defaultNode ? getAdjacentSubsystem(entity, defaultNode.nodeId, 'left') : null
+      const upNeighbor = defaultNode ? getAdjacentSubsystem(entity, defaultNode.nodeId, 'up') : null
+      const downNeighbor = defaultNode ? getAdjacentSubsystem(entity, defaultNode.nodeId, 'down') : null
+
+      return [
+        `layoutId = ${layout.layoutId}`,
+        `nodes = ${layout.nodes.length}`,
+        `edges = ${layout.edges.length}`,
+        `defaultNode = ${layout.defaultNode}`,
+        `fallbackNode = ${fallbackNode?.nodeId ?? 'none'}`,
+        `exposed = ${exposedNodes.map((node) => node.nodeId).join(', ')}`,
+        `adjacent(default): left=${leftNeighbor?.nodeId ?? 'none'} right=${rightNeighbor?.nodeId ?? 'none'} up=${upNeighbor?.nodeId ?? 'none'} down=${downNeighbor?.nodeId ?? 'none'}`
+      ]
+    } // end if target.layout command
+
     if (normalizedCommand.startsWith('player.get ')) {
       const mode = normalizedCommand.slice('player.get '.length)
       const targetId = targetLockState.currentTargetId
@@ -4699,7 +5084,7 @@ function startTestMap(): void {
         return [`velocity = (${devVelocityX.toFixed(2)}, ${devVelocityY.toFixed(2)}, ${devVelocityZ.toFixed(2)})`]
       } // end if player.get velocity
       if (mode === 'target') {
-        return [`target = ${targetId === null ? 'none' : String(targetId)}`]
+        return [`target = ${targetId === null ? 'none' : String(targetId)} subsystem:${targetLockState.selectedSubsystem ?? 'none'}`]
       } // end if player.get target
       throw new Error('Usage: player.get <all|stats|heat|energy|weight|movement|position|velocity|target>')
     } // end if player.get command
@@ -4851,6 +5236,8 @@ function startTestMap(): void {
       part.mobilityType = undefined
       part.heatGeneration = undefined
       part.heatDissipation = undefined
+      part.heatCapacity = undefined
+      part.emergencyCooling = undefined
       part.powerOutput = undefined
       part.ratedLoad = undefined
       part.liftCapacity = undefined
@@ -5270,6 +5657,16 @@ function startTestMap(): void {
         .map((enemyId) => `spawn ${enemyId}`)
     } // end if completing spawn target
 
+    if (currentCommand === 'target.layout' || (currentCommand === 'target' && (tokens[1] ?? '').toLowerCase() === 'layout')) {
+      const layoutIds = ['HumanoidMech', 'Tank', 'Helicopter', 'APC', 'Drone']
+      const currentLayout = hasTrailingWhitespace
+        ? ''
+        : (tokens[currentCommand === 'target.layout' ? 1 : 2] ?? '')
+      return layoutIds
+        .filter((layoutId) => layoutId.toLowerCase().startsWith(currentLayout.toLowerCase()))
+        .map((layoutId) => `target.layout ${layoutId}`)
+    } // end if completing target.layout command
+
     if (currentCommand === 'music' || currentCommand === 'track') {
       const currentTrack = hasTrailingWhitespace ? '' : ((tokens[1] ?? '').toLowerCase())
       return audio.getMusicTracks()
@@ -5360,6 +5757,39 @@ function startTestMap(): void {
     const baseDeltaSeconds = Math.min((timestampMs - lastTimeMs) / 1000, 0.05)
     lastTimeMs = timestampMs
     const deltaSeconds = baseDeltaSeconds * devTimeScale
+
+    const targetFrameTimeMs = 1000 / Math.max(30, devFps > 0 ? devFps : 60)
+    const frameBudgetMs = Math.min(8.5, Math.max(3.5, targetFrameTimeMs * 0.4))
+    updateScheduler.beginFrame({
+      deltaSeconds,
+      nowMs: timestampMs,
+      frameBudgetMs
+    })
+
+    worldStreaming.beginFrame()
+    resetWorldCollisionFrameMetrics(collisionWorld)
+    setWorldCollisionObserverPosition(collisionWorld, player.x, player.y)
+
+    const movementDeltaToPrevious = Math.hypot(player.x - previousPlayerX, player.y - previousPlayerY)
+    const streamingIntervalFrames = movementDeltaToPrevious > 0.08 ? 1 : 2
+    updateScheduler.runTask({
+      id: 'environment.chunk-streaming',
+      priority: movementDeltaToPrevious > 0.2 ? 'high' : 'medium',
+      intervalFrames: streamingIntervalFrames,
+      maxDeferralFrames: 4,
+      run: () => {
+        worldStreaming.update(player.x, player.y)
+        const activeChunkKeys = worldStreaming.getActiveChunkKeys()
+        const dormantChunkKeys = worldStreaming.getDormantChunkKeys()
+        setWorldCollisionActiveChunks(collisionWorld, activeChunkKeys)
+        threeRenderer.setChunkVisibility(activeChunkKeys, dormantChunkKeys)
+      }
+    })
+
+    const activeChunkKeys = worldStreaming.getActiveChunkKeys()
+    const dormantChunkKeys = worldStreaming.getDormantChunkKeys()
+    setWorldCollisionActiveChunks(collisionWorld, activeChunkKeys)
+    threeRenderer.setChunkVisibility(activeChunkKeys, dormantChunkKeys)
     applySubsystemIntegrityState()
     syncAuthoritativeMechStats()
 
@@ -5485,6 +5915,18 @@ function startTestMap(): void {
     } // end if boost toggle-on was requested
 
     const flightSpeedLimit = PLAYER_FLIGHT_SPEED * flightRuntimeProfile.speedMultiplier
+    const subsystemModifierHeld = input.subsystemSelectModifier
+    const cachedTurnLeft = input.turnLeft
+    const cachedTurnRight = input.turnRight
+    const cachedLookUp = input.lookUp
+    const cachedLookDown = input.lookDown
+
+    if (subsystemModifierHeld) {
+      input.turnLeft = false
+      input.turnRight = false
+      input.lookUp = false
+      input.lookDown = false
+    } // end if subsystem-selection modifier remaps directional inputs
 
     updateFrame(
       {
@@ -5506,6 +5948,13 @@ function startTestMap(): void {
       },
       movementDeltaSeconds
     )
+
+    if (subsystemModifierHeld) {
+      input.turnLeft = cachedTurnLeft
+      input.turnRight = cachedTurnRight
+      input.lookUp = cachedLookUp
+      input.lookDown = cachedLookDown
+    } // end if restoring directional inputs after movement update
 
     if (deltaSeconds > 0) {
       const currentZ = player.z ?? 0
@@ -5540,9 +5989,10 @@ function startTestMap(): void {
     const epDelta = (energyRegenPerSecond - energyDrainPerSecond) * deltaSeconds
     player.ep = Math.max(0, Math.min(player.maxEp, player.ep + epDelta))
     const flightHeatGain = player.isFlying ? (flightRuntimeProfile.heatGenerationPerSecond * deltaSeconds) : 0
+    devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + flightHeatGain)
+    updateEmergencyCoolingState()
     const passiveCoolingPerSecond = getPassiveCoolingRatePerSecond()
     devCurrentHeat = Math.max(0, devCurrentHeat - (passiveCoolingPerSecond * deltaSeconds))
-    devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + flightHeatGain)
     updateHeatState()
     applyOverheatShutdown()
     applyEnergyStarvationShutdown()
@@ -5616,15 +6066,54 @@ function startTestMap(): void {
     let frameIncomingDamageTypes = new Set<IncomingDamageType>()
 
     if (devAiEnabled) {
-      stepCombatEcsWorld(combatWorld, collisionWorld, audio, player, deltaSeconds, (event) => {
-        const appliedAmount = Math.max(0, event.amount)
-        if (appliedAmount <= 0) {
-          return
+      const aiCadenceFrames = devEnemyCount > 36 ? 3 : devEnemyCount > 16 ? 2 : 1
+      const aiSliceModulo = aiCadenceFrames >= 3 ? 3 : 2
+      const schedulerFrameIndex = updateScheduler.getFrameIndex()
+
+      updateScheduler.runTask({
+        id: 'ai.combat-ecs',
+        priority: aiCadenceFrames > 1 ? 'high' : 'critical',
+        intervalFrames: aiCadenceFrames,
+        maxDeferralFrames: 3,
+        run: () => {
+          stepCombatEcsWorld(combatWorld, collisionWorld, audio, player, deltaSeconds, (event) => {
+            const appliedAmount = Math.max(0, event.amount)
+            if (appliedAmount <= 0) {
+              return
+            }
+            const normalizedType = normalizeIncomingDamageType(event.damageType)
+            frameIncomingDamage += appliedAmount
+            frameIncomingHeatGain += applyIncomingDamageHeatGain(appliedAmount, normalizedType)
+            frameIncomingDamageTypes.add(normalizedType)
+          }, {
+            shouldSimulateTank: (x, y) => {
+              if (!worldStreaming.isPositionActive(x, y)) {
+                return false
+              }
+              const distanceToPlayer = Math.hypot(x - player.x, y - player.y)
+              if (distanceToPlayer <= 26) {
+                return true
+              }
+              const bucketKey = Math.abs((Math.floor(x) * 31) + (Math.floor(y) * 17))
+              return (bucketKey + schedulerFrameIndex) % aiSliceModulo === 0
+            },
+            shouldSimulateProjectile: (x, y) => {
+              const chunkState = worldStreaming.getChunkStateAt(x, y)
+              if (chunkState === 'unloaded') {
+                return false
+              }
+              if (chunkState === 'active') {
+                return true
+              }
+              const distanceToPlayer = Math.hypot(x - player.x, y - player.y)
+              if (distanceToPlayer <= 26) {
+                return true
+              }
+              const bucketKey = Math.abs((Math.floor(x) * 13) + (Math.floor(y) * 29))
+              return (bucketKey + schedulerFrameIndex) % 2 === 0
+            }
+          })
         }
-        const normalizedType = normalizeIncomingDamageType(event.damageType)
-        frameIncomingDamage += appliedAmount
-        frameIncomingHeatGain += applyIncomingDamageHeatGain(appliedAmount, normalizedType)
-        frameIncomingDamageTypes.add(normalizedType)
       })
     }
     if (player.hp < hpBeforeCombat) {
@@ -5669,10 +6158,38 @@ function startTestMap(): void {
 
     audio.updatePlayerHeatStatusAudio(deltaSeconds, devCurrentHeat / Math.max(1, devMaxHeat))
 
-    const combatRender = getCombatRenderState(combatWorld)
+    updateScheduler.runTask({
+      id: 'environment.combat-render-state',
+      priority: 'high',
+      intervalFrames: devEnemyCount > 40 ? 2 : 1,
+      maxDeferralFrames: 2,
+      run: () => {
+        latestCombatRender = getCombatRenderState(combatWorld)
+      }
+    })
+    const combatRender = latestCombatRender
+    const combatRenderForDisplay = {
+      enemies: combatRender.enemies.filter((enemy) => worldStreaming.getChunkStateAt(enemy.x, enemy.y) !== 'unloaded'),
+      tanks: combatRender.tanks.filter((tank) => worldStreaming.getChunkStateAt(tank.x, tank.y) !== 'unloaded'),
+      bullets: combatRender.bullets.filter((bullet) => worldStreaming.getChunkStateAt(bullet.x, bullet.y) !== 'unloaded')
+    }
+    worldStreaming.recordRenderedEntities(combatRenderForDisplay.enemies.length + combatRenderForDisplay.tanks.length)
+    worldStreaming.recordProjectileUpdates(combatRenderForDisplay.bullets.length)
+    worldStreaming.recordSimulatedAi(combatRenderForDisplay.tanks.filter((tank) => worldStreaming.isPositionActive(tank.x, tank.y) && tank.alive).length)
 
     // --- Target lock evaluation ---
-    const lockTargets: TargetableEnemyRender[] = [...combatRender.enemies, ...combatRender.tanks]
+    const lockTargets: TargetableEnemyRender[] = [
+      ...combatRenderForDisplay.enemies,
+      ...combatRenderForDisplay.tanks
+    ].filter((entry) => worldStreaming.isPositionActive(entry.x, entry.y))
+    worldStreaming.recordTargetRefinements(lockTargets.length)
+
+    const targetingHotState = input.fireHeld || input.firePending || subsystemModifierHeld || lockTargets.length > 0
+    if (targetingHotState !== previousTargetingHotState || lockTargets.length !== previousTargetCount) {
+      targetingScheduleEventToken += 1
+      previousTargetingHotState = targetingHotState
+      previousTargetCount = lockTargets.length
+    }
 
     const headPart = getDevPartState('Head')
     const computerPart = getDevPartState('Computer')
@@ -5703,17 +6220,32 @@ function startTestMap(): void {
       lockGainMultiplier
     }
 
-    const lockUpdate = updateTargetLock(
-      targetLockState,
-      player,
-      lockTargets,
-      collisionWorld,
-      playerWeapon.lockOnRange,
-      playerWeapon.lockOnWindowWidthPercent,
-      playerWeapon.lockOnWindowHeightPercent,
-      getHalfHorizontalFovRadians(currentCanvasWidth / Math.max(1, currentCanvasHeight)),
-      lockModifiers
-    )
+    const lockCandidatesPerSlice = lockTargets.length > 24 ? 10 : lockTargets.length > 12 ? 8 : lockTargets.length
+    const lockCandidateSlice = sliceWrapped(lockTargets, targetRefinementSliceCursor, lockCandidatesPerSlice)
+    targetRefinementSliceCursor = lockCandidateSlice.nextCursor
+
+    updateScheduler.runTask({
+      id: 'targeting.refinement',
+      priority: targetingHotState ? 'high' : 'medium',
+      intervalFrames: targetingHotState ? 1 : 2,
+      maxDeferralFrames: 3,
+      eventToken: targetingScheduleEventToken,
+      queueSize: lockTargets.length,
+      run: () => {
+        latestLockUpdate = updateTargetLock(
+          targetLockState,
+          player,
+          lockCandidateSlice.slice,
+          collisionWorld,
+          playerWeapon.lockOnRange,
+          playerWeapon.lockOnWindowWidthPercent,
+          playerWeapon.lockOnWindowHeightPercent,
+          getHalfHorizontalFovRadians(currentCanvasWidth / Math.max(1, currentCanvasHeight)),
+          lockModifiers
+        )
+      }
+    })
+    const lockUpdate = latestLockUpdate
 
     if (lockUpdate.justLost || lockUpdate.switchedTarget) {
       audio.playLockLostChirp()
@@ -5751,6 +6283,107 @@ function startTestMap(): void {
       maxLockProgress,
       targetPos
     )
+
+    const currentLockLevel = getLockLevelFromProgress(targetLockState.lockProgress)
+    const isBronzeLock = lockUpdate.lockedTarget !== null && currentLockLevel === 'Bronze'
+
+    if (lockUpdate.lockedTarget === null) {
+      previousSubsystemTargetId = null
+      targetLockState.selectedSubsystem = null
+      wasSubsystemSelectionUnlocked = false
+      lastAnnouncedSubsystemTargetId = null
+      lastAnnouncedSubsystemNodeId = null
+    } else {
+      const targetEntity: TargetLayoutEntity = { layoutId: lockUpdate.lockedTarget.layoutId }
+      const targetChanged = previousSubsystemTargetId !== lockUpdate.lockedTarget.id
+      const subsystemUnlocked = currentLockLevel !== 'Bronze'
+      const subsystemJustUnlocked = subsystemUnlocked && !wasSubsystemSelectionUnlocked
+
+      if (targetChanged) {
+        previousSubsystemTargetId = lockUpdate.lockedTarget.id
+        targetLockState.selectedSubsystem = getInitialSelectedSubsystem(targetEntity)
+      } // end if lock target changed
+
+      if (subsystemUnlocked) {
+        const previousSubsystem = targetLockState.selectedSubsystem
+        const validSubsystem = resolveValidSelectedSubsystem(targetEntity, previousSubsystem)
+        if (previousSubsystem !== null && validSubsystem !== previousSubsystem) {
+          announceBlockedAction('subsystem-unavailable', 'Subsystem unavailable')
+        } // end if subsystem fell out of exposed/valid state
+        targetLockState.selectedSubsystem = validSubsystem
+      }
+
+      const navLeftActive = subsystemModifierHeld && cachedTurnLeft
+      const navRightActive = subsystemModifierHeld && cachedTurnRight
+      const navUpActive = subsystemModifierHeld && cachedLookUp
+      const navDownActive = subsystemModifierHeld && cachedLookDown
+
+      const navLeftPressed = navLeftActive && !previousSubsystemNavLeft
+      const navRightPressed = navRightActive && !previousSubsystemNavRight
+      const navUpPressed = navUpActive && !previousSubsystemNavUp
+      const navDownPressed = navDownActive && !previousSubsystemNavDown
+      const navDirection: TargetLayoutDirection | null = navLeftPressed
+        ? 'left'
+        : navRightPressed
+          ? 'right'
+          : navUpPressed
+            ? 'up'
+            : navDownPressed
+              ? 'down'
+              : null
+
+      if (navDirection !== null) {
+        if (!subsystemUnlocked) {
+          announceBlockedAction('subsystem-lock-bronze', 'Subsystem controls disabled at Bronze lock')
+        } else {
+          const currentSubsystem = targetLockState.selectedSubsystem
+          if (currentSubsystem === null) {
+            targetLockState.selectedSubsystem = getInitialSelectedSubsystem(targetEntity)
+          } else {
+            const adjacentSubsystem = getAdjacentSubsystem(targetEntity, currentSubsystem, navDirection)
+            if (adjacentSubsystem !== null) {
+              targetLockState.selectedSubsystem = adjacentSubsystem.nodeId
+            }
+          }
+          const postNavigationSubsystem = resolveValidSelectedSubsystem(targetEntity, targetLockState.selectedSubsystem)
+          if (targetLockState.selectedSubsystem !== null && postNavigationSubsystem !== targetLockState.selectedSubsystem) {
+            announceBlockedAction('subsystem-unavailable', 'Subsystem unavailable')
+          } // end if post-navigation subsystem became invalid
+          targetLockState.selectedSubsystem = postNavigationSubsystem
+        } // end if subsystem controls are unlocked
+      } // end if navigation direction was pressed
+
+      if (subsystemUnlocked && targetLockState.selectedSubsystem !== null) {
+        const shouldAnnounceSubsystem = subsystemJustUnlocked
+          || targetChanged
+          || lastAnnouncedSubsystemTargetId !== lockUpdate.lockedTarget.id
+          || lastAnnouncedSubsystemNodeId !== targetLockState.selectedSubsystem
+        if (shouldAnnounceSubsystem) {
+          announceSelectedSubsystem(targetLockState.selectedSubsystem)
+          lastAnnouncedSubsystemTargetId = lockUpdate.lockedTarget.id
+          lastAnnouncedSubsystemNodeId = targetLockState.selectedSubsystem
+        } // end if subsystem selection should be announced
+      }
+
+      if (!subsystemUnlocked) {
+        lastAnnouncedSubsystemTargetId = null
+        lastAnnouncedSubsystemNodeId = null
+      }
+
+      wasSubsystemSelectionUnlocked = subsystemUnlocked
+
+      previousSubsystemNavLeft = navLeftActive
+      previousSubsystemNavRight = navRightActive
+      previousSubsystemNavUp = navUpActive
+      previousSubsystemNavDown = navDownActive
+    }
+
+    if (!subsystemModifierHeld) {
+      previousSubsystemNavLeft = false
+      previousSubsystemNavRight = false
+      previousSubsystemNavUp = false
+      previousSubsystemNavDown = false
+    } // end if subsystem modifier released
 
     const missileRequiresLock = playerWeapon.weaponType === 'missile'
       && (playerWeapon.lockOnTimeMs > 0 || playerWeapon.trackingRating > 0)
@@ -5855,7 +6488,9 @@ function startTestMap(): void {
           } // end if fire rate applies
 
           const missilesPerShot = Math.max(1, Math.round(playerWeapon.projectileCount))
+          const effectiveMissileAccuracy = isBronzeLock ? 0 : playerWeapon.accuracy
           for (let missileIndex = 0; missileIndex < missilesPerShot; missileIndex += 1) {
+            // Ticket 23: missile routing is always center-mass blast; subsystem routing is intentionally ignored.
             spawnPlayerMissile(
               combatWorld,
               player,
@@ -5869,8 +6504,9 @@ function startTestMap(): void {
               playerWeapon.explosionDamage,
               playerWeapon.explosionSounds,
               playerWeapon.projectileType === 'rocket' ? 'rocket' : 'missile',
-              playerWeapon.accuracy,
-              speedFraction
+              effectiveMissileAccuracy,
+              speedFraction,
+              playerWeapon.stability ?? 1
             )
           } // end for each missile in shot
           if (shotEnergyCost > 0) {
@@ -5882,6 +6518,7 @@ function startTestMap(): void {
           applyWeaponHeatGain(playerWeapon)
         } // end if missile shot blocked or fired
       } else {
+        const effectiveDirectFireAccuracy = isBronzeLock ? 0 : playerWeapon.accuracy
         audio.fireGunshot(playerWeapon.fireSoundPath)
         updateState.muzzleFlashTimer = MUZZLE_FLASH_DURATION
         if (playerWeapon.fireRateCooldownSeconds > 0) {
@@ -5894,8 +6531,9 @@ function startTestMap(): void {
             lockUpdate.lockedTarget.x,
             lockUpdate.lockedTarget.y,
             lockUpdate.lockedTarget.height + PLAYER_HEIGHT,
-            playerWeapon.accuracy,
+            effectiveDirectFireAccuracy,
             speedFraction,
+            playerWeapon.stability ?? 1,
             playerWeapon.damagePerShot,
             playerWeapon.bulletSpeed,
             playerWeapon.maxRange,
@@ -5913,8 +6551,9 @@ function startTestMap(): void {
             playerWeapon.maxRange,
             playerWeapon.projectileSize,
             playerWeapon.projectileType,
-            playerWeapon.accuracy,
+            effectiveDirectFireAccuracy,
             speedFraction,
+            playerWeapon.stability ?? 1,
             playerWeapon.projectileCount,
             playerWeapon.spreadDegrees
           )
@@ -5972,7 +6611,7 @@ function startTestMap(): void {
       },
       isFlying: !!player.isFlying
     }
-    const enemyAudioStates = combatRender.tanks.map((tank) => ({
+    const enemyAudioStates = combatRenderForDisplay.tanks.map((tank) => ({
       id: `tank-${tank.id}`,
       type: tank.enemyType,
       category: tank.airborne ? 'air' : 'ground',
@@ -5988,21 +6627,66 @@ function startTestMap(): void {
       loopSoundPauseIntervalMs: tank.loopSoundPauseIntervalMs,
       stopLoopSoundWhileStationary: tank.stopLoopSoundWhileStationary
     }))
+    const prioritizedEnemyAudioStates = enemyAudioStates.filter((enemy) => {
+      const isActiveChunk = worldStreaming.isPositionActive(enemy.position.x, enemy.position.y)
+      if (isActiveChunk) {
+        return true
+      }
+      const distanceToPlayer = Math.hypot(enemy.position.x - player.x, enemy.position.y - player.y, enemy.position.z - (player.z ?? 0))
+      return distanceToPlayer <= 42
+    })
+    worldStreaming.recordAudioEmitters(prioritizedEnemyAudioStates.length)
 
     const destinationPoi = getDestinationPoi()
-    audio.updateNavigationDestinationCue(playerAudioState, destinationPoi?.position ?? null)
+    const destinationHasChanged = destinationPoi?.id !== destinationPoiId
+    if (destinationHasChanged || shouldTriggerManualPing || prioritizedEnemyAudioStates.length > 0) {
+      audioScheduleEventToken += 1
+    }
+
+    updateScheduler.runTask({
+      id: 'audio.navigation-cue',
+      priority: destinationPoi ? 'medium' : 'dormant',
+      intervalFrames: destinationPoi ? 1 : 8,
+      maxDeferralFrames: 6,
+      eventToken: audioScheduleEventToken,
+      run: () => {
+        audio.updateNavigationDestinationCue(playerAudioState, destinationPoi?.position ?? null)
+      }
+    })
 
     if (shouldTriggerManualPing) {
-      audio.triggerActiveSonar(playerAudioState, enemyAudioStates, collisionWorld, sprites)
+      audio.triggerActiveSonar(playerAudioState, prioritizedEnemyAudioStates, collisionWorld, sprites)
     } // end if manual sonar ping was requested
 
-    audio.updateFrameAudio(
-      deltaSeconds,
-      playerAudioState,
-      enemyAudioStates,
-      collisionWorld,
-      sprites
-    )
+    const emittersPerAudioSlice = prioritizedEnemyAudioStates.length > 20
+      ? 8
+      : prioritizedEnemyAudioStates.length > 8
+        ? 6
+        : Math.max(1, prioritizedEnemyAudioStates.length)
+    const audioEmitterSlice = sliceWrapped(prioritizedEnemyAudioStates, ambienceSliceCursor, emittersPerAudioSlice)
+    ambienceSliceCursor = audioEmitterSlice.nextCursor
+
+    updateScheduler.runTask({
+      id: 'audio.occlusion-and-runtime',
+      priority: prioritizedEnemyAudioStates.length > 0 ? 'high' : 'low',
+      intervalFrames: prioritizedEnemyAudioStates.length > 0 ? 1 : 3,
+      maxDeferralFrames: 4,
+      eventToken: audioScheduleEventToken,
+      queueSize: prioritizedEnemyAudioStates.length,
+      run: () => {
+        audio.updateFrameAudio(
+          deltaSeconds,
+          playerAudioState,
+          audioEmitterSlice.slice,
+          collisionWorld,
+          sprites
+        )
+      }
+    })
+
+    const audioDiagnostics = audio.getAudioDiagnostics()
+    worldStreaming.recordAudioNodes(audioDiagnostics.activeEnemyRuntimes + audioDiagnostics.occlusionEmitters)
+    worldStreaming.recordEffectUpdates(combatRenderForDisplay.bullets.filter((bullet) => bullet.kind === 'rocket' || bullet.kind === 'missile').length)
 
     if (awarenessStatusElement) {
       const rateOfFireLabel = playerWeapon.fireRateCooldownSeconds > 0
@@ -6069,16 +6753,21 @@ function startTestMap(): void {
 
     if (!isWorldMapVisible) {
       threeRenderer.renderFrame({
-        enemies: combatRender.enemies,
-        tanks: combatRender.tanks,
-        bullets: combatRender.bullets,
+        enemies: combatRenderForDisplay.enemies,
+        tanks: combatRenderForDisplay.tanks,
+        bullets: combatRenderForDisplay.bullets,
         player,
         muzzleFlashAlpha,
         lockedTankId: targetLockState.currentTargetId,
         lockOnWindowWidthPercent: playerWeapon.lockOnWindowWidthPercent,
         lockOnWindowHeightPercent: playerWeapon.lockOnWindowHeightPercent
       })
+      const rendererDiagnostics = threeRenderer.getDiagnostics()
+      worldStreaming.recordDrawCalls(rendererDiagnostics.drawCalls)
     } // end if map overlay is hidden
+
+    const frameCollisionDiagnostics = getWorldCollisionDiagnostics(collisionWorld)
+    worldStreaming.recordRaycasts(frameCollisionDiagnostics.frame.raycastCount)
 
     worldMapOverlay.renderFrame({
       player,

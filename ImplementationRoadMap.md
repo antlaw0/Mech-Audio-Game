@@ -571,7 +571,7 @@ For any part stat category not implemented yet, use placeholder values that are 
 
 ## Ticket 0E — Fullscreen World Map Overlay (F2)
 Copilot status: ready for approval
-Developer status:
+Developer status: complete
 
 ### Implementation Notes
 
@@ -944,7 +944,7 @@ weightResistance = totalWeight / (totalWeight + 1000)
 
 ## Ticket 10 — Weapon Heat Generation
 Copilot status: ready for approval
-Developer status: pending
+Developer status: approved
 
 Notes: Added per-shot weapon heat generation with an explicit `heatPerShot` override path and a runtime-derived fallback formula when the override is omitted.
 
@@ -974,7 +974,7 @@ Passive cooling.
 
 ## Ticket 13 — Heat State System
 Copilot status: ready for approval
-Developer status: pending
+Developer status: approved
 
 Notes: Implemented canonical runtime heat states (`NORMAL`, `HOT`, `CRITICAL`, `DANGER`, `OVERHEAT`) with deterministic thresholds and overheat recovery lockout until heat drops to 25% or lower. Added live HUD heat percentage after EP and a Tone.js heat-sizzle status layer that rises in volume and timbre intensity proportionally to heat percentage.
 
@@ -1188,7 +1188,7 @@ selectedSubsystem
 ## Ticket 20 — Continuous Lock Progression
 
 Copilot status: ready for approval
-Developer status: pending
+Developer status: approved
 
 Notes: Replaced instant lock with continuous progression (0-100) using alignment, distance, target movement, and runtime head/computer/chip factors. Added retention decay when lock requirements break, resume-on-reacquire for the same target, and enforced head-destroyed penalties (max Silver cap, 0.4 gain multiplier, reduced tracking stability).
 
@@ -1268,7 +1268,7 @@ trackingStability reduced
 ## Ticket 21 — Lock Audio + Cockpit Announcements
 
 Copilot status: not started
-Developer status:
+Developer status:approved
 
 ### 🧠 Copilot Prompt
 
@@ -1332,7 +1332,7 @@ Must support:
 ## Ticket 22 — Lock Memory Bandwidth
 
 Copilot status: not started
-Developer status:
+Developer status: approved
 
 ### 🧠 Copilot Prompt
 
@@ -1379,8 +1379,10 @@ Lock memory decays over time.
 
 ## Ticket 23 — Bronze Combat Routing
 
-Copilot status: not started
-Developer status:
+Copilot status: Complete
+Developer status: Approved
+
+Notes: Bronze lock now forces full direct-fire spread cone, direct-fire impacts route through the explicit Core damage path in ECS, missile targeting continues to ignore subsystem routing and applies center-mass blast damage, and ECM-obstructed targets are capped to Bronze lock progression.
 
 ### 🧠 Copilot Prompt
 
@@ -1419,8 +1421,19 @@ ECM interference limits maximum lock to Bronze.
 
 ## Ticket 23A — Entity Target Layout Definitions
 
-Copilot status: not started
-Developer status:
+Copilot status: Complete
+Developer status: Approved
+
+### Implementation Notes
+
+Implemented a new `target-layout.ts` module in `packages/client/src/test-map/` with:
+- `TargetLayout`, `TargetLayoutNode`, `TargetLayoutEdge`, `TargetLayoutEntity` type definitions
+- Five starter layouts: `HumanoidMech`, `Tank`, `Helicopter`, `APC`, `Drone`
+- Four required APIs: `getTargetLayout`, `getAdjacentSubsystem`, `getExposedSubsystems`, `getFallbackSubsystem`
+- Grid-based directional navigation (up/down/left/right maps to gridX/gridY)
+- `getLayoutIdForEntityType(string)` helper mapping enemy type strings to layout IDs
+- `layoutId` added to `TargetableEnemyRender` (and populated in `combat-ecs.ts` for all enemy/tank render objects)
+- Internal nodes (Generator, Computer, ThermalRegulator, Engine) are `initiallyExposed: false`; TODO Ticket 25 hooks in `getAdjacentSubsystem` and `getExposedSubsystems`
 
 ### 🧠 Copilot Prompt
 
@@ -1485,8 +1498,29 @@ Layout coordinates are for deterministic navigation only.
 
 ## Ticket 24 — Directional Subsystem Selection
 
-Copilot status: not started
+Copilot status: ready for approval
 Developer status:
+
+### Implementation Notes
+
+Implemented Alt-modifier subsystem navigation in test-map runtime targeting flow:
+
+* Added runtime `selectedSubsystem` state to target lock (`TargetLockState`).
+* Added input tracking for subsystem-selection modifier (`Alt`) and preserved existing movement keys.
+* While `Alt` is held, `turnLeft/turnRight/lookUp/lookDown` are remapped away from camera/movement and used for subsystem navigation.
+* Bronze lock behavior: subsystem directional controls are disabled and a blocked-action announcement is emitted.
+* Silver+ lock behavior: subsystem directional controls are enabled and navigate by target layout adjacency.
+* On target change, subsystem selection initializes from layout default/fallback exposed node.
+* If selected subsystem becomes invalid (not exposed/available), selection auto-falls back to layout fallback and announces `Subsystem unavailable`.
+* Extended `player.get target` output to include current `selectedSubsystem` for runtime verification.
+
+Files touched:
+
+* `packages/client/src/test-map/types.ts`
+* `packages/client/src/test-map/player-state.ts`
+* `packages/client/src/test-map/input.ts`
+* `packages/client/src/test-map/target-lock.ts`
+* `packages/client/src/test-map/main.ts`
 
 ### 🧠 Copilot Prompt
 
@@ -1741,3 +1775,44 @@ coolingRate = 0
 
 * Search codebase for random subsystem routing
 * Confirm all combat uses targeting system
+
+---
+
+## Open-World Runtime Update — Centralized Frame-Budgeted Scheduler (2026-05-21)
+
+Copilot status: ready for review
+Developer status: pending
+
+### Implementation Notes
+
+Implemented a centralized update scheduler and integrated it into the open-world runtime loop to prioritize consistent frame pacing over maximum update frequency.
+
+Delivered:
+
+* New strict-TS scheduler module (`packages/client/src/test-map/update-scheduler.ts`) with:
+	* priority levels (`critical`, `high`, `medium`, `low`, `dormant`)
+	* per-task interval scheduling
+	* frame budget tracking and budget-aware deferral for non-critical tasks
+	* anti-starvation controls (`maxDeferralFrames`)
+	* event-driven triggering (`eventToken`)
+	* runtime diagnostics (per-frame and per-task cost/defer/skip/queue metrics)
+* Main loop integration in `packages/client/src/test-map/main.ts`:
+	* dynamic per-frame scheduler budget setup
+	* scheduled chunk-streaming transitions to reduce activation spikes
+	* scheduled combat ECS updates with distance-aware cadence behavior
+	* scheduled combat render-state extraction
+	* scheduled, event-driven target refinement with time-sliced target candidate processing
+	* scheduled audio navigation and occlusion/runtime updates with emitter slicing
+* Runtime debug overlay now reports scheduler budget usage and queue/defer/worst-frame telemetry.
+
+### Validation
+
+* `npm run typecheck` passed (workspace)
+* `npm run build:client` passed
+
+### Suggested Playtest Focus
+
+* Sprint/traverse across chunk boundaries and confirm reduced stutter.
+* Heavy combat scenarios (high enemy/projectile counts) and verify stable frame pacing.
+* Confirm targeting responsiveness remains acceptable under scheduler deferral.
+* Confirm distant audio/AI degrade gracefully without obvious pops or starvation.

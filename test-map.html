@@ -1130,10 +1130,42 @@
     <h2 class="editor-title">Weapon Editor</h2>
     <form id="weaponEditorForm" novalidate>
       <fieldset class="editor-fieldset">
+        <legend>Identity</legend>
+        <div class="editor-field">
+          <label for="weaponType">Weapon Type</label>
+          <select id="weaponType" name="weaponType">
+            <option value="ballistic">Ballistic</option>
+            <option value="missile">Missile</option>
+            <option value="energy">Energy</option>
+          </select>
+        </div>
+        <div class="editor-field">
+          <label for="weaponDamageType">Damage Type</label>
+          <input type="text" id="weaponDamageType" name="damageType" />
+        </div>
+        <div class="editor-field">
+          <label for="weaponProjectileType">Projectile Type</label>
+          <select id="weaponProjectileType" name="projectileType">
+            <option value="bullet">Bullet</option>
+            <option value="rocket">Rocket</option>
+            <option value="missile">Missile</option>
+            <option value="laserBeam">Laser Beam</option>
+          </select>
+        </div>
+        <div class="editor-field">
+          <label for="weaponFireSoundPath">Fire Sound Path</label>
+          <input type="text" id="weaponFireSoundPath" name="fireSoundPath" />
+        </div>
+      </fieldset>
+      <fieldset class="editor-fieldset">
         <legend>Accuracy</legend>
         <div class="editor-field">
           <label for="weaponAccuracy">Accuracy (0.0 – 1.0)</label>
           <input type="number" id="weaponAccuracy" name="accuracy" min="0.01" max="1" step="0.01" />
+        </div>
+        <div class="editor-field">
+          <label for="weaponStability">Stability</label>
+          <input type="number" id="weaponStability" name="stability" min="0.1" max="10" step="0.01" />
         </div>
       </fieldset>
       <fieldset class="editor-fieldset">
@@ -1159,12 +1191,32 @@
           <input type="number" id="weaponMaxRange" name="maxRange" min="1" max="64" step="0.5" />
         </div>
         <div class="editor-field">
-          <label for="weaponFireRate">Min Fire Rate (seconds, 0=unlimited)</label>
-          <input type="number" id="weaponFireRate" name="fireRate" min="0" max="10" step="0.05" />
+          <label for="weaponProjectileSize">Projectile Size</label>
+          <input type="number" id="weaponProjectileSize" name="projectileSize" min="0.03" max="5" step="0.01" />
+        </div>
+        <div class="editor-field">
+          <label for="weaponFireRate">Min Fire Rate (ms, 0=unlimited)</label>
+          <input type="number" id="weaponFireRate" name="fireRate" min="0" max="10000" step="1" />
         </div>
         <div class="editor-field">
           <label for="weaponFullAuto">Full Auto</label>
           <input type="checkbox" id="weaponFullAuto" name="fullAuto" />
+        </div>
+        <div class="editor-field">
+          <label for="weaponClipSize">Clip Size</label>
+          <input type="number" id="weaponClipSize" name="clipSize" min="0" max="9999" step="1" />
+        </div>
+        <div class="editor-field">
+          <label for="weaponAmmoResourcePerRound">Ammo Resource / Round</label>
+          <input type="number" id="weaponAmmoResourcePerRound" name="ammoResourcePerRound" min="0" max="9999" step="1" />
+        </div>
+        <div class="editor-field">
+          <label for="weaponHeatPerShot">Heat Per Shot</label>
+          <input type="number" id="weaponHeatPerShot" name="heatPerShot" min="0" max="9999" step="0.01" />
+        </div>
+        <div class="editor-field">
+          <label for="weaponEnergyCostPerShot">Energy Cost Per Shot</label>
+          <input type="number" id="weaponEnergyCostPerShot" name="energyCostPerShot" min="0" max="9999" step="0.01" />
         </div>
       </fieldset>
       <fieldset class="editor-fieldset">
@@ -1181,6 +1233,22 @@
           <label for="weaponLockOnWindowHeight">Lock-on Window Height (%)</label>
           <input type="number" id="weaponLockOnWindowHeight" name="lockOnWindowHeight" min="0" max="100" step="5" />
         </div>
+        <div class="editor-field">
+          <label for="weaponLockOnTimeMs">Missile Lock Time (ms)</label>
+          <input type="number" id="weaponLockOnTimeMs" name="lockOnTimeMs" min="0" max="10000" step="50" />
+        </div>
+        <div class="editor-field">
+          <label for="weaponTrackingRating">Tracking Rating</label>
+          <input type="number" id="weaponTrackingRating" name="trackingRating" min="0" max="1" step="0.01" />
+        </div>
+        <div class="editor-field">
+          <label for="weaponExplosionRadius">Explosion Radius</label>
+          <input type="number" id="weaponExplosionRadius" name="explosionRadius" min="0" max="20" step="0.1" />
+        </div>
+        <div class="editor-field">
+          <label for="weaponExplosionDamage">Explosion Damage</label>
+          <input type="number" id="weaponExplosionDamage" name="explosionDamage" min="0" max="9999" step="1" />
+        </div>
       </fieldset>
       <div class="editor-actions">
         <button type="button" id="weaponEditorApplyButton" class="pause-button">Apply</button>
@@ -1196,6 +1264,7 @@
     "tone": "https://esm.sh/tone@15",
     "bitecs": "https://esm.sh/bitecs@0.3.40",
     "three": "https://esm.sh/three@0.170.0",
+    "three-mesh-bvh": "https://esm.sh/three-mesh-bvh@0.9.10",
     "resonance-audio": "https://esm.sh/resonance-audio@1.0.0"
   }
 }

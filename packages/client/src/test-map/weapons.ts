@@ -200,6 +200,10 @@ const clampPercent = (value: number): number => {
 const buildWeaponDefinition = (definition: PartDefinition, index: number): PlayerWeaponDefinition => {
   const weaponType = resolveWeaponType(definition)
   const projectileType = resolveProjectileType(definition, weaponType)
+  const projectileCount = Math.max(1, Math.round(definition.projectileCount ?? 1))
+  const spreadDegrees = projectileCount > 1
+    ? Math.max(0, definition.spreadDegrees ?? 0)
+    : 0
   const ammoConsumedPerShot = Math.max(0, definition.ammoConsumedPerShot ?? 0)
   const hasClip = ammoConsumedPerShot > 0
   const clipSize = hasClip ? Math.max(0, Math.round(definition.clipSize ?? 0)) : 0
@@ -219,8 +223,9 @@ const buildWeaponDefinition = (definition: PartDefinition, index: number): Playe
     accuracy: Math.max(0.01, Math.min(1, definition.accuracy ?? WEAPON_DEFAULT_ACCURACY)),
     lockOnRange: Math.max(1, definition.effectiveRange ?? WEAPON_LOCK_ON_RANGE),
     damagePerShot: Math.max(1, Math.round(definition.damagePerShot ?? 1)),
-    projectileCount: Math.max(1, Math.round(definition.projectileCount ?? 1)),
-    spreadDegrees: Math.max(0, definition.spreadDegrees ?? 0),
+    stability: Math.max(0.1, definition.stability ?? 1),
+    projectileCount,
+    spreadDegrees,
     bulletSpeed: Math.max(1, definition.bulletSpeed ?? (weaponType === 'missile' ? MISSILE_DEFAULT_SPEED : BULLET_SPEED)),
     maxRange: Math.max(1, BULLET_MAX_DIST),
     isFullAuto: resolveIsFullAuto(definition),
@@ -254,7 +259,7 @@ const buildMeleeDefinition = (definition: PartDefinition): PlayerMeleeWeaponDefi
     id: definition.id,
     name: definition.name,
     swingSoundPaths: [swingPath],
-    damagePerSwing: Math.max(1, Math.round(definition.damagePerShot ?? 1)),
+    damagePerSwing: Math.max(1, Math.round(definition.meleeDamage ?? definition.damagePerShot ?? 1)),
     meleeCooldownSeconds: Math.max(0, definition.fireRateCooldownSeconds ?? 0.8),
     reach: 2.5,
     coneAngleDegrees: 78

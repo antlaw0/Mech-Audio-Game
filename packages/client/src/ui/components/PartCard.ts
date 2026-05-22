@@ -28,7 +28,9 @@ const PART_STAT_LABELS: Record<string, string> = {
   energyCapacity: 'Energy Capacity',
   powerOutput: 'Power Output',
   heatGeneration: 'Heat Generation',
-  heatDissipation: 'Heat Dissipation',
+  heatDissipation: 'Cooling Rate',
+  heatCapacity: 'Max Heat',
+  emergencyCooling: 'Emergency Cooling',
   liftCapacity: 'Lift Capacity',
   rotorCount: 'Rotor Count',
   verticalTakeoffTime: 'Takeoff Time',
@@ -38,9 +40,25 @@ const PART_STAT_LABELS: Record<string, string> = {
   range: 'Range',
   lockOn: 'Lock On',
   stability: 'Stability',
-  meleePower: 'Melee Power',
+  meleeDamage: 'Melee Damage',
   accuracy: 'Accuracy',
-  sensorStrength: 'Sensor Strength'
+  sensorStrength: 'Sensor Strength',
+  damagePerShot: 'Damage / Shot',
+  fireRateCooldownSeconds: 'Fire Rate (s)',
+  projectileCount: 'Projectiles / Shot',
+  projectileType: 'Projectile Type',
+  spreadDegrees: 'Spread (deg)',
+  bulletSpeed: 'Projectile Speed',
+  clipSize: 'Clip Size',
+  damageType: 'Damage Type',
+  firingMode: 'Firing Mode',
+  lockboxWidth: 'Lockbox Width',
+  lockboxHeight: 'Lockbox Height',
+  effectiveRange: 'Effective Range',
+  ammoConsumedPerShot: 'Ammo / Shot',
+  energyPerShot: 'Energy / Shot',
+  twoHanded: 'Two-Handed',
+  isMelee: 'Melee Weapon'
 }
 
 const getCategoryStats = (category: PartCategory): string[] => {
@@ -53,14 +71,66 @@ const getCategoryStats = (category: PartCategory): string[] => {
       return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'stability']
     case 'Generator':
       return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'energyCapacity', 'powerOutput']
+    case 'ThermalRegulator':
+      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'heatDissipation', 'heatCapacity', 'emergencyCooling']
     case 'LeftArm':
-      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'meleePower']
+      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'meleeDamage']
     case 'RightArm':
       return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'accuracy']
     case 'Utility1':
       return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'sensorStrength']
     case 'Utility2':
       return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'liftCapacity', 'speedModifier', 'energyUse']
+    case 'HandWeapon':
+      return [
+        'currentIntegrity',
+        'weight',
+        'PDEF',
+        'EDEF',
+        'energyDrain',
+        'damagePerShot',
+        'fireRateCooldownSeconds',
+        'projectileCount',
+        'spreadDegrees',
+        'bulletSpeed',
+        'clipSize',
+        'effectiveRange',
+        'stability',
+        'meleeDamage',
+        'energyPerShot',
+        'ammoConsumedPerShot',
+        'firingMode',
+        'projectileType',
+        'damageType',
+        'twoHanded',
+        'isMelee'
+      ]
+    case 'ShoulderWeapon':
+      return [
+        'currentIntegrity',
+        'weight',
+        'PDEF',
+        'EDEF',
+        'energyDrain',
+        'damagePerShot',
+        'fireRateCooldownSeconds',
+        'projectileCount',
+        'spreadDegrees',
+        'bulletSpeed',
+        'clipSize',
+        'effectiveRange',
+        'stability',
+        'meleeDamage',
+        'energyPerShot',
+        'ammoConsumedPerShot',
+        'firingMode',
+        'projectileType',
+        'damageType',
+        'lockboxWidth',
+        'lockboxHeight',
+        'twoHanded',
+        'isMelee'
+      ]
     default:
       return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain']
   }

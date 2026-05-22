@@ -318,8 +318,10 @@ const getEditableKeys = (category: PartCategory): string[] => {
       return [...shared, 'stability']
     case 'Generator':
       return [...shared, 'energyCapacity', 'powerOutput']
+    case 'ThermalRegulator':
+      return [...shared, 'heatDissipation', 'heatCapacity', 'emergencyCooling']
     case 'LeftArm':
-      return [...shared, 'meleePower']
+      return [...shared, 'meleeDamage']
     case 'RightArm':
       return [...shared, 'accuracy']
     case 'Utility1':
@@ -327,9 +329,9 @@ const getEditableKeys = (category: PartCategory): string[] => {
     case 'Utility2':
       return [...shared, 'heatGeneration', 'liftCapacity', 'flightType', 'rotorCount', 'verticalTakeoffTime', 'flightStability', 'speedModifier', 'energyUse']
     case 'HandWeapon':
-      return [...shared, 'damagePerShot', 'fireRateCooldownSeconds', 'projectileCount', 'spreadDegrees', 'bulletSpeed', 'clipSize', 'accuracy', 'twoHanded', 'isMelee', 'isPassive']
+      return [...shared, 'damagePerShot', 'fireRateCooldownSeconds', 'projectileCount', 'spreadDegrees', 'bulletSpeed', 'clipSize', 'accuracy', 'effectiveRange', 'stability', 'meleeDamage', 'twoHanded', 'isMelee', 'isPassive']
     case 'ShoulderWeapon':
-      return [...shared, 'damagePerShot', 'fireRateCooldownSeconds', 'projectileCount', 'spreadDegrees', 'bulletSpeed', 'clipSize', 'accuracy', 'twoHanded', 'isPassive']
+      return [...shared, 'damagePerShot', 'fireRateCooldownSeconds', 'projectileCount', 'spreadDegrees', 'bulletSpeed', 'clipSize', 'accuracy', 'effectiveRange', 'stability', 'meleeDamage', 'twoHanded', 'isPassive']
     default:
       return shared
   }

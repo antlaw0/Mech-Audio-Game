@@ -883,6 +883,11 @@ export function createAudioController(): AudioController {
     } // end if objects
     if (name === 'enemies') {
       categoryEnemies = enabled
+      if (!enabled) {
+        radarDetectionGain.gain.rampTo(0, 0.08)
+        aimAssistGain.gain.rampTo(0, 0.08)
+        aimAssistCueTimerSeconds = 0
+      } // end if enemies category was disabled
       return categoryEnemies
     } // end if enemies
     categoryNavigation = enabled
@@ -1162,6 +1167,9 @@ export function createAudioController(): AudioController {
   const defaultPlayerFireSoundPath = 'assets/sounds/weapons/pistol_fire.ogg'
   const playerFireSound = new Tone.Player(defaultPlayerFireSoundPath).toDestination()
   const playerFireSoundCache = new Map<string, Tone.Player>([[defaultPlayerFireSoundPath, playerFireSound]])
+  const playerFireSoundVoicePools = new Map<string, Tone.Player[]>()
+  const playerFireSoundVoiceCursors = new Map<string, number>()
+  const playerFireSoundPendingLoads = new Set<string>()
   const reloadClipDurationMsCache = new Map<string, number>()
   const reloadServoLoopFallbackPath = 'assets/sounds/servomotor.ogg'
   const reloadServoPlayerCache = new Map<string, Tone.Player>()
@@ -1492,11 +1500,11 @@ export function createAudioController(): AudioController {
   // Mid-range radar detection: directional tone with stable loudness and stereo pan.
   const radarDetectionPanner = new Tone.Panner(0).toDestination()
   const radarDetectionGain = new Tone.Gain(0).connect(radarDetectionPanner)
-  const radarDetectionBoost = new Tone.Gain(6).connect(radarDetectionGain)
+  const radarDetectionBoost = new Tone.Gain(1.2).connect(radarDetectionGain)
   const radarDetectionFilter = new Tone.Filter({ frequency: 2400, type: 'lowpass', rolloff: -24 }).connect(radarDetectionBoost)
   const radarDetectionDistortion = new Tone.Distortion(0.55).connect(radarDetectionFilter)
   const radarDetectionTremolo = new Tone.Tremolo({ frequency: 1, depth: 1.0, type: 'sine', spread: 0 }).connect(radarDetectionDistortion)
-  const radarDetectionOsc = new Tone.Oscillator({ frequency: 180, type: 'square' }).connect(radarDetectionTremolo)
+  const radarDetectionOsc = new Tone.Oscillator({ frequency: 180, type: 'triangle' }).connect(radarDetectionTremolo)
 
   const destinationTonePanner = new Tone.Panner(0).toDestination()
   const destinationToneGain = new Tone.Gain(0).connect(destinationTonePanner)
@@ -3092,24 +3100,43 @@ export function createAudioController(): AudioController {
       return
     } // end if audio not started
 
-    const cachedPlayer = playerFireSoundCache.get(soundPath)
-    if (cachedPlayer) {
-      retriggerLoadedPlayer(cachedPlayer)
+    const cachedPool = playerFireSoundVoicePools.get(soundPath)
+    if (cachedPool) {
+      const currentCursor = playerFireSoundVoiceCursors.get(soundPath) ?? 0
+      const nextCursor = playFromVoicePool(cachedPool, currentCursor)
+      playerFireSoundVoiceCursors.set(soundPath, nextCursor)
       return
-    } // end if cached fire sound exists
+    } // end if cached fire sound voice pool exists
 
-    const dynamicPlayer = new Tone.Player(soundPath).toDestination()
-    playerFireSoundCache.set(soundPath, dynamicPlayer)
-    void dynamicPlayer
-      .load(soundPath)
+    if (playerFireSoundPendingLoads.has(soundPath)) {
+      return
+    } // end if this sound path is still loading
+
+    playerFireSoundPendingLoads.add(soundPath)
+    const poolSize = 8
+    const voicePool = Array.from({ length: poolSize }, () => new Tone.Player(soundPath).toDestination())
+    playerFireSoundVoicePools.set(soundPath, voicePool)
+    playerFireSoundVoiceCursors.set(soundPath, 0)
+
+    void Promise.all(voicePool.map((voice) => voice.load(soundPath)))
       .then(() => {
-        retriggerLoadedPlayer(dynamicPlayer)
+        const currentCursor = playerFireSoundVoiceCursors.get(soundPath) ?? 0
+        const nextCursor = playFromVoicePool(voicePool, currentCursor)
+        playerFireSoundVoiceCursors.set(soundPath, nextCursor)
       })
       .catch((error) => {
-        audioDebugWarn('Failed to load player fire sound, falling back to default.', { soundPath, error })
-        playerFireSoundCache.delete(soundPath)
+        audioDebugWarn('Failed to load player fire sound voice pool, falling back to default.', { soundPath, error })
+        playerFireSoundVoicePools.delete(soundPath)
+        playerFireSoundVoiceCursors.delete(soundPath)
+        for (const voice of voicePool) {
+          voice.dispose()
+        } // end for each failed pooled voice
         retriggerLoadedPlayer(playerFireSound)
       })
+      .finally(() => {
+        playerFireSoundPendingLoads.delete(soundPath)
+      })
+
   } // end function fireGunshot
 
   const playProjectileNearMiss = (
@@ -3746,6 +3773,11 @@ export function createAudioController(): AudioController {
       centerZ - player.position.z
     )
 
+    if (!Number.isFinite(clusterDist)) {
+      radarDetectionGain.gain.rampTo(0, 0.2)
+      return
+    } // end if cluster distance is invalid
+
     // Pan only by left-right bearing so the radar cue does not lose level with range.
     const listenerPos = worldToListenerSpace(
       { x: centerX, y: centerY, z: centerZ },
@@ -3763,7 +3795,11 @@ export function createAudioController(): AudioController {
     // Pitch = closeness: farther cluster yields lower tone.
     const rangeSpan = Math.max(detectionRange - nearExclusionRange, 1)
     const distFraction = clamp(1 - (clusterDist - nearExclusionRange) / rangeSpan, 0, 1)
-    const targetFreq = AUDIO_NAVIGATION_CONFIG.radarPitchFar + (AUDIO_NAVIGATION_CONFIG.radarPitchNear - AUDIO_NAVIGATION_CONFIG.radarPitchFar) * distFraction
+    const targetFreq = clamp(
+      AUDIO_NAVIGATION_CONFIG.radarPitchFar + (AUDIO_NAVIGATION_CONFIG.radarPitchNear - AUDIO_NAVIGATION_CONFIG.radarPitchFar) * distFraction,
+      Math.min(AUDIO_NAVIGATION_CONFIG.radarPitchFar, AUDIO_NAVIGATION_CONFIG.radarPitchNear),
+      Math.max(AUDIO_NAVIGATION_CONFIG.radarPitchFar, AUDIO_NAVIGATION_CONFIG.radarPitchNear)
+    )
     radarDetectionOsc.frequency.rampTo(targetFreq, 0.25)
 
     // Tremolo rate = density: more enemies pulse faster.
@@ -3771,13 +3807,14 @@ export function createAudioController(): AudioController {
     const tremoloRate = AUDIO_NAVIGATION_CONFIG.radarTremoloMin + (AUDIO_NAVIGATION_CONFIG.radarTremoloMax - AUDIO_NAVIGATION_CONFIG.radarTremoloMin) * countFraction
     radarDetectionTremolo.frequency.rampTo(tremoloRate, 0.3)
 
-    const targetGain = AUDIO_NAVIGATION_CONFIG.radarGain * enemiesVolume
+    const targetGain = clamp(AUDIO_NAVIGATION_CONFIG.radarGain * enemiesVolume, 0, 0.35)
     audioDebugLog(`[RADAR] Cluster: clusterDist=${clusterDist.toFixed(1)}, freq=${targetFreq.toFixed(1)}, tremolo=${tremoloRate.toFixed(2)}, gain=${targetGain.toFixed(3)}, enemiesVolume=${enemiesVolume.toFixed(2)}`)
     radarDetectionGain.gain.rampTo(targetGain, 0.3)
   } // end function updateRadarDetection
 
   const updateAimAssist = (dt: number, player: PlayerAudioState, enemies: EnemyAudioState[]): void => {
-    aimAssistCueTimerSeconds = Math.max(0, aimAssistCueTimerSeconds - dt)
+    const safeDt = Number.isFinite(dt) ? dt : 0
+    aimAssistCueTimerSeconds = Math.max(0, aimAssistCueTimerSeconds - safeDt)
 
     if (!aimAssistEnabled || !categoryEnemies) {
       aimAssistCueTimerSeconds = 0
@@ -3839,9 +3876,10 @@ export function createAudioController(): AudioController {
       return
     } // end if aim assist ping interval has not elapsed
 
-    const baseFrequency = AUDIO_NAVIGATION_CONFIG.radarPitchFar
+    const baseFrequencyUnclamped = AUDIO_NAVIGATION_CONFIG.radarPitchFar
       + (AUDIO_CONFIG.player.aimAssistMaxFrequency - AUDIO_NAVIGATION_CONFIG.radarPitchFar) * Math.pow(closeness, 0.7)
-    const secondFrequency = baseFrequency * (1.16 + alignmentStrength * 0.08)
+    const baseFrequency = clamp(baseFrequencyUnclamped, 180, 900)
+    const secondFrequency = clamp(baseFrequency * (1.16 + alignmentStrength * 0.08), 220, 980)
     const cueGain = clamp((0.06 + closeness * 0.12 + alignmentStrength * 0.08) * enemiesVolume, 0, 0.32)
     const firstStart = strictlyIncreasingStartTime(Tone.now(), aimAssistTrackingLastStartSeconds)
     const secondStart = strictlyIncreasingStartTime(firstStart + 0.14, firstStart)
@@ -4008,6 +4046,10 @@ export function createAudioController(): AudioController {
     getFrontBackSettings,
     getFrontBackDiagnostics,
     getAllFrontBackDiagnostics,
+    getAudioDiagnostics: () => ({
+      activeEnemyRuntimes: enemyRuntimes.size,
+      occlusionEmitters: audioOcclusionSystem.getAllDiagnostics().length
+    }),
     updateIncomingProjectileAudio,
     playProjectileNearMiss,
     isAudioStarted: () => audioStarted,
