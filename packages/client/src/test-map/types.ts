@@ -395,6 +395,7 @@ export interface AudioController {
   resumeAllAudio: () => Promise<void>
   startServo: () => void
   stopServo: () => void
+  setServoMotionIntensity: (normalizedMotion: number) => void
   playFootstep: (terrainLayer?: FootstepTerrainLayer) => void
   stopFootstep: () => void
   updatePlayerMobilityAudio: (

@@ -862,6 +862,7 @@ export function createAudioController(): AudioController {
   let ambienceVolume = 0
   let musicVolume = 0
   let servoVolume = 1
+  let servoMotionIntensity = 0
   let footstepsVolume = 1
   let debugPitchScale = 1
   let flightLoopVolume = 0.5
@@ -965,17 +966,28 @@ export function createAudioController(): AudioController {
     })
   } // end function applyHtmlAudioVolumes
 
+  const applyServoPlaybackRate = (): void => {
+    const baseRate = Math.max(0.5, Math.min(2, debugPitchScale))
+    const motionRateScale = 1 + (Math.max(0, Math.min(1, servoMotionIntensity)) * 0.9)
+    servoAudio.playbackRate = Math.max(0.5, Math.min(2, baseRate * motionRateScale))
+  } // end function applyServoPlaybackRate
+
   const applyHtmlAudioPitchScale = (): void => {
     const playbackRate = Math.max(0.5, Math.min(2, debugPitchScale))
     ambienceAudio.playbackRate = playbackRate
     cityAmbienceAudio.playbackRate = playbackRate
     musicAudio.playbackRate = playbackRate
-    servoAudio.playbackRate = playbackRate
+    applyServoPlaybackRate()
     footstepAudio.playbackRate = playbackRate
     allTerrainStepAudios.forEach((audio) => {
       audio.playbackRate = playbackRate
     })
   } // end function applyHtmlAudioPitchScale
+
+  const setServoMotionIntensity = (normalizedMotion: number): void => {
+    servoMotionIntensity = Math.max(0, Math.min(1, normalizedMotion))
+    applyServoPlaybackRate()
+  } // end function setServoMotionIntensity
 
   const setDebugPitchScale = (value: number): number => {
     const nextValue = Math.max(0.5, Math.min(2, Number.isFinite(value) ? value : 1))
@@ -4738,6 +4750,7 @@ export function createAudioController(): AudioController {
     resumeAllAudio,
     startServo,
     stopServo,
+    setServoMotionIntensity,
     playFootstep,
     stopFootstep,
     updatePlayerMobilityAudio,

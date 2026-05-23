@@ -1,5 +1,5 @@
 import type { AudioController, InputState } from './types.js'
-import { getControlBinding, isReservedDebugNumpadCode, type ControlActionId } from './controls.js'
+import { getControlBinding, type ControlActionId } from './controls.js'
 import { isEditableEventTarget, isTypingContextActive } from './keyboard-focus.js'
 
 function shouldPreventDefault(code: string): boolean {
@@ -7,9 +7,6 @@ function shouldPreventDefault(code: string): boolean {
 } // end function shouldPreventDefault
 
 function matchesBoundControl(event: KeyboardEvent, actionId: ControlActionId): boolean {
-  if (isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-    return false
-  }
   return event.code === getControlBinding(actionId)
 } // end function matchesBoundControl
 
@@ -111,6 +108,10 @@ export function bindInput(
         } // end if pitch reset key combo detected
       } // end if lookDown
 
+      if (matchesBoundControl(event, 'recenterPitch')) {
+        input.pitchResetPending = true
+      } // end if recenterPitch
+
       if (matchesBoundControl(event, 'fire')) {
         input.fireHeld = true
         input.firePending = true
@@ -150,38 +151,6 @@ export function bindInput(
       if (matchesBoundControl(event, 'selectShoulderRight')) {
         input.selectedWeaponSlot = 'ShoulderRight'
       } // end if selectShoulderRight
-
-      if (event.code === 'Numpad1' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-        input.spawnTankPending = true
-      } // end if Numpad1
-
-      if (event.code === 'Numpad2' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-        input.spawnStrikerPending = true
-      } // end if Numpad2
-
-      if (event.code === 'Numpad3' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-        input.spawnBrutePending = true
-      } // end if Numpad3
-
-      if (event.code === 'Numpad4' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-        input.spawnHelicopterPending = true
-      } // end if Numpad4
-
-      if (event.code === 'Numpad5' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-        input.spawnBruiserPending = true
-      } // end if Numpad5
-
-      if (event.code === 'NumpadDecimal' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-        input.spawnTestDummyPending = true
-      } // end if NumpadDecimal
-
-      if (event.code === 'NumpadDivide' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-        input.refillEpPending = true
-      } // end if NumpadDivide
-
-      if (event.code === 'NumpadMultiply' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-        input.refillHpPending = true
-      } // end if NumpadMultiply
 
       if (matchesBoundControl(event, 'speakEnergy')) {
         input.speakEpPending = true
@@ -307,38 +276,6 @@ export function bindInput(
       input.selectedWeaponSlot = null
     } // end if Digit key released
 
-    if (event.code === 'Numpad1' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-      input.spawnTankPending = false
-    } // end if Numpad1
-
-    if (event.code === 'Numpad2' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-      input.spawnStrikerPending = false
-    } // end if Numpad2
-
-    if (event.code === 'Numpad3' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-      input.spawnBrutePending = false
-    } // end if Numpad3
-
-    if (event.code === 'Numpad4' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-      input.spawnHelicopterPending = false
-    } // end if Numpad4
-
-    if (event.code === 'Numpad5' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-      input.spawnBruiserPending = false
-    } // end if Numpad5
-
-    if (event.code === 'NumpadDecimal' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-      input.spawnTestDummyPending = false
-    } // end if NumpadDecimal
-
-    if (event.code === 'NumpadDivide' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-      input.refillEpPending = false
-    } // end if NumpadDivide
-
-    if (event.code === 'NumpadMultiply' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-      input.refillHpPending = false
-    } // end if NumpadMultiply
-
     if (matchesBoundControl(event, 'speakEnergy')) {
       input.speakEpPending = false
     } // end if speakEnergy
@@ -355,19 +292,5 @@ export function bindInput(
       input.speakDestinationPending = false
     } // end if speakDestination
 
-    if (
-      (
-        matchesBoundControl(event, 'turnLeft') ||
-        matchesBoundControl(event, 'turnRight') ||
-        matchesBoundControl(event, 'lookUp') ||
-        matchesBoundControl(event, 'lookDown')
-      ) &&
-      !input.turnLeft &&
-      !input.turnRight &&
-      !input.lookUp &&
-      !input.lookDown
-    ) {
-      audio.stopServo()
-    } // end if turning keys all released
   }) // end keyup listener
 } // end function bindInput

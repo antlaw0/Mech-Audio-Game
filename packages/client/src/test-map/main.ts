@@ -52,7 +52,7 @@ import type { EnemyId } from './enemies/enemyTypes.js'
 import { getSharedFlightHeight, setSharedFlightHeight } from './runtime-config.js'
 import type { TargetableEnemyRender, WeaponStats } from './types.js'
 import { PLAYER_MELEE_WEAPON_DEFINITIONS, PLAYER_WEAPON_DEFINITIONS, type PlayerMeleeWeaponDefinition, type PlayerWeaponDefinition } from './weapons.js'
-import { formatControlCode, getControlBindingDefinitions, getControlBindings, isReservedDebugNumpadCode, setControlBinding, type ControlActionId } from './controls.js'
+import { formatControlCode, getControlBindingDefinitions, getControlBindings, setControlBinding, type ControlActionId } from './controls.js'
 import { bindInput } from './input.js'
 import { createDeveloperConsole } from './dev-console.js'
 import { createMapData } from './map-data.js'
@@ -615,6 +615,10 @@ function startTestMap(): void {
   let previousTargetCount = 0
   let targetRefinementSliceCursor = 0
   let ambienceSliceCursor = 0
+  let pitchAssistHasTargetLock = false
+  let pitchAssistLockRefiningActive = false
+  let pitchAssistTargetElevationOffset = 0
+  let previousPitchAssistLockProgress = 0
 
   const DEV_PART_SLOTS = [
     'Head',
@@ -1740,7 +1744,7 @@ function startTestMap(): void {
       return
     }
 
-    pauseControlsStatusElement.textContent = 'Select a control binding button, then press Enter, Space, or click to capture. Numpad bindings work when Num Lock is off.'
+    pauseControlsStatusElement.textContent = 'Select a control binding button, then press Enter, Space, or click to capture.'
   } // end function updatePauseControlsStatus
 
   const announceControlBindingAssigned = (actionId: ControlActionId, keyCode: string): void => {
@@ -2638,55 +2642,6 @@ function startTestMap(): void {
     })
   } // end if weapon cancel button exists
 
-  document.addEventListener('keydown', (event) => {
-    if (isTypingContextActive(event)) {
-      return
-    } // end if typing in editable field
-
-    if (!isPaused || isConsoleOpen || isEditorModalOpen || event.repeat) {
-      return
-    } // end if not in pause-only editor trigger state
-
-    if (event.code === 'Numpad1' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-      event.preventDefault()
-      openEnemyEditorModal('tank')
-    } else if (event.code === 'Numpad2' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-      event.preventDefault()
-      openEnemyEditorModal('striker')
-    } else if (event.code === 'Numpad3' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-      event.preventDefault()
-      openEnemyEditorModal('brute')
-    } else if (event.code === 'Numpad4' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-      event.preventDefault()
-      openEnemyEditorModal('helicopter')
-    } else if (event.code === 'Numpad5' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-      event.preventDefault()
-      openEnemyEditorModal('bruiser')
-    } else if (event.code === 'NumpadDecimal' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
-      event.preventDefault()
-      openEnemyEditorModal('test-dummy')
-    } // end if numpad enemy editor keys
-  })
-
-  document.addEventListener('keydown', (event) => {
-    if (isTypingContextActive(event)) {
-      return
-    } // end if typing in editable field
-
-    if (
-      event.code !== 'Numpad0' ||
-      !isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock')) ||
-      event.repeat ||
-      isEditorModalOpen ||
-      isWeaponEditorOpen ||
-      isConsoleOpen
-    ) {
-      return
-    } // end if not weapon editor key or already open
-    event.preventDefault()
-    openWeaponEditor()
-  })
-
   const combatWorld = createCombatEcsWorld()
 
   // Radar test cluster: 2 tanks + 1 striker placed ~70 units east of player spawn (200, 500),
@@ -2734,6 +2689,10 @@ function startTestMap(): void {
       lockProgress: 0,
       targetScore: 0
     }
+    pitchAssistHasTargetLock = false
+    pitchAssistLockRefiningActive = false
+    pitchAssistTargetElevationOffset = 0
+    previousPitchAssistLockProgress = 0
     audio.resetTargetLockProgressAudio()
   } // end function resetTargetLockState
 
@@ -3126,6 +3085,10 @@ function startTestMap(): void {
     const maxPitchDegrees = (MAX_LOOK_PITCH * 180) / Math.PI
     const nextPitchDegrees = Math.max(-maxPitchDegrees, Math.min(maxPitchDegrees, value))
     player.pitch = (nextPitchDegrees * Math.PI) / 180
+    updateState.currentPitch = player.pitch
+    updateState.pitchVelocity = 0
+    updateState.targetPitchVelocity = 0
+    updateState.pitchHardRecenterTimeRemainingSeconds = 0
     return nextPitchDegrees
   } // end function setPlayerPitchDegrees
 
@@ -3986,6 +3949,19 @@ function startTestMap(): void {
     }
   } // end function getLockTargetDisplayName
 
+  const getTargetElevationOffset = (target: TargetableEnemyRender | null): number => {
+    if (target === null) {
+      return 0
+    }
+
+    const dx = target.x - player.x
+    const dy = target.y - player.y
+    const horizontalDistance = Math.max(0.0001, Math.hypot(dx, dy))
+    const playerEyeZ = (player.z ?? 0) + PLAYER_HEIGHT
+    const targetCenterZ = target.height + PLAYER_HEIGHT
+    return Math.atan2(playerEyeZ - targetCenterZ, horizontalDistance)
+  } // end function getTargetElevationOffset
+
   const getRuntimeDebugOverlayLines = (): string[] => {
     const headingDegrees = normalizeDegrees((player.angle * 180) / Math.PI)
     const stats = syncAuthoritativeMechStats()
@@ -4039,6 +4015,11 @@ function startTestMap(): void {
       `Map Position (internal): (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${(player.z ?? 0).toFixed(2)})`,
       `Velocity: (${devVelocityX.toFixed(2)}, ${devVelocityY.toFixed(2)}, ${devVelocityZ.toFixed(2)})`,
       `Heading: ${headingDegrees.toFixed(1)} deg`,
+      `Pitch: ${((updateState.currentPitch * 180) / Math.PI).toFixed(1)} deg`,
+      `Pitch Velocity: ${((updateState.pitchVelocity * 180) / Math.PI).toFixed(1)} deg/s`,
+      `Pitch Spring Strength: ${updateState.pitchSpringStrength.toFixed(3)}`,
+      `Target Elevation Offset: ${((updateState.targetElevationOffset * 180) / Math.PI).toFixed(1)} deg`,
+      `Pitch Spring Suppressed: ${updateState.pitchSpringSuppressed ? 'true' : 'false'}`,
       `Grounded: ${player.flightState === 'grounded' ? 'true' : 'false'}`,
       `Flying: ${player.isFlying ? 'true' : 'false'}`,
       `Boosting: ${player.isBoosting ? 'true' : 'false'}`,
@@ -4641,15 +4622,21 @@ function startTestMap(): void {
     },
     {
       syntax: 'spawn <enemyId>',
-      description: 'Spawn an enemy: tank, striker, brute, or helicopter.',
+      description: 'Spawn an enemy by id. Use "spawn dummy" to open the test-dummy spawn modal.',
       helpPath: ['Enemies', 'Spawning'],
-      examples: ['spawn tank', 'spawn helicopter']
+      examples: ['spawn tank', 'spawn helicopter', 'spawn dummy']
     },
     {
       syntax: 'spawn enemy <enemyId>',
-      description: 'Ticket alias for enemy spawning commands.',
+      description: 'Alias for spawn commands. Use "spawn enemy dummy" to open the test-dummy spawn modal.',
       helpPath: ['Enemies', 'Spawning'],
-      examples: ['spawn enemy tank']
+      examples: ['spawn enemy tank', 'spawn enemy dummy']
+    },
+    {
+      syntax: 'weapon edit on',
+      description: 'Open the weapon edit modal.',
+      helpPath: ['Weapon', 'Combat'],
+      examples: ['weapon edit on']
     },
     {
       syntax: 'player.get <view>',
@@ -5509,14 +5496,27 @@ function startTestMap(): void {
     } // end if player.shutdown command
 
     if (normalizedCommand.startsWith('spawn enemy ')) {
-      const enemyId = (commandLine.trim().split(/\s+/)[2] ?? '') as EnemyId
+      const rawEnemyArg = (commandLine.trim().split(/\s+/)[2] ?? '').toLowerCase()
+      if (rawEnemyArg === 'dummy' || rawEnemyArg === 'test-dummy' || rawEnemyArg === 'testdummy') {
+        await closeDeveloperConsole(false)
+        openEnemyEditorModal('test-dummy')
+        return ['Opened spawn modal for test-dummy.']
+      } // end if spawn enemy dummy should open modal
+
+      const enemyId = rawEnemyArg as EnemyId
       if (!enemyIds.includes(enemyId)) {
-        throw new Error(`Usage: spawn enemy <${enemyIds.join('|')}>`)
+        throw new Error(`Usage: spawn enemy <${enemyIds.join('|')}|dummy>`)
       } // end if enemy id invalid
       const spawned = spawnRandomEnemy(combatWorld, collisionWorld, player, enemyId)
       nextEventTag(`Spawn enemy: ${enemyId} (${spawned ? 'ok' : 'failed'})`)
       return [spawned ? `${enemyId} spawned.` : `No valid spawn location for ${enemyId}.`]
     } // end if spawn enemy command
+
+    if (normalizedCommand === 'weapon edit on') {
+      await closeDeveloperConsole(false)
+      openWeaponEditor()
+      return ['Opened weapon edit modal.']
+    } // end if weapon edit on command
 
     if (normalizedCommand === 'kill all') {
       const removed = clearCombatEntities(combatWorld)
@@ -5769,9 +5769,16 @@ function startTestMap(): void {
     } // end if toggle command
 
     if (command === 'spawn') {
-      const enemyId = args[0] as EnemyId | undefined
+      const rawEnemyArg = (args[0] ?? '').toLowerCase()
+      if (rawEnemyArg === 'dummy' || rawEnemyArg === 'test-dummy' || rawEnemyArg === 'testdummy') {
+        await closeDeveloperConsole(false)
+        openEnemyEditorModal('test-dummy')
+        return ['Opened spawn modal for test-dummy.']
+      } // end if spawn dummy should open modal
+
+      const enemyId = rawEnemyArg as EnemyId
       if (!enemyId || !enemyIds.includes(enemyId)) {
-        throw new Error(`Usage: spawn <${enemyIds.join('|')}>`)
+        throw new Error(`Usage: spawn <${enemyIds.join('|')}|dummy>`)
       } // end if enemy id missing or invalid
       const spawned = spawnRandomEnemy(combatWorld, collisionWorld, player, enemyId)
       return [spawned ? `${enemyId} spawned.` : `No valid spawn location for ${enemyId}.`]
@@ -5857,10 +5864,17 @@ function startTestMap(): void {
 
     if (currentCommand === 'spawn') {
       const currentEnemy = hasTrailingWhitespace ? '' : ((tokens[1] ?? '').toLowerCase())
-      return enemyIds
+      return [...enemyIds, 'dummy']
+        .filter((enemyId, index, source) => source.indexOf(enemyId) === index)
         .filter((enemyId) => enemyId.startsWith(currentEnemy))
         .map((enemyId) => `spawn ${enemyId}`)
     } // end if completing spawn target
+
+    if (currentCommand === 'weapon') {
+      const suffix = tokens.slice(1).join(' ').toLowerCase()
+      return ['weapon edit on']
+        .filter((entry) => entry.startsWith(`weapon ${suffix}`.trim()))
+    } // end if completing weapon command
 
     if (currentCommand === 'target.layout' || (currentCommand === 'target' && (tokens[1] ?? '').toLowerCase() === 'layout')) {
       const layoutIds = ['HumanoidMech', 'Tank', 'Helicopter', 'APC', 'Drone']
@@ -6147,6 +6161,11 @@ function startTestMap(): void {
           rotorCount: flightRuntimeProfile.rotorCount,
           spinUpSeconds: flightRuntimeProfile.takeoffDurationSeconds,
           maxHorizontalSpeed: flightSpeedLimit
+        },
+        pitchAssistContext: {
+          hasTargetLock: pitchAssistHasTargetLock,
+          lockRefiningActive: pitchAssistLockRefiningActive,
+          targetElevationOffset: pitchAssistTargetElevationOffset
         },
         collisionWorld,
         movementProfile
@@ -6474,6 +6493,11 @@ function startTestMap(): void {
       devTargetLockedName = 'None'
     }
     devTargetLockMaxProgress = maxLockProgress
+    const lockProgressDelta = targetLockState.lockProgress - previousPitchAssistLockProgress
+    previousPitchAssistLockProgress = targetLockState.lockProgress
+    pitchAssistHasTargetLock = lockUpdate.currentTargetId !== null
+    pitchAssistLockRefiningActive = lockUpdate.currentTargetId !== null && lockProgressDelta > 0.01
+    pitchAssistTargetElevationOffset = getTargetElevationOffset(lockUpdate.lockedTarget)
 
     // Find current target's position for 3D panning
     let targetPos = undefined

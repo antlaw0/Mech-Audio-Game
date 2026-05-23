@@ -14,7 +14,17 @@ export const PLAYER_FLIGHT_VERTICAL_SPEED = 3.4
 export const DEFAULT_FLIGHT_HEIGHT = 3
 export const TURN_SPEED = 1.8
 export const LOOK_SPEED = 1.5
-export const MAX_LOOK_PITCH = 0.7
+export const MAX_LOOK_PITCH = (40 * Math.PI) / 180
+export const PITCH_ASSIST_CONFIG = {
+	maxPitchAngleRadians: MAX_LOOK_PITCH,
+	maxPitchReachTimeSeconds: 0.8,
+	pitchAccelerationRadiansPerSecondSquared: 3.8,
+	passiveSpringSettleTimeSeconds: 1.5,
+	springSuppressedMultiplier: 0.28,
+	significantTargetElevationRadians: (8 * Math.PI) / 180,
+	hardRecenterSettleTimeSeconds: 0.45,
+	hardRecenterBlendDurationSeconds: 0.45
+} as const
 export const PLAYER_RADIUS = 0.25
 export const FOOTSTEP_INTERVAL_SECONDS = 0.38
 export const BULLET_SPEED = 40

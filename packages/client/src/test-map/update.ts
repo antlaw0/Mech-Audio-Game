@@ -1,10 +1,10 @@
 import {
   FOOTSTEP_INTERVAL_SECONDS,
-  LOOK_SPEED,
   PLAYER_BOOST_SPEED,
   PLAYER_FLIGHT_SPEED,
   PLAYER_FLIGHT_VERTICAL_SPEED,
   MAX_LOOK_PITCH,
+  PITCH_ASSIST_CONFIG,
   MAP_HEIGHT,
   MAP_WIDTH,
   PLAYER_RADIUS,
@@ -29,7 +29,20 @@ export interface UpdateState {
   groundStrafeVelocity: number
   rotorSpinupElapsedSeconds: number
   rotorSpinNormalized: number
+  currentPitch: number
+  targetPitchVelocity: number
+  pitchVelocity: number
+  pitchHardRecenterTimeRemainingSeconds: number
+  pitchSpringStrength: number
+  pitchSpringSuppressed: boolean
+  targetElevationOffset: number
 } // end interface UpdateState
+
+export interface PitchAssistContext {
+  hasTargetLock: boolean
+  lockRefiningActive: boolean
+  targetElevationOffset: number
+} // end interface PitchAssistContext
 
 export interface FlightRuntimeConfig {
   mode: 'jet' | 'rotor'
@@ -62,6 +75,7 @@ export interface UpdateEnvironment {
   canEngageFlight: boolean
   flightAltitude: number
   flightConfig: FlightRuntimeConfig
+  pitchAssistContext?: PitchAssistContext
   collisionWorld: WorldCollisionWorld
   movementProfile: MovementArchetypeProfile
 } // end interface UpdateEnvironment
@@ -75,7 +89,14 @@ export function createUpdateState(): UpdateState {
     groundForwardVelocity: 0,
     groundStrafeVelocity: 0,
     rotorSpinupElapsedSeconds: 0,
-    rotorSpinNormalized: 0
+    rotorSpinNormalized: 0,
+    currentPitch: 0,
+    targetPitchVelocity: 0,
+    pitchVelocity: 0,
+    pitchHardRecenterTimeRemainingSeconds: 0,
+    pitchSpringStrength: 0,
+    pitchSpringSuppressed: false,
+    targetElevationOffset: 0
   } // end object update state
 } // end function createUpdateState
 
@@ -92,6 +113,17 @@ function moveToward(current: number, target: number, maxDelta: number): number {
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 } // end function clamp
+
+function getCriticallyDampedSpringAcceleration(
+  position: number,
+  velocity: number,
+  springStrength: number,
+  dampingScale = 1
+): number {
+  const omega = Math.sqrt(Math.max(0.0001, springStrength))
+  const damping = (2 * omega) * Math.max(0.25, dampingScale)
+  return (-springStrength * position) - (damping * velocity)
+} // end function getCriticallyDampedSpringAcceleration
 
 function isPointInsideZone(
   x: number,
@@ -133,7 +165,33 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
       ? PLAYER_SPEED
       : flightConfig.maxHorizontalSpeed
   const moveAmount = moveSpeed * deltaSeconds
-  const lookAmount = LOOK_SPEED * deltaSeconds
+  const maxPitchAngle = Math.min(MAX_LOOK_PITCH, PITCH_ASSIST_CONFIG.maxPitchAngleRadians)
+  const maxPitchSpeed = maxPitchAngle / Math.max(0.2, PITCH_ASSIST_CONFIG.maxPitchReachTimeSeconds)
+  const pitchAcceleration = Math.max(0.1, PITCH_ASSIST_CONFIG.pitchAccelerationRadiansPerSecondSquared)
+  const passiveSpringStrength = Math.pow(4 / Math.max(0.35, PITCH_ASSIST_CONFIG.passiveSpringSettleTimeSeconds), 2)
+  const hardRecenterSpringStrength = Math.pow(4 / Math.max(0.2, PITCH_ASSIST_CONFIG.hardRecenterSettleTimeSeconds), 2)
+  const pitchAssistContext = environment.pitchAssistContext
+  const targetElevationOffset = pitchAssistContext?.targetElevationOffset ?? 0
+  const hasSignificantTargetElevation = Math.abs(targetElevationOffset) >= PITCH_ASSIST_CONFIG.significantTargetElevationRadians
+  const springSuppressed = !!pitchAssistContext?.hasTargetLock
+    || !!pitchAssistContext?.lockRefiningActive
+    || hasSignificantTargetElevation
+  const springSuppressionMultiplier = springSuppressed
+    ? clamp(PITCH_ASSIST_CONFIG.springSuppressedMultiplier, 0.05, 1)
+    : 1
+
+  if (!Number.isFinite(state.currentPitch)) {
+    state.currentPitch = player.pitch
+  } // end if pitch state is uninitialized
+  if (!Number.isFinite(state.pitchVelocity)) {
+    state.pitchVelocity = 0
+  } // end if pitch velocity state is uninitialized
+  if (!Number.isFinite(state.targetPitchVelocity)) {
+    state.targetPitchVelocity = 0
+  } // end if target pitch velocity state is uninitialized
+  if (!Number.isFinite(state.pitchHardRecenterTimeRemainingSeconds)) {
+    state.pitchHardRecenterTimeRemainingSeconds = 0
+  } // end if hard recenter timer state is uninitialized
   const turnInput = (input.turnRight ? 1 : 0) - (input.turnLeft ? 1 : 0)
   if (turnInput !== 0) {
     const isFlying = player.isFlying || player.flightState === 'ascending' || player.flightState === 'airborne'
@@ -386,22 +444,61 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
 
   if (input.pitchResetPending) {
     input.pitchResetPending = false
-    const wasOffCenter = Math.abs(player.pitch) > 0.001
-    player.pitch = 0
+    const wasOffCenter = Math.abs(state.currentPitch) > 0.001
+    state.targetPitchVelocity = 0
+    state.pitchVelocity = 0
+    state.pitchHardRecenterTimeRemainingSeconds = Math.max(
+      state.pitchHardRecenterTimeRemainingSeconds,
+      PITCH_ASSIST_CONFIG.hardRecenterBlendDurationSeconds
+    )
     if (wasOffCenter && audio.isAudioStarted()) {
       audio.playPitchCenterConfirm()
     } // end if reset returned pitch to neutral
   } // end if pitch reset requested
 
-  if (input.lookUp) {
-    player.pitch -= lookAmount
-  } // end if lookUp
+  const lookInputAxis = (input.lookDown ? 1 : 0) - (input.lookUp ? 1 : 0)
+  if (lookInputAxis !== 0) {
+    state.pitchHardRecenterTimeRemainingSeconds = 0
+    state.targetPitchVelocity = lookInputAxis * maxPitchSpeed
+    state.pitchVelocity = moveToward(
+      state.pitchVelocity,
+      state.targetPitchVelocity,
+      pitchAcceleration * deltaSeconds
+    )
+  } else {
+    state.targetPitchVelocity = 0
+    state.pitchHardRecenterTimeRemainingSeconds = Math.max(0, state.pitchHardRecenterTimeRemainingSeconds - deltaSeconds)
+    const springStrength = state.pitchHardRecenterTimeRemainingSeconds > 0
+      ? hardRecenterSpringStrength
+      : passiveSpringStrength * springSuppressionMultiplier
+    const pitchAccelerationTowardHorizon = getCriticallyDampedSpringAcceleration(
+      state.currentPitch,
+      state.pitchVelocity,
+      springStrength
+    )
+    state.pitchVelocity += pitchAccelerationTowardHorizon * deltaSeconds
+  }
 
-  if (input.lookDown) {
-    player.pitch += lookAmount
-  } // end if lookDown
+  state.pitchVelocity = clamp(state.pitchVelocity, -maxPitchSpeed, maxPitchSpeed)
+  state.currentPitch = clamp(
+    state.currentPitch + (state.pitchVelocity * deltaSeconds),
+    -maxPitchAngle,
+    maxPitchAngle
+  )
 
-  player.pitch = Math.max(-MAX_LOOK_PITCH, Math.min(MAX_LOOK_PITCH, player.pitch))
+  if ((state.currentPitch <= -maxPitchAngle && state.pitchVelocity < 0) || (state.currentPitch >= maxPitchAngle && state.pitchVelocity > 0)) {
+    state.pitchVelocity = 0
+  } // end if pitch reached clamp boundary
+
+  player.pitch = state.currentPitch
+  state.pitchSpringStrength = state.pitchHardRecenterTimeRemainingSeconds > 0
+    ? hardRecenterSpringStrength
+    : passiveSpringStrength * springSuppressionMultiplier
+  state.pitchSpringSuppressed = springSuppressed
+  state.targetElevationOffset = targetElevationOffset
+  const normalizedPitchAssistMotion = maxPitchSpeed <= 0.0001
+    ? 0
+    : clamp(Math.abs(state.pitchVelocity) / maxPitchSpeed, 0, 1)
 
   const forwardAxis = (input.moveForward ? 1 : 0) + (input.moveBack ? -1 : 0)
   const strafeAxis = (input.strafeRight ? 1 : 0) + (input.strafeLeft ? -1 : 0)
@@ -590,7 +687,12 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   } // end if isMoving
 
   if (audio.isAudioStarted()) {
-    const shouldPlayServo = input.turnLeft || input.turnRight || input.lookUp || input.lookDown
+    const shouldPlayServo = input.turnLeft
+      || input.turnRight
+      || input.lookUp
+      || input.lookDown
+      || normalizedPitchAssistMotion > 0.015
+    audio.setServoMotionIntensity(normalizedPitchAssistMotion)
     if (shouldPlayServo && !audio.isServoPlaying()) {
       audio.startServo()
     } // end if should start servo

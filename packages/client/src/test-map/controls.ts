@@ -8,6 +8,7 @@ export type ControlActionId =
   | 'turnRight'
   | 'lookUp'
   | 'lookDown'
+  | 'recenterPitch'
   | 'fire'
   | 'reload'
   | 'melee'
@@ -37,7 +38,7 @@ export interface ControlBindingDefinition {
 
 export type ControlBindings = Record<ControlActionId, string>
 
-const STORAGE_KEY = 'mech.testMap.controlBindings.v1'
+const STORAGE_KEY = 'mech.testMap.controlBindings.v2'
 
 const CONTROL_BINDING_DEFINITIONS: readonly ControlBindingDefinition[] = [
   { id: 'toggleWorldMap', label: 'World map', description: 'Toggle the world map overlay.', section: 'Navigation', defaultCode: 'F2' },
@@ -45,11 +46,12 @@ const CONTROL_BINDING_DEFINITIONS: readonly ControlBindingDefinition[] = [
   { id: 'moveBack', label: 'Move backward', description: 'Reverse movement.', section: 'Movement', defaultCode: 'KeyS' },
   { id: 'strafeLeft', label: 'Strafe left', description: 'Move left without turning.', section: 'Movement', defaultCode: 'KeyA' },
   { id: 'strafeRight', label: 'Strafe right', description: 'Move right without turning.', section: 'Movement', defaultCode: 'KeyD' },
-  { id: 'turnLeft', label: 'Turn left', description: 'Rotate the mech left.', section: 'Movement', defaultCode: 'KeyJ' },
-  { id: 'turnRight', label: 'Turn right', description: 'Rotate the mech right.', section: 'Movement', defaultCode: 'KeyL' },
-  { id: 'lookUp', label: 'Look up', description: 'Pitch the camera upward.', section: 'Movement', defaultCode: 'KeyI' },
-  { id: 'lookDown', label: 'Look down', description: 'Pitch the camera downward.', section: 'Movement', defaultCode: 'KeyK' },
-  { id: 'fire', label: 'Fire weapon', description: 'Fire the active weapon.', section: 'Combat', defaultCode: 'Space' },
+  { id: 'turnLeft', label: 'Turn left', description: 'Rotate the mech left.', section: 'Movement', defaultCode: 'Numpad4' },
+  { id: 'turnRight', label: 'Turn right', description: 'Rotate the mech right.', section: 'Movement', defaultCode: 'Numpad6' },
+  { id: 'lookUp', label: 'Look up', description: 'Pitch the camera upward.', section: 'Movement', defaultCode: 'Numpad8' },
+  { id: 'lookDown', label: 'Look down', description: 'Pitch the camera downward.', section: 'Movement', defaultCode: 'Numpad2' },
+  { id: 'recenterPitch', label: 'Recenter pitch', description: 'Quickly recenter pitch toward horizon.', section: 'Movement', defaultCode: 'Numpad5' },
+  { id: 'fire', label: 'Fire weapon', description: 'Fire the active weapon.', section: 'Combat', defaultCode: 'Numpad0' },
   { id: 'reload', label: 'Reload', description: 'Reload the active ranged weapon.', section: 'Combat', defaultCode: 'Tab' },
   { id: 'melee', label: 'Melee attack', description: 'Use the melee weapon.', section: 'Combat', defaultCode: 'KeyR' },
   { id: 'flightToggle', label: 'Toggle flight', description: 'Switch between grounded and flight mode.', section: 'Combat', defaultCode: 'KeyF' },
