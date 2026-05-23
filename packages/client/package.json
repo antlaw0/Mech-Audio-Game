@@ -6,7 +6,7 @@
   "main": "dist/test-map/main.js",
   "types": "dist/test-map/main.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node ../../scripts/sync-client-parts-json.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

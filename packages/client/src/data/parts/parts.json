@@ -686,7 +686,7 @@
     "energyDrain": 2,
     "deprecated": false,
     "isMelee": false,
-    "twoHanded": true,
+    "twoHanded": false,
     "isPassive": false,
     "damagePerShot": 12,
     "projectileType": "bullet",

@@ -46,6 +46,7 @@ const helpText = [
   '',
   'Options:',
   '  --no-backup   Overwrite without writing a timestamped backup',
+  '  --allow-parts-json-write   Required confirmation flag before writing parts.json',
   '  --help        Show this help'
 ].join('\n')
 
@@ -172,6 +173,10 @@ const main = async () => {
 
   const inputPath = path.resolve(PROJECT_ROOT, inputArg)
   const rawInput = await readFile(inputPath, 'utf8')
+
+  if (!hasFlag('--allow-parts-json-write')) {
+    throw new Error('Refusing to write parts.json without --allow-parts-json-write.')
+  }
 
   let parsed
   try {

@@ -273,6 +273,86 @@ const createEquipModalContent = (
   return wrapper
 }
 
+type WeaponOccupancyEntry = {
+  instance: PartInstance
+  definition: PartDefinition
+  occupiedSlots: WeaponMountSlot[]
+}
+
+const formatWeaponSlotList = (slots: WeaponMountSlot[]): string => {
+  const labels = slots.map((slot) => WEAPON_MOUNT_SLOT_LABELS[slot])
+  if (labels.length <= 1) {
+    return labels[0] ?? 'None'
+  }
+  if (labels.length === 2) {
+    return `${labels[0]} and ${labels[1]}`
+  }
+  return `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`
+}
+
+const createShoulderEquipModalContent = (
+  slot: WeaponMountSlot,
+  nextDefinition: PartDefinition,
+  nextInstance: PartInstance,
+  warnings: string[],
+  occupiedEntries: WeaponOccupancyEntry[]
+): HTMLElement => {
+  const wrapper = document.createElement('div')
+  wrapper.className = 'garage-modal-content'
+
+  const title = document.createElement('h2')
+  title.className = 'garage-modal-title'
+  title.textContent = 'Confirm shoulder equip'
+  wrapper.appendChild(title)
+
+  const body = document.createElement('p')
+  body.className = 'garage-modal-body'
+  const occupiedSlots = occupiedEntries.flatMap((entry) => entry.occupiedSlots)
+  body.textContent = occupiedSlots.length > 0
+    ? `Target slot: ${WEAPON_MOUNT_SLOT_LABELS[slot]}. Currently occupied shoulder slots: ${formatWeaponSlotList(occupiedSlots)}. Equipping this part will unequip currently equipped shoulder part(s) as needed and return them to the shoulder parts garage list.`
+    : `Target slot: ${WEAPON_MOUNT_SLOT_LABELS[slot]}. No shoulder slots are currently occupied.`
+  wrapper.appendChild(body)
+
+  if (warnings.length > 0) {
+    const warningBlock = document.createElement('ul')
+    warningBlock.className = 'garage-modal-warning-list'
+    warnings.forEach((warning) => {
+      const item = document.createElement('li')
+      item.textContent = warning
+      warningBlock.appendChild(item)
+    })
+    wrapper.appendChild(warningBlock)
+  }
+
+  const comparison = document.createElement('div')
+  comparison.className = 'garage-modal-compare'
+  comparison.appendChild(createPartCard({
+    category: 'ShoulderWeapon',
+    title: nextDefinition.name,
+    subtitle: `${WEAPON_MOUNT_SLOT_LABELS[slot]} candidate`,
+    definition: nextDefinition,
+    instance: nextInstance,
+    stats: getFinalPartStats(nextInstance.instanceId),
+    statusText: `Integrity ${nextInstance.currentIntegrity}/${nextDefinition.integrity}`
+  }))
+
+  occupiedEntries.forEach((entry) => {
+    comparison.appendChild(createPartCard({
+      category: 'ShoulderWeapon',
+      title: entry.definition.name,
+      subtitle: `Currently equipped in ${formatWeaponSlotList(entry.occupiedSlots)}`,
+      definition: entry.definition,
+      instance: entry.instance,
+      stats: getFinalPartStats(entry.instance.instanceId),
+      statusText: `Integrity ${entry.instance.currentIntegrity}/${entry.definition.integrity}`
+    }))
+  })
+
+  wrapper.appendChild(comparison)
+  wrapper.appendChild(buildConfirmationButtons())
+  return wrapper
+}
+
 const createDeleteModalContent = (definition: PartDefinition): HTMLElement => {
   const wrapper = document.createElement('div')
   wrapper.className = 'garage-modal-content'
@@ -432,6 +512,69 @@ export const createGarageView = (options: GarageViewOptions): GarageViewControll
     return CATEGORY_LABELS[id]
   }
 
+  const getShoulderOccupancyEntries = (): WeaponOccupancyEntry[] => {
+    const entries: WeaponOccupancyEntry[] = []
+    const leftInstance = options.store.getEquippedInWeaponSlot('ShoulderLeft')
+    const rightInstance = options.store.getEquippedInWeaponSlot('ShoulderRight')
+    const leftDefinition = leftInstance ? options.store.getDefinition(leftInstance.definitionId) : null
+    const rightDefinition = rightInstance ? options.store.getDefinition(rightInstance.definitionId) : null
+
+    if (leftInstance && leftDefinition?.category === 'ShoulderWeapon' && leftDefinition.twoHanded === true) {
+      return [{
+        instance: leftInstance,
+        definition: leftDefinition,
+        occupiedSlots: ['ShoulderLeft', 'ShoulderRight']
+      }]
+    }
+
+    if (rightInstance && rightDefinition?.category === 'ShoulderWeapon' && rightDefinition.twoHanded === true) {
+      return [{
+        instance: rightInstance,
+        definition: rightDefinition,
+        occupiedSlots: ['ShoulderLeft', 'ShoulderRight']
+      }]
+    }
+
+    if (leftInstance && leftDefinition?.category === 'ShoulderWeapon') {
+      entries.push({
+        instance: leftInstance,
+        definition: leftDefinition,
+        occupiedSlots: ['ShoulderLeft']
+      })
+    }
+
+    if (rightInstance && rightDefinition?.category === 'ShoulderWeapon') {
+      entries.push({
+        instance: rightInstance,
+        definition: rightDefinition,
+        occupiedSlots: ['ShoulderRight']
+      })
+    }
+
+    return entries
+  }
+
+  const getDisplayedEquippedInWeaponSlot = (slot: WeaponMountSlot): WeaponOccupancyEntry | null => {
+    const direct = options.store.getEquippedInWeaponSlot(slot)
+    if (slot !== 'ShoulderLeft' && slot !== 'ShoulderRight') {
+      if (!direct) {
+        return null
+      }
+      const definition = options.store.getDefinition(direct.definitionId)
+      if (!definition) {
+        return null
+      }
+      return {
+        instance: direct,
+        definition,
+        occupiedSlots: [slot]
+      }
+    }
+
+    const shoulderEntries = getShoulderOccupancyEntries()
+    return shoulderEntries.find((entry) => entry.occupiedSlots.includes(slot)) ?? null
+  }
+
   const activateCategory = (category: PartCategory | WeaponMountSlot): void => {
     if (activeSlotId === category) {
       return
@@ -539,10 +682,16 @@ export const createGarageView = (options: GarageViewOptions): GarageViewControll
       if (!nextDefinition) {
         return
       }
-      const confirmed = await renderModal(
-        createEquipModalContent(WEAPON_SLOT_TO_CATEGORY[slotId], nextDefinition, instance, currentInstance, validation.warnings, currentDefinition),
-        { returnFocusTo: opener, fallbackFocusTarget: options.elements.title, focusScope: options.elements.root }
+      const modalContent = (
+        slotId === 'ShoulderLeft' || slotId === 'ShoulderRight'
       )
+        ? createShoulderEquipModalContent(slotId, nextDefinition, instance, validation.warnings, getShoulderOccupancyEntries())
+        : createEquipModalContent(WEAPON_SLOT_TO_CATEGORY[slotId], nextDefinition, instance, currentInstance, validation.warnings, currentDefinition)
+      const confirmed = await renderModal(modalContent, {
+        returnFocusTo: opener,
+        fallbackFocusTarget: options.elements.title,
+        focusScope: options.elements.root
+      })
       if (!confirmed) {
         return
       }
@@ -655,12 +804,11 @@ export const createGarageView = (options: GarageViewOptions): GarageViewControll
     const weaponCategory = WEAPON_SLOT_TO_CATEGORY[slot]
     const slotLabel = WEAPON_MOUNT_SLOT_LABELS[slot]
 
-    // Determine if this slot is "occupied" by a two-handed/two-shouldered weapon in the paired slot
+    // Left hand remains blocked by right-hand two-handed weapons to preserve current hand-slot behavior.
     const isTwoHandedBlocked = slot === 'LeftHand' && options.store.isTwoHandedWeaponEquipped()
-    const isTwoShoulderedBlocked = slot === 'ShoulderRight' && options.store.isTwoShoulderedWeaponEquipped()
 
-    if (isTwoHandedBlocked || isTwoShoulderedBlocked) {
-      const primarySlot: WeaponMountSlot = isTwoHandedBlocked ? 'RightHand' : 'ShoulderLeft'
+    if (isTwoHandedBlocked) {
+      const primarySlot: WeaponMountSlot = 'RightHand'
       const primaryInstance = options.store.getEquippedInWeaponSlot(primarySlot)
       const primaryDefinition = primaryInstance ? options.store.getDefinition(primaryInstance.definitionId) : null
       const header = document.createElement('div')
@@ -676,21 +824,25 @@ export const createGarageView = (options: GarageViewOptions): GarageViewControll
       return
     }
 
-    const equippedInstance = options.store.getEquippedInWeaponSlot(slot)
-    const equippedDefinition = equippedInstance ? options.store.getDefinition(equippedInstance.definitionId) : null
+    const equippedEntry = getDisplayedEquippedInWeaponSlot(slot)
+    const equippedInstance = equippedEntry?.instance ?? null
+    const equippedDefinition = equippedEntry?.definition ?? null
 
     const header = document.createElement('div')
     header.className = 'garage-pane-header'
     header.textContent = equippedDefinition
       ? `Currently equipped: ${equippedDefinition.name}`
-      : `${slotLabel} slot is empty`
+      : `${slotLabel} is empty`
     content.appendChild(header)
 
     if (equippedInstance && equippedDefinition) {
+      const occupiedLabel = equippedEntry && equippedEntry.occupiedSlots.length > 1
+        ? `Equipped in ${formatWeaponSlotList(equippedEntry.occupiedSlots)}`
+        : `Equipped in ${slotLabel}`
       content.appendChild(createPartCard({
         category: weaponCategory,
         title: equippedDefinition.name,
-        subtitle: `Equipped in ${slotLabel}`,
+        subtitle: occupiedLabel,
         definition: equippedDefinition,
         instance: equippedInstance,
         stats: getFinalPartStats(equippedInstance.instanceId),
@@ -700,7 +852,15 @@ export const createGarageView = (options: GarageViewOptions): GarageViewControll
             label: 'Unequip Weapon',
             tone: 'neutral',
             onClick: () => {
-              options.store.unequipWeaponSlot(slot)
+              if (slot === 'ShoulderLeft' || slot === 'ShoulderRight') {
+                const occupiedSlots = equippedEntry?.occupiedSlots ?? [slot]
+                const unequipSlot = occupiedSlots.includes(slot)
+                  ? slot
+                  : (occupiedSlots[0] ?? slot)
+                options.store.unequipWeaponSlot(unequipSlot)
+              } else {
+                options.store.unequipWeaponSlot(slot)
+              }
               options.onLoadoutChanged(options.store.getSnapshot())
             }
           }

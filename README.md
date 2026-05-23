@@ -30,6 +30,12 @@ npm install
 npm run build
 ```
 
+Parts catalog source of truth:
+
+- `packages/client/src/data/parts/parts.json` is authoritative.
+- Client build now always syncs that source file to `packages/client/dist/data/parts/parts.json`.
+- Local browser catalog overrides are disabled, so runtime always reloads from `parts.json`.
+
 ## Run Server
 
 ```bash
@@ -70,7 +76,7 @@ npm run dev:playtest
 Use Garage developer mode export to download a catalog JSON, then apply it to source:
 
 ```bash
-npm run catalog:apply -- ./path/to/garage-catalog-YYYY-MM-DD.json
+npm run catalog:apply -- ./path/to/garage-catalog-YYYY-MM-DD.json --allow-parts-json-write
 ```
 
 This command validates schema, writes a timestamped backup under `packages/client/src/data/parts/backups/`, and then updates `packages/client/src/data/parts/parts.json`.

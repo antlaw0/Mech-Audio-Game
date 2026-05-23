@@ -70,6 +70,7 @@ const mergeWeaponAuthoritativeSeedFields = (
     energyPerShot: seedDefinition.energyPerShot,
     accuracy: seedDefinition.accuracy,
     stability: seedDefinition.stability,
+    twoHanded: seedDefinition.twoHanded,
     heatGeneration: seedDefinition.heatGeneration,
     energyDrain: seedDefinition.energyDrain,
     passiveBonuses: Array.isArray(seedDefinition.passiveBonuses) ? [...seedDefinition.passiveBonuses] : [],
@@ -137,23 +138,22 @@ const writeJson = (storageKey: string, value: unknown): void => {
   storage.setItem(storageKey, JSON.stringify(value))
 }
 
-export const loadPartCatalog = (): PartDefinition[] => {
-  const stored = readJson<PartDefinition[]>(CATALOG_STORAGE_KEY)
-  if (!Array.isArray(stored) || stored.length === 0) {
-    return seedCatalog.map(normalizeDefinition)
+const clearLegacyCatalogStorage = (): void => {
+  const storage = getWindowStorage()
+  if (!storage) {
+    return
   }
+  storage.removeItem(CATALOG_STORAGE_KEY)
+}
 
-  const normalizedStored = stored.map(normalizeDefinition)
-  const knownIds = new Set(normalizedStored.map((entry) => entry.id))
-  const missingSeedEntries = seedCatalog
-    .filter((seedEntry) => !knownIds.has(seedEntry.id))
-    .map((seedEntry) => normalizeDefinition(seedEntry))
-
-  return [...normalizedStored, ...missingSeedEntries]
+export const loadPartCatalog = (): PartDefinition[] => {
+  clearLegacyCatalogStorage()
+  return seedCatalog.map(normalizeDefinition)
 }
 
 export const savePartCatalog = (catalog: PartDefinition[]): void => {
-  writeJson(CATALOG_STORAGE_KEY, catalog.map(normalizeDefinition))
+  void catalog
+  console.warn('[garage] Catalog persistence is disabled. Edit packages/client/src/data/parts/parts.json directly.')
 }
 
 export const loadDevModeFlag = (): boolean => {

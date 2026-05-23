@@ -292,12 +292,17 @@ export const createGarageStore = (): GarageStore => {
 
   const isTwoShoulderedWeaponEquipped = (): boolean => {
     const slInstanceId = loadout.ShoulderLeft
-    if (!slInstanceId) {
-      return false
+    const srInstanceId = loadout.ShoulderRight
+
+    const slInstance = slInstanceId ? getInstance(slInstanceId) : null
+    const slDefinition = slInstance ? getDefinition(slInstance.definitionId) : null
+    if (slDefinition?.twoHanded && slDefinition.category === 'ShoulderWeapon') {
+      return true
     }
-    const instance = getInstance(slInstanceId)
-    const definition = instance ? getDefinition(instance.definitionId) : null
-    return !!(definition?.twoHanded && definition.category === 'ShoulderWeapon')
+
+    const srInstance = srInstanceId ? getInstance(srInstanceId) : null
+    const srDefinition = srInstance ? getDefinition(srInstance.definitionId) : null
+    return !!(srDefinition?.twoHanded && srDefinition.category === 'ShoulderWeapon')
   }
 
   const validateEquipToWeaponSlot = (slot: WeaponMountSlot, instanceId: string, callback?: (snapshot: GarageSnapshot) => EquipValidation): EquipValidation => {
@@ -324,6 +329,14 @@ export const createGarageStore = (): GarageStore => {
         delete previewLoadout.ShoulderRight
       }
     } else {
+      if (expectedCategory === 'HandWeapon' && isTwoHandedWeaponEquipped()) {
+        delete previewLoadout.RightHand
+        delete previewLoadout.LeftHand
+      }
+      if (expectedCategory === 'ShoulderWeapon' && isTwoShoulderedWeaponEquipped()) {
+        delete previewLoadout.ShoulderLeft
+        delete previewLoadout.ShoulderRight
+      }
       previewLoadout[slot] = instanceId
     }
     return callback({
@@ -372,10 +385,10 @@ export const createGarageStore = (): GarageStore => {
   const unequipWeaponSlot = (slot: WeaponMountSlot): void => {
     const nextLoadout = cloneLoadout(loadout)
     // If unequipping the primary slot of a two-handed/two-shouldered weapon, clear both
-    if (slot === 'RightHand' && isTwoHandedWeaponEquipped()) {
+    if ((slot === 'RightHand' || slot === 'LeftHand') && isTwoHandedWeaponEquipped()) {
       delete nextLoadout.RightHand
       delete nextLoadout.LeftHand
-    } else if (slot === 'ShoulderLeft' && isTwoShoulderedWeaponEquipped()) {
+    } else if ((slot === 'ShoulderLeft' || slot === 'ShoulderRight') && isTwoShoulderedWeaponEquipped()) {
       delete nextLoadout.ShoulderLeft
       delete nextLoadout.ShoulderRight
     } else {
