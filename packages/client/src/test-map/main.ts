@@ -52,6 +52,7 @@ import type { EnemyId } from './enemies/enemyTypes.js'
 import { getSharedFlightHeight, setSharedFlightHeight } from './runtime-config.js'
 import type { TargetableEnemyRender, WeaponStats } from './types.js'
 import { PLAYER_MELEE_WEAPON_DEFINITIONS, PLAYER_WEAPON_DEFINITIONS, type PlayerMeleeWeaponDefinition, type PlayerWeaponDefinition } from './weapons.js'
+import { formatControlCode, getControlBindingDefinitions, getControlBindings, isReservedDebugNumpadCode, setControlBinding, type ControlActionId } from './controls.js'
 import { bindInput } from './input.js'
 import { createDeveloperConsole } from './dev-console.js'
 import { createMapData } from './map-data.js'
@@ -135,7 +136,7 @@ interface KnownPoi {
   position: WorldPosition
 } // end interface KnownPoi
 
-type PauseDebugTabId = 'runtime' | 'events' | 'tuning' | 'loadout'
+type PauseDebugTabId = 'runtime' | 'events' | 'tuning' | 'loadout' | 'controls'
 type HeatState = 'NORMAL' | 'HOT' | 'CRITICAL' | 'DANGER' | 'OVERHEAT'
 
 const EMERGENCY_COOLING_ENGAGE_RATIO = 0.95
@@ -301,6 +302,8 @@ function setupCanvas(): {
   const { width, height } = getCanvasDimensions()
   canvas.width = width
   canvas.height = height
+  canvas.tabIndex = 0
+  canvas.setAttribute('aria-label', 'Game screen. Keyboard gameplay controls are active. Press Escape to open pause menu.')
 
   return { canvas, width, height } // end object setup result
 } // end function setupCanvas
@@ -320,6 +323,7 @@ function startTestMap(): void {
     return el instanceof HTMLSelectElement ? el : null
   } // end function getSelect
 
+  const hudElement = document.getElementById('hud')
   const awarenessStatusElement = document.getElementById('awarenessStatus')
   const sonarStatusElement = document.getElementById('sonarStatus')
   const awarenessWeaponNameElement = document.getElementById('awarenessWeaponName')
@@ -345,18 +349,20 @@ function startTestMap(): void {
   const heatBarFillElement = document.getElementById('heatBarFill')
   const playerNameElement = document.getElementById('playerName')
   const pauseOverlayElement = document.getElementById('pauseOverlay')
-  const pausePanelDialogElement = document.getElementById('pausePanelDialog')
-  const pauseMenuTitleElement = document.getElementById('pauseMenuTitle')
   const pauseDebugTabRuntimeButtonElement = document.getElementById('pauseDebugTabRuntimeButton')
   const pauseDebugTabEventsButtonElement = document.getElementById('pauseDebugTabEventsButton')
   const pauseDebugTabTuningButtonElement = document.getElementById('pauseDebugTabTuningButton')
   const pauseDebugTabLoadoutButtonElement = document.getElementById('pauseDebugTabLoadoutButton')
+  const pauseDebugTabControlsButtonElement = document.getElementById('pauseDebugTabControlsButton')
   const pauseDebugRuntimePanelElement = document.getElementById('pauseDebugRuntimePanel')
   const pauseDebugEventsPanelElement = document.getElementById('pauseDebugEventsPanel')
   const pauseDebugTuningPanelElement = document.getElementById('pauseDebugTuningPanel')
   const pauseDebugLoadoutPanelElement = document.getElementById('pauseDebugLoadoutPanel')
+  const pauseDebugControlsPanelElement = document.getElementById('pauseDebugControlsPanel')
   const pauseDebugRuntimeContentElement = document.getElementById('pauseDebugRuntimeContent')
   const pauseDebugEventsContentElement = document.getElementById('pauseDebugEventsContent')
+  const pauseControlsListElement = document.getElementById('pauseControlsList')
+  const pauseControlsStatusElement = document.getElementById('pauseControlsStatus')
   const pauseLoadoutSlotListElement = document.getElementById('pauseLoadoutSlotList')
   const pauseLoadoutTitleElement = document.getElementById('pauseLoadoutTitle')
   const pauseLoadoutContentElement = document.getElementById('pauseLoadoutContent')
@@ -507,12 +513,12 @@ function startTestMap(): void {
   let isEditorModalOpen = false
   let editorCurrentEnemyId: EnemyId = 'tank'
   let isWeaponEditorOpen = false
-  let pausePreviouslyFocusedElement: HTMLElement | null = null
   let playerFireCooldownSeconds = 0
   let playerMeleeCooldownSeconds = 0
   let universalAmmoResource = 1200
   let isReloading = false
   let hasPlayedEmptyClipForCurrentTriggerPull = false
+  let pauseControlsCaptureActionId: ControlActionId | null = null
 
   const weaponLoadout: PlayerWeaponDefinition[] = PLAYER_WEAPON_DEFINITIONS.map((weapon) => ({
     ...weapon,
@@ -1461,74 +1467,50 @@ function startTestMap(): void {
     } // end if speech synthesis available
   } // end function equipWeaponSlot
 
-  const getPauseModalFocusableElements = (): HTMLElement[] => {
-    if (!(pausePanelDialogElement instanceof HTMLElement)) {
-      return []
-    }
-
-    const selector = [
-      'button:not([disabled])',
-      '[href]',
-      'input:not([disabled])',
-      'select:not([disabled])',
-      'textarea:not([disabled])',
-      '[tabindex]:not([tabindex="-1"])'
-    ].join(',')
-
-    return Array.from(pausePanelDialogElement.querySelectorAll<HTMLElement>(selector)).filter((element) => {
-      return !element.hasAttribute('disabled') && !element.getAttribute('aria-hidden') && element.offsetParent !== null
-    })
-  } // end function getPauseModalFocusableElements
-
   const setPauseOverlayVisible = (visible: boolean): void => {
     if (!(pauseOverlayElement instanceof HTMLDivElement)) {
       return
     } // end if pause overlay element missing
 
-    if (visible && document.activeElement instanceof HTMLElement) {
-      pausePreviouslyFocusedElement = document.activeElement
-    }
-
-    if (!visible) {
-      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
-      if (activeElement && pauseOverlayElement.contains(activeElement)) {
-        const restoreTarget = pausePreviouslyFocusedElement
-        if (restoreTarget instanceof HTMLElement && !pauseOverlayElement.contains(restoreTarget)) {
-          restoreTarget.focus({ preventScroll: true })
-        } else if (canvas instanceof HTMLCanvasElement) {
-          if (canvas.tabIndex < 0) {
-            canvas.tabIndex = -1
-          }
+    const setGameplayAccessibilityMode = (gameplayActive: boolean): void => {
+      if (gameplayActive) {
+        canvas.setAttribute('role', 'application')
+        canvas.setAttribute('aria-label', 'Game screen. Keyboard gameplay controls are active. Press Escape to open pause menu.')
+        canvas.tabIndex = 0
+        pauseOverlayElement.setAttribute('role', 'presentation')
+        pauseOverlayElement.removeAttribute('aria-label')
+        if (document.activeElement !== canvas) {
           canvas.focus({ preventScroll: true })
-        } else {
-          activeElement.blur()
         }
+        return
       }
-    } // end if pause overlay becoming hidden
+
+      canvas.removeAttribute('role')
+      canvas.setAttribute('aria-label', 'Game screen')
+      pauseOverlayElement.setAttribute('role', 'region')
+      pauseOverlayElement.setAttribute('aria-label', 'Pause menu')
+      if (document.activeElement === canvas) {
+        canvas.blur()
+      }
+    } // end function setGameplayAccessibilityMode
+
+    if (hudElement instanceof HTMLElement) {
+      hudElement.hidden = visible
+      hudElement.setAttribute('aria-hidden', visible ? 'true' : 'false')
+    } // end if HUD container exists
 
     pauseOverlayElement.style.display = visible ? 'flex' : 'none'
     pauseOverlayElement.setAttribute('aria-hidden', visible ? 'false' : 'true')
+    setGameplayAccessibilityMode(!visible)
     if (visible) {
       updatePauseDebugTabs()
       if (pauseDebugActiveTab === 'loadout') {
         renderPauseLoadoutTab()
       }
-      window.requestAnimationFrame(() => {
-        const initialFocusTarget = pauseMenuTitleElement instanceof HTMLElement
-          ? pauseMenuTitleElement
-          : (getPauseModalFocusableElements()[0] ?? pausePanelDialogElement)
-        initialFocusTarget?.focus()
-      })
-      return
+      if (pauseDebugActiveTab === 'controls') {
+        renderPauseControlsTab()
+      }
     } // end if pause overlay became visible
-
-    const restoreTarget = pausePreviouslyFocusedElement
-    pausePreviouslyFocusedElement = null
-    if (restoreTarget instanceof HTMLElement) {
-      window.requestAnimationFrame(() => {
-        restoreTarget.focus()
-      })
-    }
   } // end function setPauseOverlayVisible
 
   const formatLoadoutNumber = (value: number, fractionDigits = 1): string => {
@@ -1745,6 +1727,111 @@ function startTestMap(): void {
     garageView.render()
   } // end function renderPauseLoadoutTab
 
+  const updatePauseControlsStatus = (): void => {
+    if (!(pauseControlsStatusElement instanceof HTMLElement)) {
+      return
+    }
+
+    if (pauseControlsCaptureActionId) {
+      const activeDefinition = getControlBindingDefinitions().find((definition) => definition.id === pauseControlsCaptureActionId)
+      pauseControlsStatusElement.textContent = activeDefinition
+        ? `Press the desired key for ${activeDefinition.label}.`
+        : 'Press the desired key for this control.'
+      return
+    }
+
+    pauseControlsStatusElement.textContent = 'Select a control binding button, then press Enter, Space, or click to capture. Numpad bindings work when Num Lock is off.'
+  } // end function updatePauseControlsStatus
+
+  const announceControlBindingAssigned = (actionId: ControlActionId, keyCode: string): void => {
+    if (!(pauseControlsStatusElement instanceof HTMLElement)) {
+      return
+    }
+
+    const controlDefinition = getControlBindingDefinitions().find((definition) => definition.id === actionId)
+    const controlName = controlDefinition?.label ?? 'Control'
+    pauseControlsStatusElement.textContent = `${controlName} now assigned to ${formatControlCode(keyCode)}.`
+  } // end function announceControlBindingAssigned
+
+  const startPauseControlsCapture = (actionId: ControlActionId, buttonElement: HTMLButtonElement): void => {
+    pauseControlsCaptureActionId = actionId
+    buttonElement.textContent = 'Press any key...'
+    buttonElement.dataset.captureState = 'active'
+    buttonElement.setAttribute('aria-pressed', 'true')
+    updatePauseControlsStatus()
+  } // end function startPauseControlsCapture
+
+  const renderPauseControlsTab = (): void => {
+    if (!(pauseControlsListElement instanceof HTMLElement)) {
+      return
+    }
+
+    const groupedDefinitions = new Map<string, Array<(typeof getControlBindingDefinitions extends () => readonly (infer T)[] ? T : never)>>()
+    for (const definition of getControlBindingDefinitions()) {
+      const existingDefinitions = groupedDefinitions.get(definition.section) ?? []
+      existingDefinitions.push(definition)
+      groupedDefinitions.set(definition.section, existingDefinitions)
+    }
+
+    const currentBindings = getControlBindings()
+    pauseControlsListElement.replaceChildren()
+
+    for (const [sectionName, definitions] of groupedDefinitions.entries()) {
+      const sectionElement = document.createElement('section')
+      sectionElement.className = 'pause-controls-section'
+
+      const sectionTitleElement = document.createElement('h3')
+      sectionTitleElement.className = 'pause-controls-section-title'
+      sectionTitleElement.textContent = sectionName
+      sectionElement.append(sectionTitleElement)
+
+      for (const definition of definitions) {
+        const rowElement = document.createElement('div')
+        rowElement.className = 'pause-controls-row'
+
+        const textElement = document.createElement('div')
+        textElement.className = 'pause-controls-copy'
+
+        const labelElement = document.createElement('div')
+        labelElement.className = 'pause-controls-label'
+        labelElement.id = `pauseControlLabel-${definition.id}`
+        labelElement.textContent = definition.label
+
+        const descriptionElement = document.createElement('div')
+        descriptionElement.className = 'pause-controls-description'
+        descriptionElement.id = `pauseControlDescription-${definition.id}`
+        descriptionElement.textContent = definition.description
+
+        textElement.append(labelElement, descriptionElement)
+
+        const bindingButtonElement = document.createElement('button')
+        bindingButtonElement.id = `pauseControlBinding-${definition.id}`
+        bindingButtonElement.className = 'pause-controls-binding'
+        bindingButtonElement.type = 'button'
+        bindingButtonElement.textContent = pauseControlsCaptureActionId === definition.id
+          ? 'Press any key...'
+          : formatControlCode(currentBindings[definition.id])
+        bindingButtonElement.dataset.actionId = definition.id
+        bindingButtonElement.dataset.captureState = pauseControlsCaptureActionId === definition.id ? 'active' : 'idle'
+        bindingButtonElement.setAttribute('aria-pressed', pauseControlsCaptureActionId === definition.id ? 'true' : 'false')
+        bindingButtonElement.setAttribute('aria-labelledby', `${labelElement.id} ${descriptionElement.id}`)
+        bindingButtonElement.setAttribute('aria-describedby', descriptionElement.id)
+
+        bindingButtonElement.addEventListener('click', () => {
+          bindingButtonElement.focus({ preventScroll: true })
+          startPauseControlsCapture(definition.id, bindingButtonElement)
+        })
+
+        rowElement.append(textElement, bindingButtonElement)
+        sectionElement.append(rowElement)
+      }
+
+      pauseControlsListElement.append(sectionElement)
+    }
+
+    updatePauseControlsStatus()
+  } // end function renderPauseControlsTab
+
   const setPauseDebugActiveTab = (nextTab: PauseDebugTabId, forceLoadoutRender = false): void => {
     const tabChanged = pauseDebugActiveTab !== nextTab
     pauseDebugActiveTab = nextTab
@@ -1752,7 +1839,8 @@ function startTestMap(): void {
       { button: pauseDebugTabRuntimeButtonElement, selected: nextTab === 'runtime' },
       { button: pauseDebugTabEventsButtonElement, selected: nextTab === 'events' },
       { button: pauseDebugTabTuningButtonElement, selected: nextTab === 'tuning' },
-      { button: pauseDebugTabLoadoutButtonElement, selected: nextTab === 'loadout' }
+      { button: pauseDebugTabLoadoutButtonElement, selected: nextTab === 'loadout' },
+      { button: pauseDebugTabControlsButtonElement, selected: nextTab === 'controls' }
     ]
     for (const entry of buttonState) {
       if (!(entry.button instanceof HTMLButtonElement)) {
@@ -1765,7 +1853,8 @@ function startTestMap(): void {
       { panel: pauseDebugRuntimePanelElement, active: nextTab === 'runtime' },
       { panel: pauseDebugEventsPanelElement, active: nextTab === 'events' },
       { panel: pauseDebugTuningPanelElement, active: nextTab === 'tuning' },
-      { panel: pauseDebugLoadoutPanelElement, active: nextTab === 'loadout' }
+      { panel: pauseDebugLoadoutPanelElement, active: nextTab === 'loadout' },
+      { panel: pauseDebugControlsPanelElement, active: nextTab === 'controls' }
     ]
     for (const entry of panelState) {
       if (!(entry.panel instanceof HTMLElement)) {
@@ -1776,6 +1865,10 @@ function startTestMap(): void {
 
     if (nextTab === 'loadout' && (tabChanged || forceLoadoutRender)) {
       renderPauseLoadoutTab()
+    }
+
+    if (nextTab === 'controls' && tabChanged) {
+      renderPauseControlsTab()
     }
   } // end function setPauseDebugActiveTab
 
@@ -2334,7 +2427,8 @@ function startTestMap(): void {
     [pauseDebugTabRuntimeButtonElement instanceof HTMLButtonElement ? pauseDebugTabRuntimeButtonElement : null, 'runtime'],
     [pauseDebugTabEventsButtonElement instanceof HTMLButtonElement ? pauseDebugTabEventsButtonElement : null, 'events'],
     [pauseDebugTabTuningButtonElement instanceof HTMLButtonElement ? pauseDebugTabTuningButtonElement : null, 'tuning'],
-    [pauseDebugTabLoadoutButtonElement instanceof HTMLButtonElement ? pauseDebugTabLoadoutButtonElement : null, 'loadout']
+    [pauseDebugTabLoadoutButtonElement instanceof HTMLButtonElement ? pauseDebugTabLoadoutButtonElement : null, 'loadout'],
+    [pauseDebugTabControlsButtonElement instanceof HTMLButtonElement ? pauseDebugTabControlsButtonElement : null, 'controls']
   ]
   for (const [button, tabId] of pauseDebugTabButtons) {
     if (!button) {
@@ -2382,6 +2476,29 @@ function startTestMap(): void {
   syncPauseTuningInputs()
   applyPauseDebugTuningValues()
   setPauseDebugActiveTab('runtime')
+
+  document.addEventListener('keydown', (event) => {
+    if (!pauseControlsCaptureActionId) {
+      return
+    }
+
+    if (!isPaused || isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen || isNavigationMenuOpen || isWorldMapVisible) {
+      pauseControlsCaptureActionId = null
+      updatePauseControlsStatus()
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    if (typeof event.stopImmediatePropagation === 'function') {
+      event.stopImmediatePropagation()
+    }
+
+    setControlBinding(pauseControlsCaptureActionId, event.code)
+    announceControlBindingAssigned(pauseControlsCaptureActionId, event.code)
+    pauseControlsCaptureActionId = null
+    renderPauseControlsTab()
+  }, true)
 
   renderNavigationPoiMenu()
   updateNavigationOverlayVisibility(false)
@@ -2530,22 +2647,22 @@ function startTestMap(): void {
       return
     } // end if not in pause-only editor trigger state
 
-    if (event.code === 'Numpad1') {
+    if (event.code === 'Numpad1' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
       event.preventDefault()
       openEnemyEditorModal('tank')
-    } else if (event.code === 'Numpad2') {
+    } else if (event.code === 'Numpad2' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
       event.preventDefault()
       openEnemyEditorModal('striker')
-    } else if (event.code === 'Numpad3') {
+    } else if (event.code === 'Numpad3' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
       event.preventDefault()
       openEnemyEditorModal('brute')
-    } else if (event.code === 'Numpad4') {
+    } else if (event.code === 'Numpad4' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
       event.preventDefault()
       openEnemyEditorModal('helicopter')
-    } else if (event.code === 'Numpad5') {
+    } else if (event.code === 'Numpad5' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
       event.preventDefault()
       openEnemyEditorModal('bruiser')
-    } else if (event.code === 'NumpadDecimal') {
+    } else if (event.code === 'NumpadDecimal' && isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock'))) {
       event.preventDefault()
       openEnemyEditorModal('test-dummy')
     } // end if numpad enemy editor keys
@@ -2556,55 +2673,18 @@ function startTestMap(): void {
       return
     } // end if typing in editable field
 
-    if (event.code !== 'Numpad0' || event.repeat || isEditorModalOpen || isWeaponEditorOpen || isConsoleOpen) {
+    if (
+      event.code !== 'Numpad0' ||
+      !isReservedDebugNumpadCode(event.code, event.getModifierState('NumLock')) ||
+      event.repeat ||
+      isEditorModalOpen ||
+      isWeaponEditorOpen ||
+      isConsoleOpen
+    ) {
       return
     } // end if not weapon editor key or already open
     event.preventDefault()
     openWeaponEditor()
-  })
-
-  document.addEventListener('keydown', (event) => {
-    if (event.code !== 'Tab' || event.repeat) {
-      return
-    }
-    if (!isPaused || isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen || isNavigationMenuOpen || isWorldMapVisible) {
-      return
-    }
-    if (!(pauseOverlayElement instanceof HTMLDivElement) || pauseOverlayElement.style.display === 'none') {
-      return
-    }
-    if (!(pausePanelDialogElement instanceof HTMLElement)) {
-      return
-    }
-
-    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    if (activeElement && !pausePanelDialogElement.contains(activeElement)) {
-      return
-    }
-
-    const focusableElements = getPauseModalFocusableElements()
-    if (focusableElements.length === 0) {
-      event.preventDefault()
-      pausePanelDialogElement.focus()
-      return
-    }
-
-    const firstElement = focusableElements[0]
-    const lastElement = focusableElements[focusableElements.length - 1]
-    const activeInsideDialog = activeElement ? pausePanelDialogElement.contains(activeElement) : false
-
-    if (event.shiftKey) {
-      if (!activeInsideDialog || activeElement === firstElement) {
-        event.preventDefault()
-        lastElement?.focus()
-      }
-      return
-    }
-
-    if (!activeInsideDialog || activeElement === lastElement) {
-      event.preventDefault()
-      firstElement?.focus()
-    }
   })
 
   const combatWorld = createCombatEcsWorld()

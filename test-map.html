@@ -425,6 +425,79 @@
       gap: 12px;
       align-items: stretch;
     }
+    .pause-controls-panel {
+      text-align: left;
+    }
+    .pause-controls-status {
+      margin-bottom: 12px;
+      color: #83dfff;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .pause-controls-list {
+      display: grid;
+      gap: 14px;
+    }
+    .pause-controls-section {
+      border: 1px solid rgba(78, 162, 215, 0.42);
+      background: rgba(0, 24, 38, 0.48);
+      padding: 12px;
+    }
+    .pause-controls-section-title {
+      margin-bottom: 10px;
+      font-size: 13px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #d8f7ff;
+    }
+    .pause-controls-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(150px, 220px);
+      gap: 12px;
+      align-items: center;
+      padding: 8px 0;
+      border-top: 1px solid rgba(90, 177, 221, 0.18);
+    }
+    .pause-controls-row:first-of-type {
+      border-top: none;
+      padding-top: 0;
+    }
+    .pause-controls-copy {
+      min-width: 0;
+    }
+    .pause-controls-label {
+      display: block;
+      margin-bottom: 4px;
+      color: #d6f5ff;
+      font-size: 13px;
+    }
+    .pause-controls-description {
+      color: #88cfe9;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .pause-controls-binding {
+      appearance: none;
+      width: 100%;
+      padding: 9px 10px;
+      border: 1px solid rgba(111, 220, 255, 0.52);
+      background: rgba(0, 39, 57, 0.65);
+      color: #bff6ff;
+      font-family: monospace;
+      letter-spacing: 0.8px;
+      text-align: center;
+      cursor: pointer;
+    }
+    .pause-controls-binding:focus {
+      outline: none;
+      border-color: rgba(255, 214, 104, 0.88);
+      box-shadow: 0 0 0 1px rgba(255, 214, 104, 0.46);
+    }
+    .pause-controls-binding[data-capture-state="active"] {
+      border-color: rgba(255, 214, 104, 0.88);
+      background: rgba(82, 56, 5, 0.76);
+      color: #ffe8b7;
+    }
     .pause-loadout-slots {
       margin: 0;
       padding: 0;
@@ -643,6 +716,9 @@
       }
       .pause-loadout-slots {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .pause-controls-row {
+        grid-template-columns: 1fr;
       }
     }
     @media (max-width: 640px) {
@@ -939,14 +1015,15 @@
   </div>
 </div>
 <div id="pauseOverlay" aria-hidden="true">
-  <div id="pausePanelDialog" class="pause-panel" role="dialog" aria-roledescription="dialogue" aria-modal="true" aria-labelledby="pauseMenuTitle" tabindex="-1">
-    <div id="pauseMenuTitle" class="pause-title" tabindex="-1">Paused</div>
+  <div id="pausePanelDialog" class="pause-panel" aria-label="Pause menu overlay">
+    <div id="pauseMenuTitle" class="pause-title">Paused</div>
     <div class="pause-debug-tabs" aria-label="Developer Debug Tabs">
       <div class="pause-debug-tab-buttons" role="tablist" aria-label="Pause Debug Tabs">
         <button id="pauseDebugTabRuntimeButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="true" aria-controls="pauseDebugRuntimePanel">Runtime Stats</button>
         <button id="pauseDebugTabEventsButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugEventsPanel">Event Log</button>
         <button id="pauseDebugTabTuningButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugTuningPanel">Live Tuning</button>
         <button id="pauseDebugTabLoadoutButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugLoadoutPanel">Garage</button>
+        <button id="pauseDebugTabControlsButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugControlsPanel">Controls</button>
       </div>
       <section id="pauseDebugRuntimePanel" class="pause-debug-tab-panel active" role="tabpanel" aria-label="Runtime Stats">
         <pre id="pauseDebugRuntimeContent" class="pause-debug-pre">Runtime stats loading...</pre>
@@ -977,6 +1054,10 @@
             <div id="pauseLoadoutSummary" class="pause-loadout-summary">Browse owned parts, equip them to the current mech, or toggle dev mode to edit the catalog.</div>
           </section>
         </div>
+      </section>
+      <section id="pauseDebugControlsPanel" class="pause-debug-tab-panel pause-controls-panel" role="tabpanel" aria-label="Controls">
+        <div id="pauseControlsStatus" class="pause-controls-status" aria-live="assertive" aria-atomic="true">Select a control binding button, then press Enter, Space, or click to capture. Numpad bindings work when Num Lock is off.</div>
+        <div id="pauseControlsList" class="pause-controls-list"></div>
       </section>
     </div>
     <button id="pauseResumeButton" class="pause-button" type="button">Resume Game</button>
