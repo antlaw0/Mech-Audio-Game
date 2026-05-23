@@ -298,6 +298,7 @@ export interface TargetableEnemyRender {
   id: number
   enemyClass: string
   enemyType: string
+  callsign: string | null
   /** Ticket 23A: layout used for subsystem targeting navigation. */
   layoutId: import('./target-layout.js').TargetLayoutId
   x: number

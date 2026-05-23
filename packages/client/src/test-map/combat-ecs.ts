@@ -69,6 +69,34 @@ const ENEMY_BACKGROUND_SIM_RANGE = 360
 const ENEMY_BACKGROUND_AI_TICK_SECONDS = 0.22
 const ENEMY_DISTANT_AI_TICK_SECONDS = 0.55
 const ENEMY_LOS_MAX_DISTANCE = 170
+const NATO_CALLSIGNS = [
+  'Alpha',
+  'Bravo',
+  'Charlie',
+  'Delta',
+  'Echo',
+  'Foxtrot',
+  'Golf',
+  'Hotel',
+  'India',
+  'Juliett',
+  'Kilo',
+  'Lima',
+  'Mike',
+  'November',
+  'Oscar',
+  'Papa',
+  'Quebec',
+  'Romeo',
+  'Sierra',
+  'Tango',
+  'Uniform',
+  'Victor',
+  'Whiskey',
+  'X-ray',
+  'Yankee',
+  'Zulu'
+] as const
 
 export type IncomingDamageType = 'physical' | 'energy' | 'explosive' | 'incoming'
 
@@ -153,7 +181,41 @@ type CombatEcsWorld = IWorld & {
   customConfigs: Map<number, EnemyDefinitionConfig>
   missileExplosionSounds: Map<number, string[]>
   missileTrails: Map<number, TrailPoint[]>
+  enemyCallsignByEntity: Map<number, string>
+  enemyCallsignReservationsByArchetype: Map<string, Set<string>>
+  enemyCallsignNextIndexByArchetype: Map<string, number>
 }
+
+function formatCallsignByIndex(index: number): string {
+  const normalizedIndex = Math.max(0, Math.floor(index))
+  const base = NATO_CALLSIGNS[normalizedIndex % NATO_CALLSIGNS.length] ?? 'Zulu'
+  const cycle = Math.floor(normalizedIndex / NATO_CALLSIGNS.length)
+  if (cycle <= 0) {
+    return base
+  }
+  return `${base} ${cycle + 1}`
+} // end function formatCallsignByIndex
+
+function assignEnemyCallsign(world: CombatEcsWorld, entity: number, archetypeId: string): void {
+  if (world.enemyCallsignByEntity.has(entity)) {
+    return
+  } // end if callsign already assigned
+
+  const normalizedArchetypeId = archetypeId.trim().length > 0 ? archetypeId : 'enemy'
+  const reserved = world.enemyCallsignReservationsByArchetype.get(normalizedArchetypeId) ?? new Set<string>()
+  let nextIndex = world.enemyCallsignNextIndexByArchetype.get(normalizedArchetypeId) ?? 0
+  let callsign = formatCallsignByIndex(nextIndex)
+
+  while (reserved.has(callsign)) {
+    nextIndex += 1
+    callsign = formatCallsignByIndex(nextIndex)
+  } // end while searching next available callsign
+
+  world.enemyCallsignByEntity.set(entity, callsign)
+  reserved.add(callsign)
+  world.enemyCallsignReservationsByArchetype.set(normalizedArchetypeId, reserved)
+  world.enemyCallsignNextIndexByArchetype.set(normalizedArchetypeId, nextIndex + 1)
+} // end function assignEnemyCallsign
 
 function addEnemy(world: CombatEcsWorld, x: number, y: number, radius = 0.33): void {
   const enemy = addEntity(world)
@@ -168,6 +230,7 @@ function addEnemy(world: CombatEcsWorld, x: number, y: number, radius = 0.33): v
   Meta.radius[enemy] = radius
   Meta.distance[enemy] = 0
   Meta.alive[enemy] = 1
+  assignEnemyCallsign(world, enemy, 'enemy')
 } // end function addEnemy
 
 function addTank(world: CombatEcsWorld, x: number, y: number, enemyId: EnemyId = 'tank'): void {
@@ -205,6 +268,7 @@ function addTank(world: CombatEcsWorld, x: number, y: number, enemyId: EnemyId =
   Behavior.lodAccumulatorSeconds[tank] = 0
   TankExplosion.timeRemaining[tank] = 0
   TankExplosion.maxDuration[tank] = 0.7
+  assignEnemyCallsign(world, tank, enemyId)
 } // end function addTank
 
 function spawnTankProjectile(
@@ -265,6 +329,9 @@ export function createCombatEcsWorld(): CombatEcsWorld {
   world.customConfigs = new Map()
   world.missileExplosionSounds = new Map()
   world.missileTrails = new Map()
+  world.enemyCallsignByEntity = new Map()
+  world.enemyCallsignReservationsByArchetype = new Map()
+  world.enemyCallsignNextIndexByArchetype = new Map()
   return world
 } // end function createCombatEcsWorld
 
@@ -505,6 +572,7 @@ function addTankFromConfig(world: CombatEcsWorld, x: number, y: number, config: 
   TankExplosion.timeRemaining[tank] = 0
   TankExplosion.maxDuration[tank] = 0.7
   world.customConfigs.set(tank, config)
+  assignEnemyCallsign(world, tank, config.id)
 } // end function addTankFromConfig
 
 export function spawnRandomEnemy(world: CombatEcsWorld, collisionWorld: WorldCollisionWorld, player: Player, enemyId: EnemyId = 'tank'): boolean {
@@ -1721,6 +1789,7 @@ export function stepCombatEcsWorld(
       world.customConfigs.delete(entity)
       world.missileExplosionSounds.delete(entity)
       world.missileTrails.delete(entity)
+      world.enemyCallsignByEntity.delete(entity)
       removeEntity(world, entity)
     } // end if dead
   } // end for cleanup
@@ -1794,6 +1863,7 @@ export function getCombatRenderState(world: CombatEcsWorld): {
         id: entity,
         enemyClass: 'enemy',
         enemyType: 'enemy',
+        callsign: world.enemyCallsignByEntity.get(entity) ?? null,
         layoutId: getLayoutIdForEntityType('enemy'),
         x,
         y,
@@ -1835,6 +1905,7 @@ export function getCombatRenderState(world: CombatEcsWorld): {
       id: tank,
       enemyClass: 'enemy',
       enemyType: profile.id,
+      callsign: world.enemyCallsignByEntity.get(tank) ?? null,
       layoutId: getLayoutIdForEntityType(profile.id),
       x,
       y,
@@ -1906,9 +1977,13 @@ export function clearCombatEntities(world: CombatEcsWorld): number {
     world.customConfigs.delete(entity)
     world.missileExplosionSounds.delete(entity)
     world.missileTrails.delete(entity)
+    world.enemyCallsignByEntity.delete(entity)
     removeEntity(world, entity)
     removed += 1
   } // end for each entity
+
+  world.enemyCallsignReservationsByArchetype.clear()
+  world.enemyCallsignNextIndexByArchetype.clear()
 
   return removed
 } // end function clearCombatEntities

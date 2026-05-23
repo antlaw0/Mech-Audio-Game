@@ -265,6 +265,8 @@ declare global {
 
 const TARGET_VIEWPORT_ASPECT_RATIO = 3440 / 1440
 const CAMERA_VERTICAL_FOV_RADIANS = (70 * Math.PI) / 180
+const TARGET_ANNOUNCEMENT_STABILITY_MS = 300
+const TARGET_ANNOUNCEMENT_COOLDOWN_MS = 5000
 
 function getHalfHorizontalFovRadians(aspectRatio: number): number {
   const safeAspectRatio = Math.max(0.1, aspectRatio)
@@ -619,6 +621,13 @@ function startTestMap(): void {
   let pitchAssistLockRefiningActive = false
   let pitchAssistTargetElevationOffset = 0
   let previousPitchAssistLockProgress = 0
+  let currentTargetId: number | null = null
+  let lastAnnouncedTargetId: number | null = null
+  let pendingTargetId: number | null = null
+  let pendingTargetStartTime = 0
+  const targetAnnouncementCooldowns = new Map<number, number>()
+  let activeTargetTypeCounts = new Map<string, number>()
+  let activeAnnouncementTargets = new Map<number, TargetableEnemyRender>()
 
   const DEV_PART_SLOTS = [
     'Head',
@@ -1345,24 +1354,20 @@ function startTestMap(): void {
 
   const tryStartWeaponReload = (): void => {
     if (isReloading) {
-      announceBlockedAction('reload-in-progress', 'Reload already in progress.')
       return
     } // end if already reloading
 
     if (!canUseRangedSubsystem()) {
       audio.playNegativeActionTone()
-      announceBlockedAction('reload-ranged-offline', 'Cannot reload. Right arm or right hand is offline.')
       return
     } // end if ranged subsystem is offline
 
     const ammoPerRound = Math.max(0, playerWeapon.ammoResourcePerRound)
     if (ammoPerRound <= 0) {
-      announceBlockedAction('reload-no-ammo-system', 'This weapon does not use clip reloads.')
       return
     } // end if current weapon does not consume ammo per shot
 
     if (playerWeapon.ammoInClip >= playerWeapon.clipSize) {
-      announceBlockedAction('reload-clip-full', 'Clip already full.')
       return
     } // end if clip already full
 
@@ -1370,7 +1375,6 @@ function startTestMap(): void {
     const loadableRounds = Math.min(missingRounds, Math.floor(universalAmmoResource / ammoPerRound))
     if (loadableRounds <= 0) {
       audio.playNegativeActionTone()
-      announceBlockedAction('reload-ammo-low', 'Cannot reload. Not enough universal ammo.')
       return
     } // end if not enough universal ammo for reload
 
@@ -2693,6 +2697,13 @@ function startTestMap(): void {
     pitchAssistLockRefiningActive = false
     pitchAssistTargetElevationOffset = 0
     previousPitchAssistLockProgress = 0
+    currentTargetId = null
+    lastAnnouncedTargetId = null
+    pendingTargetId = null
+    pendingTargetStartTime = 0
+    targetAnnouncementCooldowns.clear()
+    activeTargetTypeCounts.clear()
+    activeAnnouncementTargets.clear()
     audio.resetTargetLockProgressAudio()
   } // end function resetTargetLockState
 
@@ -3933,7 +3944,7 @@ function startTestMap(): void {
     return exposedNodes[0]?.nodeId ?? null
   } // end function resolveValidSelectedSubsystem
 
-  const getLockTargetDisplayName = (target: TargetableEnemyRender | null): string => {
+  const getBaseTargetName = (target: TargetableEnemyRender | null): string => {
     if (!target) {
       return 'None'
     }
@@ -3947,6 +3958,62 @@ function startTestMap(): void {
     } catch {
       return target.enemyType
     }
+  } // end function getBaseTargetName
+
+  const getSpokenTargetName = (target: TargetableEnemyRender): string => {
+    const baseName = getBaseTargetName(target)
+    const activeCount = activeTargetTypeCounts.get(target.enemyType) ?? 0
+    if (activeCount <= 1 || !target.callsign) {
+      return baseName
+    }
+    return `${baseName} ${target.callsign}`
+  } // end function getSpokenTargetName
+
+  const speakTargetIdentity = (targetId: number): void => {
+    if (!('speechSynthesis' in window)) {
+      return
+    } // end if speech synthesis is unavailable
+
+    const target = activeAnnouncementTargets.get(targetId)
+    if (!target || !target.alive) {
+      return
+    } // end if target disappeared before speech
+
+    const utterance = new SpeechSynthesisUtterance(getSpokenTargetName(target))
+    utterance.rate = 1.05
+    utterance.pitch = 1
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utterance)
+  } // end function speakTargetIdentity
+
+  const evaluateTargetAnnouncement = (targetId: number): void => {
+    const target = activeAnnouncementTargets.get(targetId)
+    if (!target || !target.alive) {
+      return
+    } // end if target no longer exists
+
+    if (targetId !== currentTargetId) {
+      return
+    } // end if target is no longer current
+
+    const now = performance.now()
+    const lastTime = targetAnnouncementCooldowns.get(targetId) ?? 0
+    const cooldownExpired = (now - lastTime) >= TARGET_ANNOUNCEMENT_COOLDOWN_MS
+
+    if (targetId === lastAnnouncedTargetId && !cooldownExpired) {
+      return
+    } // end if same target announcement is still cooling down
+
+    speakTargetIdentity(targetId)
+    lastAnnouncedTargetId = targetId
+    targetAnnouncementCooldowns.set(targetId, now)
+  } // end function evaluateTargetAnnouncement
+
+  const getLockTargetDisplayName = (target: TargetableEnemyRender | null): string => {
+    if (!target) {
+      return 'None'
+    }
+    return getSpokenTargetName(target)
   } // end function getLockTargetDisplayName
 
   const getTargetElevationOffset = (target: TargetableEnemyRender | null): number => {
@@ -6406,6 +6473,16 @@ function startTestMap(): void {
       ...combatRenderForDisplay.enemies,
       ...combatRenderForDisplay.tanks
     ].filter((entry) => worldStreaming.isPositionActive(entry.x, entry.y))
+    activeTargetTypeCounts.clear()
+    activeAnnouncementTargets.clear()
+    for (const target of lockTargets) {
+      if (!target.alive) {
+        continue
+      } // end if target is dead
+
+      activeAnnouncementTargets.set(target.id, target)
+      activeTargetTypeCounts.set(target.enemyType, (activeTargetTypeCounts.get(target.enemyType) ?? 0) + 1)
+    } // end for each active lock target
     worldStreaming.recordTargetRefinements(lockTargets.length)
 
     const targetingHotState = input.fireHeld || input.firePending || subsystemModifierHeld || lockTargets.length > 0
@@ -6482,6 +6559,20 @@ function startTestMap(): void {
     if (lockUpdate.justLocked || lockUpdate.switchedTarget) {
       audio.playLockOnChirp()
     } // end if lock acquired
+
+    if (lockUpdate.currentTargetId !== currentTargetId) {
+      currentTargetId = lockUpdate.currentTargetId
+      pendingTargetId = lockUpdate.currentTargetId
+      pendingTargetStartTime = performance.now()
+    } // end if selected target changed
+
+    if (pendingTargetId !== null) {
+      const elapsed = performance.now() - pendingTargetStartTime
+      if (elapsed >= TARGET_ANNOUNCEMENT_STABILITY_MS) {
+        evaluateTargetAnnouncement(pendingTargetId)
+        pendingTargetId = null
+      }
+    } // end if pending target is stabilizing
 
     devTargetLockedId = lockUpdate.currentTargetId
     if (lockUpdate.lockedTarget !== null) {
@@ -6711,7 +6802,6 @@ function startTestMap(): void {
     } // end if trigger is released
 
     if (shouldAttemptShot && isReloading) {
-      announceBlockedAction('fire-reloading', 'Cannot fire while reloading.')
       if (minigunEquippedNow) {
         audio.stopMinigunFiringLoop()
       }
@@ -7095,16 +7185,11 @@ function startTestMap(): void {
       input.meleePending = false
       if (isOverheatShutdownActive()) {
         audio.playNegativeActionTone()
-        announceBlockedAction('melee-overheat', 'Cannot use melee. Overheated.')
       } else if (!canUseMeleeSubsystem()) {
         audio.playNegativeActionTone()
-        announceBlockedAction('melee-offline', 'Cannot use melee. Left arm or left hand is offline.')
       } else if (isReloading) {
-        announceBlockedAction('melee-reloading', 'Cannot use melee while reloading.')
       } else if (!equippedMeleeWeapon) {
-        announceBlockedAction('melee-unequipped', 'No melee weapon equipped.')
       } else if (playerMeleeCooldownSeconds > 0) {
-        announceBlockedAction('melee-cooldown', 'Melee is cooling down.')
       } else if (!isReloading && equippedMeleeWeapon && playerMeleeCooldownSeconds <= 0) {
         const soundPath = equippedMeleeWeapon.swingSoundPaths[Math.floor(Math.random() * equippedMeleeWeapon.swingSoundPaths.length)]
           ?? equippedMeleeWeapon.swingSoundPaths[0]
