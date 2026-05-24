@@ -206,6 +206,10 @@ export interface TargetLockState {
   currentTargetId: number | null
   lockProgress: number
   targetScore: number
+  isTargetInLockBox: boolean
+  centerError: number
+  horizontalOffset: number
+  lockRateMultiplier: number
   retainedTargetId: number | null
   retentionActive: boolean
   selectedSubsystem: string | null
@@ -476,10 +480,12 @@ export interface AudioController {
   playMissileLockConfirmTone: () => void
   updateTargetLockProgressAudio: (
     deltaSeconds: number,
-    hasActiveLock: boolean,
-    hasRetentionLock: boolean,
+    isTargetInLockBox: boolean,
     lockProgress: number,
     maxLockProgress: number,
+    centerError: number,
+    horizontalOffset: number,
+    lockRateMultiplier: number,
     targetPos?: WorldPosition
   ) => void
   resetTargetLockProgressAudio: () => void

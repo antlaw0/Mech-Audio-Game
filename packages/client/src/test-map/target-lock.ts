@@ -5,10 +5,9 @@ import type { Player, TargetLockState, TargetableEnemyRender } from './types.js'
 const TARGET_LOCK_HYSTERESIS_THRESHOLD = 0.08
 const BASE_LOCK_REFINEMENT_RATE = 12
 const BASE_LOCK_DECAY_PER_SECOND = 21
-const BRONZE_LOCK_ENTRY_PROGRESS = 2
 const LOCK_MAX_PROGRESS = 100
 const ECM_INTERFERENCE_MIN_OBSTRUCTION = 0.0001
-const LOCK_CENTER_FACTOR_EXPONENT = 2
+const LOCK_AIM_RATE_EXPONENT = 2
 
 const LOCK_LEVEL_CAP_PROGRESS: Readonly<Record<LockLevel, number>> = {
   Bronze: 24,
@@ -72,7 +71,7 @@ function getTargetMovementPenalty(target: LockableTarget): number {
 }
 
 function computeLockRefinementPerSecond(
-  centerFactor: number,
+  lockRateMultiplier: number,
   distanceFactor: number,
   stabilityFactor: number,
   targetEcmResistanceFactor: number,
@@ -87,7 +86,7 @@ function computeLockRefinementPerSecond(
 
   return BASE_LOCK_REFINEMENT_RATE
     * systemMultiplier
-    * Math.pow(clamp01(centerFactor), LOCK_CENTER_FACTOR_EXPONENT)
+    * clamp01(lockRateMultiplier)
     * clamp01(distanceFactor)
     * clamp01(stabilityFactor)
 }
@@ -110,7 +109,8 @@ function computeTargetScore(
   verticalAlignment: number
   crosshairAlignment: number
   distanceWeight: number
-  centerFactor: number
+  centerError: number
+  horizontalOffset: number
 } {
   const dx = target.x - player.x
   const dy = target.y - player.y
@@ -144,7 +144,7 @@ function computeTargetScore(
     : Math.max(-1, Math.min(1, pitchDelta / maxVerticalPitch))
 
   const centerDistance = Math.hypot(normalizedX, normalizedY)
-  const centerFactor = 1 - clamp01(centerDistance)
+  const centerError = clamp01(centerDistance)
 
   const crosshairAlignment = (horizontalAlignment + verticalAlignment) / 2
   const distanceWeight = clamp01(1 - (dist / Math.max(1, lockOnRange)))
@@ -156,7 +156,8 @@ function computeTargetScore(
     verticalAlignment,
     crosshairAlignment,
     distanceWeight,
-    centerFactor
+    centerError,
+    horizontalOffset: normalizedX
   }
 } // end function computeTargetScore
 
@@ -165,6 +166,10 @@ export function createTargetLockState(): TargetLockState {
     currentTargetId: null,
     lockProgress: 0,
     targetScore: 0,
+    isTargetInLockBox: false,
+    centerError: 1,
+    horizontalOffset: 0,
+    lockRateMultiplier: 0,
     retainedTargetId: null,
     retentionActive: false,
     selectedSubsystem: null
@@ -186,6 +191,14 @@ export interface TargetLockUpdate {
   lockProgress: number
   /** Score for the currently selected target. */
   targetScore: number
+  /** Whether a target currently satisfies lock-box eligibility checks. */
+  isTargetInLockBox: boolean
+  /** Normalized center aiming error where 0 is centered and 1 touches lock-box edge. */
+  centerError: number
+  /** Horizontal target offset in lock box where -1 is far left and +1 is far right. */
+  horizontalOffset: number
+  /** Accuracy-based refinement multiplier used for this frame's lock gain. */
+  lockRateMultiplier: number
 } // end interface TargetLockUpdate
 
 /**
@@ -221,7 +234,8 @@ export function updateTargetLock(
     crosshairAlignment: number
     distanceWeight: number
     movementPenalty: number
-    centerFactor: number
+    centerError: number
+    horizontalOffset: number
     ecmResistanceFactor: number
     ecmInterferenceActive: boolean
   }
@@ -297,7 +311,8 @@ export function updateTargetLock(
       crosshairAlignment: scoreData.crosshairAlignment,
       distanceWeight: scoreData.distanceWeight,
       movementPenalty,
-      centerFactor: scoreData.centerFactor,
+      centerError: scoreData.centerError,
+      horizontalOffset: scoreData.horizontalOffset,
       ecmResistanceFactor,
       ecmInterferenceActive
     }
@@ -330,6 +345,9 @@ export function updateTargetLock(
   const newLockedId = selectedTarget !== null ? selectedTarget.id : null
   const hasLock = newLockedId !== null
   const resolvedScore = Number.isFinite(selectedScore) ? Math.max(0, selectedScore) : 0
+  const centerError = clamp01(selectedCandidate?.centerError ?? 1)
+  const horizontalOffset = Math.max(-1, Math.min(1, selectedCandidate?.horizontalOffset ?? 0))
+  const lockRateMultiplier = Math.pow(1 - centerError, LOCK_AIM_RATE_EXPONENT)
 
   const modifierMaxProgress = getMaxProgressForLevel(resolvedModifiers.maxLockLevel)
   let nextProgress = 0
@@ -344,7 +362,7 @@ export function updateTargetLock(
     const trackingStabilityFactor = clamp01(Math.min(1.5, resolvedModifiers.headTrackingStability) / 1.2)
     const stabilityFactor = clamp01((selectedCandidate.movementPenalty * 0.8) + (trackingStabilityFactor * 0.2))
     const refinementRate = computeLockRefinementPerSecond(
-      selectedCandidate.centerFactor,
+      lockRateMultiplier,
       selectedCandidate.distanceWeight,
       stabilityFactor,
       selectedCandidate.ecmResistanceFactor,
@@ -352,9 +370,6 @@ export function updateTargetLock(
     )
 
     nextProgress = Math.min(targetMaxProgress, baseProgress + (refinementRate * resolvedModifiers.deltaSeconds))
-    if (baseProgress <= 0) {
-      nextProgress = Math.max(BRONZE_LOCK_ENTRY_PROGRESS, nextProgress)
-    }
 
     state.retainedTargetId = newLockedId
     state.retentionActive = false
@@ -375,6 +390,10 @@ export function updateTargetLock(
   state.currentTargetId = newLockedId
   state.lockProgress = Math.max(0, Math.min(modifierMaxProgress, nextProgress))
   state.targetScore = resolvedScore
+  state.isTargetInLockBox = hasLock
+  state.centerError = centerError
+  state.horizontalOffset = horizontalOffset
+  state.lockRateMultiplier = hasLock ? lockRateMultiplier : 0
 
   const justLocked = previousLockedId === null && newLockedId !== null
   const justLost = previousLockedId !== null && newLockedId === null
@@ -390,6 +409,10 @@ export function updateTargetLock(
     lockedTarget: selectedTarget,
     currentTargetId: newLockedId,
     lockProgress: state.lockProgress,
-    targetScore: state.targetScore
+    targetScore: state.targetScore,
+    isTargetInLockBox: state.isTargetInLockBox,
+    centerError: state.centerError,
+    horizontalOffset: state.horizontalOffset,
+    lockRateMultiplier: state.lockRateMultiplier
   }
 } // end function updateTargetLock

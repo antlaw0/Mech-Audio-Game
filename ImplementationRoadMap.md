@@ -1267,8 +1267,9 @@ trackingStability reduced
 
 ## Ticket 21 — Lock Audio + Cockpit Announcements
 
-Copilot status: not started
-Developer status:approved
+Copilot status: ready for approval
+Developer status: pending review
+Notes: Implemented a full lock-audio redesign in runtime targeting/audio systems. Added explicit lock telemetry (`isTargetInLockBox`, `centerError`, `horizontalOffset`, `lockRateMultiplier`) and switched lock refinement gain to accuracy-driven quadratic scaling. Replaced refinement beeps with transition-based lock state audio: continuous presence tone while target is lockable, smoothed bullseye pulse-rate guidance with stereo panning, and one-shot milestone chirps at 25/50/75 plus distinct 100% lock-acquired cue. Removed old per-frame lock acquire/loss chirps from active target-lock transitions to preserve one-signal-per-meaning behavior.
 
 ### 🧠 Copilot Prompt
 
@@ -1680,7 +1681,7 @@ Missiles:
 
 ### 🧪 Verify
 
-* Fire at each lock stage
+* Fire a each lock stage
 
 ---
 

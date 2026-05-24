@@ -2662,13 +2662,21 @@ function startTestMap(): void {
     lockedTarget: null,
     currentTargetId: null,
     lockProgress: 0,
-    targetScore: 0
+    targetScore: 0,
+    isTargetInLockBox: false,
+    centerError: 1,
+    horizontalOffset: 0,
+    lockRateMultiplier: 0
   }
   let latestCombatRender = getCombatRenderState(combatWorld)
   const resetTargetLockState = (): void => {
     targetLockState.currentTargetId = null
     targetLockState.lockProgress = 0
     targetLockState.targetScore = 0
+    targetLockState.isTargetInLockBox = false
+    targetLockState.centerError = 1
+    targetLockState.horizontalOffset = 0
+    targetLockState.lockRateMultiplier = 0
     targetLockState.retainedTargetId = null
     targetLockState.retentionActive = false
     targetLockState.selectedSubsystem = null
@@ -2691,7 +2699,11 @@ function startTestMap(): void {
       lockedTarget: null,
       currentTargetId: null,
       lockProgress: 0,
-      targetScore: 0
+      targetScore: 0,
+      isTargetInLockBox: false,
+      centerError: 1,
+      horizontalOffset: 0,
+      lockRateMultiplier: 0
     }
     pitchAssistHasTargetLock = false
     pitchAssistLockRefiningActive = false
@@ -6552,13 +6564,9 @@ function startTestMap(): void {
     })
     const lockUpdate = latestLockUpdate
 
-    if (lockUpdate.justLost || lockUpdate.switchedTarget) {
-      audio.playLockLostChirp()
-    } // end if lock lost or switched
-
-    if (lockUpdate.justLocked || lockUpdate.switchedTarget) {
-      audio.playLockOnChirp()
-    } // end if lock acquired
+    if (lockUpdate.switchedTarget) {
+      audio.resetTargetLockProgressAudio()
+    } // end if switched targets so milestone tracking starts fresh
 
     if (lockUpdate.currentTargetId !== currentTargetId) {
       currentTargetId = lockUpdate.currentTargetId
@@ -6601,10 +6609,12 @@ function startTestMap(): void {
     }
     audio.updateTargetLockProgressAudio(
       deltaSeconds,
-      lockUpdate.currentTargetId !== null,
-      targetLockState.retentionActive,
+      lockUpdate.isTargetInLockBox,
       targetLockState.lockProgress,
       maxLockProgress,
+      lockUpdate.centerError,
+      lockUpdate.horizontalOffset,
+      lockUpdate.lockRateMultiplier,
       targetPos
     )
 

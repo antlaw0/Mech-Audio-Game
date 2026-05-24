@@ -1659,22 +1659,27 @@ export function createAudioController(): AudioController {
     envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.05 }
   }).toDestination()
 
+  const targetLockPresencePanner = new Tone.Panner(0).toDestination()
+  const targetLockPresenceGain = new Tone.Gain(0).connect(targetLockPresencePanner)
+  const targetLockPresenceOsc = new Tone.Oscillator({ frequency: 312, type: 'triangle' }).connect(targetLockPresenceGain)
+  let targetLockPresenceOscStarted = false
+  const targetLockTransitionChirpSynth = new Tone.Synth({
+    oscillator: { type: 'sine' },
+    envelope: { attack: 0.001, decay: 0.07, sustain: 0, release: 0.035 }
+  }).toDestination()
 
-  // 3D panners for lock progress tones
+  const bullseyeGuidancePanner = new Tone.Panner(0).toDestination()
+  const bullseyeGuidanceSynth = new Tone.Synth({
+    oscillator: { type: 'sine' },
+    envelope: { attack: 0.001, decay: 0.055, sustain: 0, release: 0.025 }
+  }).connect(bullseyeGuidancePanner)
+
+  // 3D panner for lock milestone tones anchored to the target position when available.
   const targetLockProgressPanner = new Tone.Panner3D({ panningModel: 'HRTF', distanceModel: 'inverse', refDistance: 1, maxDistance: 96, rolloffFactor: 1.8 }).toDestination()
-  const targetLockProgressBeepSynth = new Tone.Synth({
-    oscillator: { type: 'triangle' },
-    envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.025 }
-  }).connect(targetLockProgressPanner)
 
   const targetLockStageSuccessSynth = new Tone.Synth({
     oscillator: { type: 'sine' },
     envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.04 }
-  }).connect(targetLockProgressPanner)
-
-  const targetLockStageLossSynth = new Tone.Synth({
-    oscillator: { type: 'triangle' },
-    envelope: { attack: 0.001, decay: 0.09, sustain: 0, release: 0.045 }
   }).connect(targetLockProgressPanner)
 
   const targetLockFullSuccessSynth = new Tone.Synth({
@@ -2145,6 +2150,10 @@ export function createAudioController(): AudioController {
           destinationToneOsc.start()
           destinationToneOscStarted = true
         } // end if destination oscillator not started
+        if (!targetLockPresenceOscStarted) {
+          targetLockPresenceOsc.start()
+          targetLockPresenceOscStarted = true
+        } // end if lock presence oscillator not started
         if (!energyStatusCrackleStarted) {
           energyStatusCrackleNoise.start()
           energyStatusCrackleStarted = true
@@ -2195,11 +2204,17 @@ export function createAudioController(): AudioController {
   let lockLostChirpLastStartSeconds = -Infinity
   let missileLockToneLastStartSeconds = -Infinity
   let missileLockConfirmLastStartSeconds = -Infinity
-  let targetLockProgressLastStartSeconds = -Infinity
   let targetLockStageLastStartSeconds = -Infinity
-  let targetLockProgressBeepTimerSeconds = 0
-  let targetLockPreviousStage = 0
-  let targetLockWasFull = false
+  let bullseyeGuidanceLastStartSeconds = -Infinity
+  let targetLockTransitionChirpLastStartSeconds = -Infinity
+  let bullseyePulseTimerSeconds = 0
+  let smoothedCenterError = 1
+  let smoothedHorizontalOffset = 0
+  let targetLockHasAcquiredTarget = false
+  let targetLockPresenceActive = false
+  let targetLockGuidanceActive = false
+  let targetLockMilestonesReached = { at25: false, at50: false, at75: false, at100: false }
+  let targetLockAudioState: 'NoTarget' | 'TargetInLockBox' | 'Refining' | 'Locked' = 'NoTarget'
   let aimAssistTrackingLastStartSeconds = -Infinity
   let negativeActionLastStartSeconds = -Infinity
   let lastCardinalHeadingCueTimeSeconds = -Infinity
@@ -2263,124 +2278,207 @@ export function createAudioController(): AudioController {
     missileLockConfirmSynth.triggerAttackRelease('E6', '16n', thirdStart)
   } // end function playMissileLockConfirmTone
 
-  const getTargetLockStage = (lockProgress: number, maxLockProgress: number): number => {
-    const progress = clamp(lockProgress, 0, Math.max(1, maxLockProgress))
-    if (maxLockProgress >= 85 && progress >= 85) {
-      return 3
-    }
-    if (maxLockProgress >= 60 && progress >= 60) {
-      return 2
-    }
-    if (maxLockProgress >= 25 && progress >= 25) {
-      return 1
-    }
-    return 0
-  } // end function getTargetLockStage
-
-  // Helper to set 3D panner position for lock tones
+  // Helper to set 3D panner position for lock milestone tones.
   function setTargetLockProgressPanner(x: number, y: number, z: number) {
     targetLockProgressPanner.positionX.value = x
     targetLockProgressPanner.positionY.value = y
     targetLockProgressPanner.positionZ.value = z
   }
 
-  // Accepts world position of target
-  const playTargetLockStageUpTone = (stage: number, pos?: {x:number,y:number,z:number}): void => {
-    if (pos) setTargetLockProgressPanner(pos.x, pos.y, pos.z)
-    const clampedStage = Math.max(1, Math.min(3, stage))
-    const rootFrequency = 520 + (clampedStage * 90)
-    const firstStart = strictlyIncreasingStartTime(Tone.now(), targetLockStageLastStartSeconds)
-    const secondStart = strictlyIncreasingStartTime(firstStart + 0.08, firstStart)
-    targetLockStageLastStartSeconds = secondStart
-    targetLockStageSuccessSynth.volume.value = Tone.gainToDb(0.38)
-    targetLockStageSuccessSynth.triggerAttackRelease(rootFrequency, '32n', firstStart)
-    targetLockStageSuccessSynth.triggerAttackRelease(rootFrequency * 1.34, '16n', secondStart)
+  const setTargetLockPresenceToneActive = (active: boolean): void => {
+    if (targetLockPresenceActive === active) {
+      return
+    }
+    targetLockPresenceActive = active
+    targetLockPresenceGain.gain.rampTo(active ? 0.15 : 0, active ? 0.01 : 0.02)
   }
 
-  const playTargetLockStageDownTone = (stage: number, pos?: {x:number,y:number,z:number}): void => {
-    if (pos) setTargetLockProgressPanner(pos.x, pos.y, pos.z)
-    const clampedStage = Math.max(1, Math.min(3, stage))
-    const rootFrequency = 520 + (clampedStage * 90)
-    const firstStart = strictlyIncreasingStartTime(Tone.now(), targetLockStageLastStartSeconds)
-    const secondStart = strictlyIncreasingStartTime(firstStart + 0.08, firstStart)
-    targetLockStageLastStartSeconds = secondStart
-    targetLockStageLossSynth.volume.value = Tone.gainToDb(0.35)
-    targetLockStageLossSynth.triggerAttackRelease(rootFrequency * 1.34, '32n', firstStart)
-    targetLockStageLossSynth.triggerAttackRelease(rootFrequency, '16n', secondStart)
+  const updateTargetLockPresencePitch = (centerError: number): void => {
+    const clampedCenterError = clamp(centerError, 0, 1)
+    const minPresenceFrequency = 240
+    const maxPresenceFrequency = 760
+    const targetFrequency = minPresenceFrequency + ((1 - clampedCenterError) * (maxPresenceFrequency - minPresenceFrequency))
+    targetLockPresenceOsc.frequency.rampTo(targetFrequency, 0.05)
   }
 
-  const playTargetLockFullSuccessTone = (pos?: {x:number,y:number,z:number}): void => {
-    if (pos) setTargetLockProgressPanner(pos.x, pos.y, pos.z)
+  const updateTargetLockPresencePan = (horizontalOffset: number): void => {
+    const clampedHorizontalOffset = clamp(horizontalOffset, -1, 1)
+    targetLockPresencePanner.pan.rampTo(clampedHorizontalOffset, 0.04)
+  }
+
+  const playTargetLockTransitionChirp = (enteringLockBox: boolean): void => {
+    if (!audioStarted || !isAudioContextRunning()) {
+      return
+    }
+    const firstStart = strictlyIncreasingStartTime(Tone.now(), targetLockTransitionChirpLastStartSeconds)
+    const secondStart = strictlyIncreasingStartTime(firstStart + 0.075, firstStart)
+    targetLockTransitionChirpLastStartSeconds = secondStart
+    targetLockTransitionChirpSynth.volume.value = Tone.gainToDb(0.4)
+    if (enteringLockBox) {
+      targetLockTransitionChirpSynth.triggerAttackRelease('A4', '32n', firstStart)
+      targetLockTransitionChirpSynth.triggerAttackRelease('E5', '32n', secondStart)
+      return
+    }
+    targetLockTransitionChirpSynth.triggerAttackRelease('E5', '32n', firstStart)
+    targetLockTransitionChirpSynth.triggerAttackRelease('A4', '32n', secondStart)
+  }
+
+  const setBullseyeGuidanceActive = (active: boolean): void => {
+    if (targetLockGuidanceActive === active) {
+      return
+    }
+    targetLockGuidanceActive = active
+    if (!active) {
+      bullseyePulseTimerSeconds = 0
+      smoothedCenterError = 1
+      smoothedHorizontalOffset = 0
+      bullseyeGuidancePanner.pan.rampTo(0, 0.04)
+    }
+  }
+
+  const playTargetLockMilestoneTone = (threshold: 25 | 50 | 75 | 100, pos?: { x: number, y: number, z: number }): void => {
+    if (pos) {
+      setTargetLockProgressPanner(pos.x, pos.y, pos.z)
+    }
     const firstStart = strictlyIncreasingStartTime(Tone.now(), targetLockStageLastStartSeconds)
-    const secondStart = strictlyIncreasingStartTime(firstStart + 0.07, firstStart)
-    const thirdStart = strictlyIncreasingStartTime(firstStart + 0.14, secondStart)
+    if (threshold === 100) {
+      const secondStart = strictlyIncreasingStartTime(firstStart + 0.07, firstStart)
+      const thirdStart = strictlyIncreasingStartTime(firstStart + 0.14, secondStart)
+      targetLockStageLastStartSeconds = thirdStart
+      targetLockFullSuccessSynth.volume.value = Tone.gainToDb(0.52)
+      targetLockFullSuccessSynth.triggerAttackRelease('G5', '32n', firstStart)
+      targetLockFullSuccessSynth.triggerAttackRelease('B5', '32n', secondStart)
+      targetLockFullSuccessSynth.triggerAttackRelease('D6', '16n', thirdStart)
+      return
+    }
+
+    if (threshold === 25) {
+      targetLockStageLastStartSeconds = firstStart
+      targetLockStageSuccessSynth.volume.value = Tone.gainToDb(0.34)
+      targetLockStageSuccessSynth.triggerAttackRelease('A4', '32n', firstStart)
+      return
+    }
+
+    const secondStart = strictlyIncreasingStartTime(firstStart + 0.08, firstStart)
+    if (threshold === 50) {
+      targetLockStageLastStartSeconds = secondStart
+      targetLockStageSuccessSynth.volume.value = Tone.gainToDb(0.36)
+      targetLockStageSuccessSynth.triggerAttackRelease('A4', '32n', firstStart)
+      targetLockStageSuccessSynth.triggerAttackRelease('C5', '32n', secondStart)
+      return
+    }
+
+    const thirdStart = strictlyIncreasingStartTime(firstStart + 0.16, secondStart)
     targetLockStageLastStartSeconds = thirdStart
-    targetLockFullSuccessSynth.volume.value = Tone.gainToDb(0.52)
-    targetLockFullSuccessSynth.triggerAttackRelease('G5', '32n', firstStart)
-    targetLockFullSuccessSynth.triggerAttackRelease('B5', '32n', secondStart)
-    targetLockFullSuccessSynth.triggerAttackRelease('D6', '16n', thirdStart)
+    targetLockStageSuccessSynth.volume.value = Tone.gainToDb(0.38)
+    targetLockStageSuccessSynth.triggerAttackRelease('A4', '32n', firstStart)
+    targetLockStageSuccessSynth.triggerAttackRelease('C5', '32n', secondStart)
+    targetLockStageSuccessSynth.triggerAttackRelease('E5', '32n', thirdStart)
   }
 
   const resetTargetLockProgressAudio = (): void => {
-    targetLockProgressBeepTimerSeconds = 0
-    targetLockPreviousStage = 0
-    targetLockWasFull = false
+    const hadAcquiredTarget = targetLockHasAcquiredTarget
+    bullseyePulseTimerSeconds = 0
+    smoothedCenterError = 1
+    smoothedHorizontalOffset = 0
+    targetLockHasAcquiredTarget = false
+    targetLockMilestonesReached = { at25: false, at50: false, at75: false, at100: false }
+    targetLockAudioState = 'NoTarget'
+    setTargetLockPresenceToneActive(false)
+    targetLockPresencePanner.pan.rampTo(0, 0.04)
+    setBullseyeGuidanceActive(false)
+    if (hadAcquiredTarget) {
+      playTargetLockTransitionChirp(false)
+    }
   } // end function resetTargetLockProgressAudio
 
-  // Keep lock tones event-driven so they do not re-trigger continuously every frame.
   const updateTargetLockProgressAudio = (
     deltaSeconds: number,
-    hasActiveLock: boolean,
-    hasRetentionLock: boolean,
+    isTargetInLockBox: boolean,
     lockProgress: number,
     maxLockProgress: number,
-    targetPos?: {x:number,y:number,z:number}
+    centerError: number,
+    horizontalOffset: number,
+    lockRateMultiplier: number,
+    targetPos?: { x: number, y: number, z: number }
   ): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
     }
-    void hasRetentionLock
-    const shouldPlayLockTones = hasActiveLock && maxLockProgress > 0
-    if (!shouldPlayLockTones) {
+
+    if (!isTargetInLockBox || maxLockProgress <= 0) {
       resetTargetLockProgressAudio()
       return
     }
+
     const clampedMaxProgress = Math.max(1, maxLockProgress)
     const clampedProgress = clamp(lockProgress, 0, clampedMaxProgress)
-    const currentStage = getTargetLockStage(clampedProgress, clampedMaxProgress)
+    const normalizedProgress = clamp(clampedProgress / clampedMaxProgress, 0, 1)
+    const clampedCenterError = clamp(centerError, 0, 1)
+    const clampedHorizontalOffset = clamp(horizontalOffset, -1, 1)
+    const clampedLockRateMultiplier = clamp(lockRateMultiplier, 0, 1)
+    const isLocked = normalizedProgress >= 0.999
 
-    if (currentStage > targetLockPreviousStage) {
-      for (let stage = targetLockPreviousStage + 1; stage <= currentStage; stage += 1) {
-        playTargetLockStageUpTone(stage, targetPos)
-      } // end for each newly reached stage
-    } else if (currentStage < targetLockPreviousStage) {
-      for (let stage = targetLockPreviousStage; stage > currentStage; stage -= 1) {
-        playTargetLockStageDownTone(stage, targetPos)
-      } // end for each dropped stage
+    if (!targetLockHasAcquiredTarget) {
+      playTargetLockTransitionChirp(true)
+      targetLockHasAcquiredTarget = true
     }
 
-    targetLockPreviousStage = currentStage
+    const desiredAudioState: 'NoTarget' | 'TargetInLockBox' | 'Refining' | 'Locked' = isLocked
+      ? 'Locked'
+      : (clampedLockRateMultiplier > 0.001 ? 'Refining' : 'TargetInLockBox')
 
-    const isFull = hasActiveLock && clampedProgress >= (clampedMaxProgress - 0.001)
-    if (isFull && !targetLockWasFull) {
-      playTargetLockFullSuccessTone(targetPos)
+    if (targetLockAudioState !== desiredAudioState) {
+      targetLockAudioState = desiredAudioState
     }
 
-    targetLockWasFull = isFull
+    const shouldEnableGuidance = desiredAudioState === 'TargetInLockBox' || desiredAudioState === 'Refining'
+    setTargetLockPresenceToneActive(shouldEnableGuidance)
+    setBullseyeGuidanceActive(shouldEnableGuidance)
+    updateTargetLockPresencePitch(clampedCenterError)
+    updateTargetLockPresencePan(clampedHorizontalOffset)
 
-    if (!isFull) {
-      targetLockProgressBeepTimerSeconds += Math.max(0, deltaSeconds)
-      const normalizedProgress = clamp(clampedProgress / clampedMaxProgress, 0, 1)
-      const beepIntervalSeconds = 0.22
-      if (targetLockProgressBeepTimerSeconds >= beepIntervalSeconds) {
-        targetLockProgressBeepTimerSeconds = 0
-        if (targetPos) setTargetLockProgressPanner(targetPos.x, targetPos.y, targetPos.z)
-        const start = strictlyIncreasingStartTime(Tone.now(), targetLockProgressLastStartSeconds)
-        targetLockProgressLastStartSeconds = start
-        const beepFrequency = 360 + (normalizedProgress * 700)
-        targetLockProgressBeepSynth.volume.value = Tone.gainToDb(0.24)
-        targetLockProgressBeepSynth.triggerAttackRelease(beepFrequency, '32n', start)
-      }
+    if (!targetLockMilestonesReached.at25 && normalizedProgress >= 0.25) {
+      targetLockMilestonesReached.at25 = true
+      playTargetLockMilestoneTone(25, targetPos)
+    }
+    if (!targetLockMilestonesReached.at50 && normalizedProgress >= 0.5) {
+      targetLockMilestonesReached.at50 = true
+      playTargetLockMilestoneTone(50, targetPos)
+    }
+    if (!targetLockMilestonesReached.at75 && normalizedProgress >= 0.75) {
+      targetLockMilestonesReached.at75 = true
+      playTargetLockMilestoneTone(75, targetPos)
+    }
+    if (!targetLockMilestonesReached.at100 && normalizedProgress >= 1) {
+      targetLockMilestonesReached.at100 = true
+      playTargetLockMilestoneTone(100, targetPos)
+      setBullseyeGuidanceActive(false)
+      setTargetLockPresenceToneActive(false)
+    }
+
+    if (!targetLockGuidanceActive) {
+      return
+    }
+
+    const centerSmoothing = clamp(deltaSeconds * 8, 0, 1)
+    const panSmoothing = clamp(deltaSeconds * 10, 0, 1)
+    smoothedCenterError += (clampedCenterError - smoothedCenterError) * centerSmoothing
+    smoothedHorizontalOffset += (clampedHorizontalOffset - smoothedHorizontalOffset) * panSmoothing
+    bullseyeGuidancePanner.pan.rampTo(smoothedHorizontalOffset, 0.05)
+
+    const minPulseIntervalSeconds = 0.05
+    const maxPulseIntervalSeconds = 0.48
+    const pulseIntervalSeconds = minPulseIntervalSeconds + ((maxPulseIntervalSeconds - minPulseIntervalSeconds) * smoothedCenterError)
+    bullseyePulseTimerSeconds += Math.max(0, deltaSeconds)
+
+    while (bullseyePulseTimerSeconds >= pulseIntervalSeconds) {
+      bullseyePulseTimerSeconds -= pulseIntervalSeconds
+      const start = strictlyIncreasingStartTime(Tone.now(), bullseyeGuidanceLastStartSeconds)
+      bullseyeGuidanceLastStartSeconds = start
+      const pulseFrequency = 820 + ((1 - smoothedCenterError) * 220)
+      bullseyeGuidanceSynth.volume.value = Tone.gainToDb(0.18)
+      bullseyeGuidanceSynth.triggerAttackRelease(pulseFrequency, '64n', start)
     }
   }
 
