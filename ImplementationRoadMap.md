@@ -1854,6 +1854,7 @@ Developer status: Pending playtest
 	- `play_flyby_sound(direction, speed)`
 - Runtime follow-up update:
 	- Added directional missile warning pulse playback with state-based urgency (detection/tracking/terminal).
+	- Added 3D positional looping missile flight audio for non-player missiles using `assets/sounds/weapons/missileFlyLoop1.ogg`, with hostile missiles now fed into the incoming-projectile spatial voice pool using live height data.
 	- Added flyby chirp playback tied to overshoot events.
 	- Added explicit missile explosion visual bursts in render state with radius-based scaling.
 	- Increased helicopter missile blast radius/damage and proximity fuse distance to improve near-hit explosive threat.
@@ -1889,6 +1890,9 @@ Developer status: Pending playtest
 	- `tree` attenuates (`0.4x` exposure).
 - Preserved grounded explosion origin behavior:
 	- Explosion origin remains actual missile detonation point from impact/proximity/lifetime logic.
+- Missile flight behavior tuning update:
+	- Reduced shared missile speed scalar in `packages/client/src/test-map/combat-ecs.ts` to slow all missile archetypes.
+	- Added post-pass guidance disengage: once a missile has passed its target (non-positive closing speed inside a proximity window), it clears `targetId` and continues on current trajectory until impact or lifetime expiry.
 - Friendly fire consistency retained:
 	- No faction/immunity filters were introduced in shared explosion damage path.
 	- Any alive entity with `Health` in range is evaluated.

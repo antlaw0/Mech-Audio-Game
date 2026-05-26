@@ -63,7 +63,7 @@ const BULLET_HIT_RADIUS = 0.25
 const PLAYER_HIT_HALF_HEIGHT = 0.55
 const TANK_HIT_HALF_HEIGHT = 0.6
 const WORLD_CHUNK_SIZE = 64
-const MISSILE_SPEED_GLOBAL_SCALE = 0.45
+const MISSILE_SPEED_GLOBAL_SCALE = 0.28
 const MISSILE_LIFETIME_GUIDANCE_BUFFER_SECONDS = 0.45
 const MISSILE_LIFETIME_GUIDANCE_SCALE = 1.45
 const MISSILE_MAX_LIFETIME_SECONDS = 6.5
@@ -71,6 +71,7 @@ const MISSILE_INTERCEPT_MAX_LEAD_SECONDS = 0.75
 const MISSILE_INTERCEPT_LEAD_FACTOR = 0
 const MISSILE_GUIDANCE_SMOOTHING_FACTOR = 0.45
 const MISSILE_PITCH_TURN_RATE_SCALE = 0.9
+const MISSILE_GIVE_UP_MIN_DISTANCE = 2.5
 const MAX_ACTIVE_ENEMIES = 20
 const MAX_ACTIVE_AIR_ENEMIES = 5
 const SPAWN_MIN_PLAYER_DISTANCE = 8
@@ -1900,6 +1901,29 @@ export function stepCombatEcsWorld(
       } // end if resolving missile entity target
 
       if (missileHasValidTarget) {
+        const toTargetX = missileTargetX - currentX
+        const toTargetY = missileTargetY - currentY
+        const toTargetZ = missileTargetZ - originHeight
+        const distanceToTarget = Math.hypot(toTargetX, toTargetY, toTargetZ)
+        const velocityX = getNumber(MissileStats.velocityX, entity) ?? (Math.cos(angle) * speed)
+        const velocityY = getNumber(MissileStats.velocityY, entity) ?? (Math.sin(angle) * speed)
+        const velocityZ = -Math.sin(pitch) * speed
+        const closingSpeed = distanceToTarget > 0.0001
+          ? ((velocityX * toTargetX) + (velocityY * toTargetY) + (velocityZ * toTargetZ)) / distanceToTarget
+          : 0
+        const giveUpDistance = Math.max(
+          MISSILE_GIVE_UP_MIN_DISTANCE,
+          (getNumber(MissileStats.proximityFuseDistance, entity) ?? 0) * 4,
+          (getNumber(MissileStats.blastRadius, entity) ?? 0) * 2.4
+        )
+        if (closingSpeed <= 0 && distanceToTarget <= giveUpDistance) {
+          missileHasValidTarget = false
+          MissileStats.targetId[entity] = MISSILE_TARGET_NONE
+          world.missileGuidanceDirections.delete(entity)
+        } // end if missile has passed target and should stop homing
+      } // end if missile target validity resolved
+
+      if (missileHasValidTarget) {
         const distanceToTarget = Math.hypot(
           missileTargetX - currentX,
           missileTargetY - currentY,
@@ -2185,6 +2209,7 @@ export function stepCombatEcsWorld(
         id: entity,
         x: nextX,
         y: nextY,
+        z: nextHeight,
         velocityX: cosA * speed,
         velocityY: sinA * speed,
         distanceToPlayer: playerDistance
@@ -2200,6 +2225,23 @@ export function stepCombatEcsWorld(
     Meta.distance[entity] = nextDist
 
     if (kind === KIND_MISSILE) {
+      const ownerId = MissileStats.ownerId[entity] ?? (ProjectileStats.owner[entity] ?? PROJECTILE_OWNER_PLAYER)
+      if (ownerId !== PROJECTILE_OWNER_PLAYER) {
+        const playerCenterHeight = (player.z ?? 0) + PLAYER_HEIGHT
+        const missileVelocityX = getNumber(MissileStats.velocityX, entity) ?? (Math.cos(angle) * speed)
+        const missileVelocityY = getNumber(MissileStats.velocityY, entity) ?? (Math.sin(angle) * speed)
+        incomingProjectileAudioStates.push({
+          id: entity,
+          x: nextX,
+          y: nextY,
+          z: nextHeight,
+          velocityX: missileVelocityX,
+          velocityY: missileVelocityY,
+          distanceToPlayer: Math.hypot(nextX - player.x, nextY - player.y, nextHeight - playerCenterHeight),
+          isMissile: true
+        })
+      } // end if hostile missile should emit tracking audio
+
       // Store actual height for next frame; reset distance so renderer uses zOrigin as true height.
       ProjectileStats.originHeight[entity] = Math.max(0.02, nextHeight)
       Meta.distance[entity] = 0

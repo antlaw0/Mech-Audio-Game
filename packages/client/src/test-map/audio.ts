@@ -190,7 +190,8 @@ function createSilentEnemySoundSet(): EnemySoundSet {
 
 interface IncomingProjectileVoice {
   id: number | null
-  player: Tone.Player
+  projectilePlayer: Tone.Player
+  missilePlayer: Tone.Player
   gain: Tone.Gain
   emitter: SpatialAudioEmitter
 } // end interface IncomingProjectileVoice
@@ -1341,6 +1342,7 @@ export function createAudioController(): AudioController {
     'assets/sounds/weapons/arBurst3.ogg',
     'assets/sounds/weapons/arBurst4.ogg',
     'assets/sounds/weapons/arBurst5.ogg',
+    'assets/sounds/weapons/missileFlyLoop1.ogg',
     'assets/sounds/energy.ogg',
     'assets/sounds/tankHit.ogg',
     'assets/sounds/explosions/explosion_1A.ogg',
@@ -1489,13 +1491,16 @@ export function createAudioController(): AudioController {
   ]
 
   const incomingProjectileVoices: IncomingProjectileVoice[] = Array.from({ length: 8 }, () => {
-    const emitter = createWorldEmitter(0.9, 22)
+    const emitter = createWorldEmitter(0.9, 36)
     const gain = new Tone.Gain(0.001).connect(emitter.input)
-    const player = new Tone.Player('assets/sounds/projectileWiz.ogg').connect(gain)
-    player.loop = true
+    const projectilePlayer = new Tone.Player('assets/sounds/projectileWiz.ogg').connect(gain)
+    projectilePlayer.loop = true
+    const missilePlayer = new Tone.Player('assets/sounds/weapons/missileFlyLoop1.ogg').connect(gain)
+    missilePlayer.loop = true
     return {
       id: null,
-      player,
+      projectilePlayer,
+      missilePlayer,
       gain,
       emitter
     }
@@ -2072,9 +2077,12 @@ export function createAudioController(): AudioController {
 
   const releaseIncomingProjectileVoice = (voice: IncomingProjectileVoice): void => {
     voice.id = null
-    if (voice.player.state === 'started') {
-      voice.player.stop()
-    } // end if voice loop currently playing
+    if (voice.projectilePlayer.state === 'started') {
+      voice.projectilePlayer.stop()
+    } // end if projectile loop is currently playing
+    if (voice.missilePlayer.state === 'started') {
+      voice.missilePlayer.stop()
+    } // end if missile loop is currently playing
     voice.gain.gain.value = 0.001
   } // end function releaseIncomingProjectileVoice
 
@@ -2090,11 +2098,19 @@ export function createAudioController(): AudioController {
     } // end if no free voice available
 
     freeVoice.id = projectileId
-    if (freeVoice.player.loaded && freeVoice.player.state !== 'started') {
-      freeVoice.player.start()
-    } // end if voice loop is ready to start
     return freeVoice
   } // end function acquireIncomingProjectileVoice
+
+  const setIncomingProjectileVoiceLoop = (voice: IncomingProjectileVoice, isMissile: boolean): void => {
+    const activePlayer = isMissile ? voice.missilePlayer : voice.projectilePlayer
+    const inactivePlayer = isMissile ? voice.projectilePlayer : voice.missilePlayer
+    if (inactivePlayer.state === 'started') {
+      inactivePlayer.stop()
+    } // end if inactive loop is still playing
+    if (activePlayer.loaded && activePlayer.state !== 'started') {
+      activePlayer.start()
+    } // end if active loop is ready to start
+  } // end function setIncomingProjectileVoiceLoop
 
   const ensureAudio = async (): Promise<void> => {
     try {
@@ -3785,7 +3801,7 @@ export function createAudioController(): AudioController {
     } // end if incoming projectile audio should not run
 
     const audibleProjectiles = projectiles
-      .filter((projectile) => projectile.distanceToPlayer <= 22)
+      .filter((projectile) => projectile.distanceToPlayer <= (projectile.isMissile ? 36 : 22))
       .sort((a, b) => a.distanceToPlayer - b.distanceToPlayer)
       .slice(0, incomingProjectileVoices.length)
     const audibleIds = new Set<number>(audibleProjectiles.map((projectile) => projectile.id))
@@ -3803,19 +3819,21 @@ export function createAudioController(): AudioController {
         continue
       } // end if no voice available
 
+      const maxDistance = projectile.isMissile ? 36 : 22
       const distance = Math.max(projectile.distanceToPlayer, 0.001)
       const toPlayerX = playerX - projectile.x
       const toPlayerY = playerY - projectile.y
       const closingSpeed = (projectile.velocityX * toPlayerX + projectile.velocityY * toPlayerY) / distance
-      const proximity = clamp(1 - distance / 22, 0, 1)
+      const proximity = clamp(1 - distance / maxDistance, 0, 1)
       const approach = clamp(closingSpeed / 8, 0, 1)
-      const targetGain = clamp((0.015 + proximity * (0.2 + approach * 0.78)) * enemiesVolume, 0, 1.3)
+      const baseGain = projectile.isMissile ? 0.03 : 0.015
+      const proximityGain = projectile.isMissile ? 0.34 : 0.2
+      const approachGain = projectile.isMissile ? 0.92 : 0.78
+      const targetGain = clamp((baseGain + proximity * (proximityGain + approach * approachGain)) * enemiesVolume, 0, 1.3)
 
-      voice.emitter.setPosition(projectile.x, projectile.y, 0)
+      voice.emitter.setPosition(projectile.x, projectile.y, projectile.z ?? 0)
       voice.gain.gain.value = targetGain
-      if (voice.player.loaded && voice.player.state !== 'started') {
-        voice.player.start()
-      } // end if voice not yet started
+      setIncomingProjectileVoiceLoop(voice, projectile.isMissile === true)
     } // end for each audible projectile
   } // end function updateIncomingProjectileAudio
 

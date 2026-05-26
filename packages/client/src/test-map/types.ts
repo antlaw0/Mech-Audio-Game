@@ -365,9 +365,11 @@ export interface IncomingProjectileAudioState {
   id: number
   x: number
   y: number
+  z?: number
   velocityX: number
   velocityY: number
   distanceToPlayer: number
+  isMissile?: boolean
 } // end interface IncomingProjectileAudioState
 
 export type MissileWarningType = 'detection' | 'tracking' | 'terminal'
