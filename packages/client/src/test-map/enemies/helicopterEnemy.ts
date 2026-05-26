@@ -21,6 +21,22 @@ export class HelicopterEnemyDefinition extends EnemyDefinitionBase {
         lineOfSightRequiredToShoot: true,
         stationary: false
       },
+      missileLauncher: {
+        enabled: true,
+        missileType: 'light',
+        speed: 26,
+        turnRate: 5.8,
+        damage: 22,
+        blastRadius: 2.45,
+        collisionRadius: 0.13,
+        proximityFuseDistance: 1.2,
+        lifetime: 2.2,
+        projectileVisualType: 'missile',
+        explosionSounds: [
+          'assets/sounds/explosions/explosion_1A.ogg',
+          'assets/sounds/explosions/explosion_2a.ogg'
+        ]
+      },
       sounds: {
         attackSound: 'assets/sounds/weapons/pistol_fire.ogg',
         hurtSound: 'assets/sounds/tankHit.ogg',

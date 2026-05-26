@@ -6474,7 +6474,8 @@ function startTestMap(): void {
     const combatRenderForDisplay = {
       enemies: combatRender.enemies.filter((enemy) => worldStreaming.getChunkStateAt(enemy.x, enemy.y) !== 'unloaded'),
       tanks: combatRender.tanks.filter((tank) => worldStreaming.getChunkStateAt(tank.x, tank.y) !== 'unloaded'),
-      bullets: combatRender.bullets.filter((bullet) => worldStreaming.getChunkStateAt(bullet.x, bullet.y) !== 'unloaded')
+      bullets: combatRender.bullets.filter((bullet) => worldStreaming.getChunkStateAt(bullet.x, bullet.y) !== 'unloaded'),
+      missileExplosions: combatRender.missileExplosions.filter((explosion) => worldStreaming.getChunkStateAt(explosion.x, explosion.y) !== 'unloaded')
     }
     worldStreaming.recordRenderedEntities(combatRenderForDisplay.enemies.length + combatRenderForDisplay.tanks.length)
     worldStreaming.recordProjectileUpdates(combatRenderForDisplay.bullets.length)
@@ -7303,7 +7304,10 @@ function startTestMap(): void {
 
     const audioDiagnostics = audio.getAudioDiagnostics()
     worldStreaming.recordAudioNodes(audioDiagnostics.activeEnemyRuntimes + audioDiagnostics.occlusionEmitters)
-    worldStreaming.recordEffectUpdates(combatRenderForDisplay.bullets.filter((bullet) => bullet.kind === 'rocket' || bullet.kind === 'missile').length)
+    worldStreaming.recordEffectUpdates(
+      combatRenderForDisplay.bullets.filter((bullet) => bullet.kind === 'rocket' || bullet.kind === 'missile').length
+      + combatRenderForDisplay.missileExplosions.length
+    )
 
     if (awarenessStatusElement) {
       const rateOfFireLabel = playerWeapon.fireRateCooldownSeconds > 0
@@ -7373,6 +7377,7 @@ function startTestMap(): void {
         enemies: combatRenderForDisplay.enemies,
         tanks: combatRenderForDisplay.tanks,
         bullets: combatRenderForDisplay.bullets,
+        missileExplosions: combatRenderForDisplay.missileExplosions,
         deltaSeconds,
         player,
         muzzleFlashAlpha,

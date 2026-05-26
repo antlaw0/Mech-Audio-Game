@@ -1,4 +1,4 @@
-# 🧾 MECH COPILOT EXECUTION PACK (v4)
+	# 🧾 MECH COPILOT EXECUTION PACK (v4)
 
 
 ### ROADMAP AUTHORITY
@@ -1817,3 +1817,143 @@ Delivered:
 * Heavy combat scenarios (high enemy/projectile counts) and verify stable frame pacing.
 * Confirm targeting responsiveness remains acceptable under scheduler deferral.
 * Confirm distant audio/AI degrade gracefully without obvious pops or starvation.
+
+---
+
+## Enemy Missile System — Phase 2 (Threat Detection + Audio Warning Layer)
+
+Copilot status: Complete
+Developer status: Pending playtest
+
+### Implementation Notes
+
+- Added `MissileThreatManager` at `packages/client/src/test-map/missile-threat-manager.ts`.
+- Integrated threat manager into `stepCombatEcsWorld` in `packages/client/src/test-map/combat-ecs.ts`.
+- Threat scan runs once per tick over active missiles (`O(n)`), with per-missile cached track state for flyby/overshoot checks.
+- Threat eligibility:
+	- missile explicitly targeting player
+	- OR missile inside configurable threat distance
+- Threat score used:
+	- `(damage * 2.0) + (speed * 1.5) + (1 / distance_to_player) + (blast_radius * 1.2)`
+- Single active warning target rule enforced:
+	- highest threat score missile becomes active warning source
+	- no multi-missile warning mix
+- Warning states implemented:
+	- detection
+	- tracking
+	- terminal
+- Time-to-impact estimate used for urgency transitions:
+	- `distance / missile_speed`
+- Flyby/overshoot detection implemented with cached per-missile trend checks:
+	- distance increasing after a close pass
+	- or approach speed sign flip across player vector
+
+- Added audio interface hooks and runtime playback implementation:
+	- `play_missile_warning(type, intensity, direction)`
+	- `stop_missile_warning()`
+	- `play_flyby_sound(direction, speed)`
+- Runtime follow-up update:
+	- Added directional missile warning pulse playback with state-based urgency (detection/tracking/terminal).
+	- Added flyby chirp playback tied to overshoot events.
+	- Added explicit missile explosion visual bursts in render state with radius-based scaling.
+	- Increased helicopter missile blast radius/damage and proximity fuse distance to improve near-hit explosive threat.
+
+### Suggested Playtest Focus
+
+- Spawn multiple enemy missiles and confirm only one drives warning at a time.
+- Confirm warning escalation from detection to tracking to terminal as range/TTI collapse.
+- Confirm active warning target swaps immediately when current threat is destroyed/lost.
+- Confirm dodged missile flyby triggers once and warning handoff occurs cleanly.
+
+---
+
+## Enemy Missile System — Phase 3 (Explosion Interaction + Terrain Strategy Layer)
+
+Copilot status: Complete
+Developer status: Pending playtest
+
+### Implementation Notes
+
+- Kept unified shared explosion path for all missile detonations:
+	- `create_explosion(position, radius, damage, owner_id)` in `packages/client/src/test-map/combat-ecs.ts`.
+	- Missile detonation callsites still route through `detonateMissile(...) -> create_explosion(...)` only.
+- Updated explosion falloff to quadratic profile for clearer center/edge readability:
+	- `damage_multiplier = (1 - distance/radius)^2`.
+- Added LOS terrain shielding in explosion resolution:
+	- Per target in blast radius, perform `traceWorldHit3D(collisionWorld, explosionCenter, targetCenter, EXPLOSION_LOS_TRACE_RADIUS)`.
+	- If occluded, apply exposure multiplier by obstacle type.
+- Added hard-cover rule:
+	- `wall` and `pillar` fully block blast (`0x` exposure).
+- Added soft-cover attenuation:
+	- `rock` heavily attenuates (`0.25x` exposure).
+	- `tree` attenuates (`0.4x` exposure).
+- Preserved grounded explosion origin behavior:
+	- Explosion origin remains actual missile detonation point from impact/proximity/lifetime logic.
+- Friendly fire consistency retained:
+	- No faction/immunity filters were introduced in shared explosion damage path.
+	- Any alive entity with `Health` in range is evaluated.
+- Destructible/environment interaction support confirmed:
+	- Explosion damage path is generic over `Health` component holders (not tank-only).
+	- Existing combat audio confirms now play only for combatants (`KIND_TANK` / `KIND_ENEMY`) while damage stays generic.
+- Performance considerations:
+	- Explosion remains `O(n entities in radius-check loop)` over active ECS entities.
+	- LOS ray is only executed after radius gate passes.
+	- Uses existing BVH-backed `traceWorldHit3D` world collision system (no new physics subsystem).
+
+### Suggested Playtest Focus
+
+- Verify wall/pillar hard cover gives zero missile splash damage.
+- Verify tree/rock give partial protection and edge-of-radius feels safer under quadratic falloff.
+- Verify enemy self-damage and enemy-on-enemy splash still occur naturally.
+- Verify forcing missiles into terrain can intentionally reduce/negate blast on player.
+
+---
+
+## Enemy Missile Guidance Intercept Update
+
+Copilot status: Complete
+Developer status: Pending playtest
+
+### Implementation Notes
+
+- Replaced point-chase steering with predictive intercept steering in missile guidance loop.
+- Intercept lead calculation now uses:
+	- `interceptTime = distance(missile,target) / missileSpeed`
+	- `predictedTargetPosition = targetPosition + targetVelocity * interceptTime`
+- Added max lead-time clamp:
+	- `MISSILE_INTERCEPT_MAX_LEAD_SECONDS = 0.75`
+	- prevents long-arc overshoot on distant/high-relative-speed shots.
+- Added explicit lead scaling to avoid over-leading high lateral targets:
+	- `MISSILE_INTERCEPT_LEAD_FACTOR = 0.65`.
+- Preserved turn-rate-limited steering:
+	- desired angle is computed from predicted intercept direction first,
+	- then angular delta is clamped by per-missile turn rate.
+- Added smoothing to desired direction:
+	- blends previous guidance direction toward new desired direction each tick
+	- `MISSILE_GUIDANCE_SMOOTHING_FACTOR = 0.45`.
+- Added vertical homing (pitch guidance) each tick:
+	- desired pitch is recomputed against predicted target position
+	- pitch rotation is clamped by turn-rate-scaled cap (`MISSILE_PITCH_TURN_RATE_SCALE = 0.9`).
+- Fixed enemy missile launch pitch sign bug:
+	- enemy missile spawn now uses `getPitchToTarget(...)` for consistent vertical aiming convention.
+- Added helicopter-specific spawn pitch clamp to prevent immediate ground dives:
+	- initial launch pitch is limited to a shallow band before homing takes over (`-0.10 .. 0.02` rad).
+- Added distance-aware descent gating in missile pitch homing:
+	- when far from target, maximum downward pitch is capped to shallow angles,
+	- downward authority increases as horizontal range closes,
+	- prevents early terrain impact before seeker convergence.
+- Applied global missile speed reduction:
+	- `MISSILE_SPEED_GLOBAL_SCALE = 0.78` for all spawned missiles (enemy and player).
+- Velocity sampling source:
+	- World-space target velocity is estimated per tick from position deltas (`deltaSeconds`) for player and tank entities.
+	- Missiles consume cached world-space velocity samples by target id.
+- Scope guard:
+	- No explosion, damage, threat, audio, or missile movement/physics structure changes.
+
+### Suggested Playtest Focus
+
+- Verify helicopter-fired missiles no longer climb/arc away and now descend/track into player envelope.
+- Verify player missiles reacquire and home both horizontally and vertically against moving enemies.
+- Verify missiles lead strafing player instead of trailing current position.
+- Verify fewer wide-orbit misses against fast lateral targets.
+- Verify guidance remains stable (reduced jitter) during rapid target direction changes.

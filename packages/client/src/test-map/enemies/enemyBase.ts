@@ -16,6 +16,7 @@ export abstract class EnemyDefinitionBase {
   readonly behavior: EnemyBehaviorDefinition
   readonly automaticFire?: EnemyAutomaticFireDefinition
   readonly melee?: EnemyMeleeDefinition
+  readonly missileLauncher?: EnemyDefinitionConfig['missileLauncher']
   readonly sounds: EnemySoundDefinition
   private readonly configuredFlightHeight?: number
 
@@ -43,6 +44,7 @@ export abstract class EnemyDefinitionBase {
     this.behavior = config.behavior
     this.automaticFire = config.automaticFire
     this.melee = config.melee
+    this.missileLauncher = config.missileLauncher
     this.sounds = config.sounds
   } // end constructor EnemyDefinitionBase
 } // end class EnemyDefinitionBase

@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { MAP_HEIGHT, MAP_WIDTH } from './constants.js'
 import { getCell } from './map-data.js'
-import type { Bullet, EnemyRender, Player, SpriteObject, CombatEnemyRender } from './types.js'
+import type { Bullet, EnemyRender, MissileExplosionRender, Player, SpriteObject, CombatEnemyRender } from './types.js'
 import { PLAYER_EYE_HEIGHT, WORLD_WALL_HEIGHT } from './world-collision.js'
 
 const PROJECTILE_SPHERE_GEOMETRY = new THREE.SphereGeometry(0.05, 10, 10)
@@ -20,6 +20,7 @@ interface ThreeRenderFrameArgs {
   enemies: EnemyRender[]
   tanks: CombatEnemyRender[]
   bullets: Bullet[]
+  missileExplosions: MissileExplosionRender[]
   player: Player
   muzzleFlashAlpha: number
   lockedTankId: number | null
@@ -174,18 +175,31 @@ function createBulletMesh(): THREE.Mesh {
   )
 } // end function createBulletMesh
 
+function createMissileExplosionMesh(): THREE.Mesh {
+  return new THREE.Mesh(
+    new THREE.SphereGeometry(0.32, 16, 16),
+    new THREE.MeshBasicMaterial({
+      color: 0xffa74b,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    })
+  )
+} // end function createMissileExplosionMesh
+
 function createMissileTrailPuffs(): THREE.Group {
   const group = new THREE.Group()
   group.visible = false
   group.frustumCulled = false
 
-  for (let puffIndex = 0; puffIndex < 32; puffIndex += 1) {
+  for (let puffIndex = 0; puffIndex < 16; puffIndex += 1) {
     const puff = new THREE.Mesh(
-      new THREE.SphereGeometry(0.06, 10, 10),
+      new THREE.SphereGeometry(0.035, 8, 8),
       new THREE.MeshBasicMaterial({
         color: 0xc8d0d8,
         transparent: true,
-        opacity: 0.42,
+        opacity: 0.24,
         depthWrite: false,
         depthTest: false
       })
@@ -474,6 +488,10 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
   scene.add(missileTrailGroup)
   const missileTrailPool: THREE.Group[] = []
 
+  const missileExplosionGroup = new THREE.Group()
+  scene.add(missileExplosionGroup)
+  const missileExplosionPool: THREE.Mesh[] = []
+
   const minigunTracerMesh = new THREE.InstancedMesh(
     new THREE.CylinderGeometry(0.014, 0.014, 1, 6),
     new THREE.MeshBasicMaterial({
@@ -710,6 +728,7 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
         enemies,
         tanks,
         bullets,
+        missileExplosions,
         player,
         muzzleFlashAlpha,
         lockedTankId,
@@ -867,11 +886,11 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
               } // end if no matching trail point
 
               const age = pointIndex / Math.max(1, trailPuffs.children.length - 1)
-              const puffScale = (renderedRadius / 0.12) * (1.05 + age * 2.4)
+              const puffScale = (renderedRadius / 0.18) * (0.6 + age * 1.35)
               puff.visible = true
               puff.position.set(point.x, point.y + 0.01 + age * 0.04, point.z)
               puff.scale.setScalar(puffScale)
-              puff.material.opacity = Math.max(0.12, 0.55 - age * 0.34)
+              puff.material.opacity = Math.max(0.04, 0.24 - age * 0.17)
             } // end for each trail puff
           } else {
             trailPuffs.visible = false
@@ -881,6 +900,25 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
           } // end if trail has enough points
         } // end if trail puffs exist
       } // end for each bullet
+
+      const visibleMissileExplosions = missileExplosions.filter((burst) => burst.intensity > 0.001)
+      syncPool(visibleMissileExplosions.length, missileExplosionPool, missileExplosionGroup, createMissileExplosionMesh)
+      for (const [index, burst] of visibleMissileExplosions.entries()) {
+        const mesh = missileExplosionPool[index]
+        if (!mesh || !(mesh.material instanceof THREE.MeshBasicMaterial)) {
+          continue
+        } // end if burst mesh mismatch
+
+        const clampedIntensity = Math.max(0, Math.min(1, burst.intensity))
+        const progress = 1 - clampedIntensity
+        const expansion = 0.22 + (0.78 * Math.pow(progress, 1.35))
+        const renderRadius = Math.max(0.12, burst.radius * expansion)
+        mesh.position.set(burst.x, Math.max(0.04, burst.z), burst.y)
+        mesh.scale.setScalar(renderRadius / 0.32)
+        const opacity = (1 - (progress * 0.72)) * 0.78
+        mesh.material.opacity = Math.max(0, opacity)
+        mesh.material.color.setHex(clampedIntensity > 0.42 ? 0xffc26a : 0xff7a30)
+      } // end for each missile explosion burst
 
       updateMinigunEffects(deltaSeconds)
       renderer.render(scene, camera)

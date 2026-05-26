@@ -298,6 +298,14 @@ export interface Bullet {
   alive: boolean
 } // end interface Bullet
 
+export interface MissileExplosionRender {
+  x: number
+  y: number
+  z: number
+  radius: number
+  intensity: number
+} // end interface MissileExplosionRender
+
 export interface TargetableEnemyRender {
   id: number
   enemyClass: string
@@ -361,6 +369,8 @@ export interface IncomingProjectileAudioState {
   velocityY: number
   distanceToPlayer: number
 } // end interface IncomingProjectileAudioState
+
+export type MissileWarningType = 'detection' | 'tracking' | 'terminal'
 
 export type SpriteType = 'tree' | 'rock' | 'pillar'
 
@@ -451,6 +461,9 @@ export interface AudioController {
   reportMinigunSuppressionImpact: (event: MinigunSuppressionImpactEvent) => void
   playPlayerMechHit: () => void
   updateIncomingProjectileAudio: (projectiles: IncomingProjectileAudioState[], playerX: number, playerY: number, playerAngle: number) => void
+  play_missile_warning: (type: MissileWarningType, intensity: number, direction: number) => void
+  stop_missile_warning: () => void
+  play_flyby_sound: (direction: number, speed: number) => void
   playProjectileNearMiss: (
     projectileType: 'bullet' | 'projectile',
     worldX: number,

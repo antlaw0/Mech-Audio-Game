@@ -25,6 +25,7 @@ import type {
   AudioController,
   ImpactAudioOptions,
   MinigunSuppressionImpactEvent,
+  MissileWarningType,
   FrontBackSpatialDiagnostics,
   FrontBackSpatialSettings,
   AudioVolumeChannel,
@@ -1659,6 +1660,23 @@ export function createAudioController(): AudioController {
     envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.05 }
   }).toDestination()
 
+  const missileWarningPanner = new Tone.Panner(0).toDestination()
+  const missileWarningGain = new Tone.Gain(0.001).connect(missileWarningPanner)
+  const missileWarningDetectionSynth = new Tone.Synth({
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.001, decay: 0.07, sustain: 0, release: 0.03 }
+  }).connect(missileWarningGain)
+  const missileWarningTerminalSynth = new Tone.Synth({
+    oscillator: { type: 'square' },
+    envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.025 }
+  }).connect(missileWarningGain)
+
+  const missileFlybyPanner = new Tone.Panner(0).toDestination()
+  const missileFlybySynth = new Tone.Synth({
+    oscillator: { type: 'sawtooth' },
+    envelope: { attack: 0.001, decay: 0.09, sustain: 0, release: 0.03 }
+  }).connect(missileFlybyPanner)
+
   const targetLockPresencePanner = new Tone.Panner(0).toDestination()
   const targetLockPresenceGain = new Tone.Gain(0).connect(targetLockPresencePanner)
   const targetLockPresenceOsc = new Tone.Oscillator({ frequency: 312, type: 'triangle' }).connect(targetLockPresenceGain)
@@ -2204,6 +2222,12 @@ export function createAudioController(): AudioController {
   let lockLostChirpLastStartSeconds = -Infinity
   let missileLockToneLastStartSeconds = -Infinity
   let missileLockConfirmLastStartSeconds = -Infinity
+  let missileWarningLastPulseSeconds = -Infinity
+  let missileWarningLastScheduledSeconds = -Infinity
+  let missileWarningActiveType: MissileWarningType | null = null
+  let missileWarningLastDirection = 0
+  let missileWarningLastIntensity = 0
+  let missileFlybyLastStartSeconds = -Infinity
   let targetLockStageLastStartSeconds = -Infinity
   let bullseyeGuidanceLastStartSeconds = -Infinity
   let targetLockTransitionChirpLastStartSeconds = -Infinity
@@ -2223,6 +2247,17 @@ export function createAudioController(): AudioController {
   const strictlyIncreasingStartTime = (requestedSeconds: number, previousSeconds: number): number => {
     return Math.max(requestedSeconds, previousSeconds + 0.001)
   } // end function strictlyIncreasingStartTime
+
+  const scheduleMissileWarningNote = (
+    synth: Tone.Synth,
+    note: string,
+    duration: string,
+    requestedStartSeconds: number
+  ): void => {
+    const start = strictlyIncreasingStartTime(requestedStartSeconds, missileWarningLastScheduledSeconds)
+    missileWarningLastScheduledSeconds = start
+    synth.triggerAttackRelease(note, duration, start)
+  } // end function scheduleMissileWarningNote
 
   const playLockOnChirp = (): void => {
     if (!audioStarted || !isAudioContextRunning()) {
@@ -3784,6 +3819,99 @@ export function createAudioController(): AudioController {
     } // end for each audible projectile
   } // end function updateIncomingProjectileAudio
 
+  const play_missile_warning = (type: MissileWarningType, intensity: number, direction: number): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryEnemies) {
+      return
+    } // end if missile warning audio should not run
+
+    const warningIntensity = clamp(intensity, 0, 1)
+    const warningPan = clamp(direction, -1, 1)
+    const warningIntervalSeconds = (() => {
+      if (type === 'terminal') {
+        return 0.22 - (warningIntensity * 0.14)
+      }
+      if (type === 'tracking') {
+        return 0.4 - (warningIntensity * 0.2)
+      }
+      return 0.68 - (warningIntensity * 0.24)
+    })()
+
+    missileWarningPanner.pan.rampTo(warningPan, 0.03)
+    const targetGain = (0.1 + (warningIntensity * 0.55)) * enemiesVolume
+    missileWarningGain.gain.rampTo(Math.max(0.001, targetGain), 0.02)
+
+    const nowSeconds = Tone.now()
+    const warningStateChanged = missileWarningActiveType !== type
+    const warningDirectionShifted = Math.abs(warningPan - missileWarningLastDirection) > 0.24
+    const warningIntensityShifted = Math.abs(warningIntensity - missileWarningLastIntensity) > 0.28
+    const shouldPulse = warningStateChanged
+      || warningDirectionShifted
+      || warningIntensityShifted
+      || (nowSeconds - missileWarningLastPulseSeconds) >= Math.max(0.08, warningIntervalSeconds)
+
+    if (!shouldPulse) {
+      return
+    } // end if pulse interval has not elapsed
+
+    const pulseStart = strictlyIncreasingStartTime(nowSeconds, missileWarningLastPulseSeconds)
+    missileWarningLastPulseSeconds = pulseStart
+    missileWarningActiveType = type
+    missileWarningLastDirection = warningPan
+    missileWarningLastIntensity = warningIntensity
+
+    if (type === 'terminal') {
+      missileWarningTerminalSynth.volume.value = gainToDbSafe(0.2 + (warningIntensity * 0.6))
+      missileWarningDetectionSynth.volume.value = gainToDbSafe(0.16 + (warningIntensity * 0.35))
+      scheduleMissileWarningNote(missileWarningTerminalSynth, 'G5', '32n', pulseStart)
+      scheduleMissileWarningNote(missileWarningTerminalSynth, 'A5', '32n', pulseStart + 0.055)
+      scheduleMissileWarningNote(missileWarningDetectionSynth, 'D6', '64n', pulseStart + 0.11)
+      return
+    } // end if terminal warning pulse
+
+    if (type === 'tracking') {
+      missileWarningDetectionSynth.volume.value = gainToDbSafe(0.14 + (warningIntensity * 0.42))
+      scheduleMissileWarningNote(missileWarningDetectionSynth, 'C5', '32n', pulseStart)
+      scheduleMissileWarningNote(missileWarningDetectionSynth, 'E5', '64n', pulseStart + 0.07)
+      return
+    } // end if tracking warning pulse
+
+    missileWarningDetectionSynth.volume.value = gainToDbSafe(0.12 + (warningIntensity * 0.32))
+    scheduleMissileWarningNote(missileWarningDetectionSynth, 'A4', '16n', pulseStart)
+  } // end function play_missile_warning
+
+  const stop_missile_warning = (): void => {
+    missileWarningActiveType = null
+    missileWarningLastIntensity = 0
+    missileWarningLastScheduledSeconds = Math.max(missileWarningLastScheduledSeconds, Tone.now())
+    missileWarningGain.gain.rampTo(0.001, 0.03)
+  } // end function stop_missile_warning
+
+  const play_flyby_sound = (direction: number, speed: number): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning() || !categoryEnemies) {
+      return
+    } // end if flyby audio should not run
+
+    const nowSeconds = Tone.now()
+    if (nowSeconds - missileFlybyLastStartSeconds < 0.09) {
+      return
+    } // end if flyby sound debounce has not elapsed
+
+    const flybyPan = clamp(direction, -1, 1)
+    const clampedSpeed = Math.max(0, speed)
+    const speedNorm = clamp(clampedSpeed / 36, 0, 1)
+    const baseGain = (0.16 + (speedNorm * 0.54)) * enemiesVolume
+    const firstNote = 900 + (speedNorm * 560)
+    const secondNote = 420 + (speedNorm * 220)
+
+    missileFlybyPanner.pan.rampTo(flybyPan, 0.02)
+    missileFlybySynth.volume.value = gainToDbSafe(baseGain)
+    const firstStart = strictlyIncreasingStartTime(nowSeconds, missileFlybyLastStartSeconds)
+    const secondStart = strictlyIncreasingStartTime(firstStart + 0.05, firstStart)
+    missileFlybyLastStartSeconds = secondStart
+    missileFlybySynth.triggerAttackRelease(firstNote, '32n', firstStart)
+    missileFlybySynth.triggerAttackRelease(secondNote, '16n', secondStart)
+  } // end function play_flyby_sound
+
   const playPlayerMechHit = (): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning()) {
       return
@@ -4942,6 +5070,9 @@ export function createAudioController(): AudioController {
       }
     }),
     updateIncomingProjectileAudio,
+    play_missile_warning,
+    stop_missile_warning,
+    play_flyby_sound,
     playProjectileNearMiss,
     isAudioStarted: () => audioStarted,
     getAudioContextState,

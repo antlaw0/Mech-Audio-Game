@@ -2,6 +2,22 @@ export type EnemyId = 'tank' | 'striker' | 'brute' | 'helicopter' | 'bruiser' | 
 
 export type EnemyMovementPattern = 'wander' | 'aggressive-wander' | 'hold-and-pivot'
 
+export type MissileProjectileVisualType = 'rocket' | 'missile'
+
+export interface EnemyMissileLauncherDefinition {
+  enabled: boolean
+  missileType: import('../missile-types.js').MissileTypeId
+  speed?: number
+  turnRate?: number
+  damage?: number
+  blastRadius?: number
+  collisionRadius?: number
+  proximityFuseDistance?: number
+  lifetime?: number
+  projectileVisualType?: MissileProjectileVisualType
+  explosionSounds?: string[]
+} // end interface EnemyMissileLauncherDefinition
+
 export interface EnemyBehaviorDefinition {
   movementPattern: EnemyMovementPattern
   retargetIntervalSeconds: number
@@ -54,5 +70,6 @@ export interface EnemyDefinitionConfig {
   behavior: EnemyBehaviorDefinition
   automaticFire?: EnemyAutomaticFireDefinition
   melee?: EnemyMeleeDefinition
+  missileLauncher?: EnemyMissileLauncherDefinition
   sounds: EnemySoundDefinition
 } // end interface EnemyDefinitionConfig

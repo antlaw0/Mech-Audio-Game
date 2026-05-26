@@ -4,6 +4,7 @@ import {
   createWorld,
   defineComponent,
   defineQuery,
+  hasComponent,
   removeEntity,
   Types,
   type IWorld
@@ -31,7 +32,9 @@ import {
   getEnemyDefinitionFromNumericId
 } from './enemies/index.js'
 import type { EnemyDefinitionConfig, EnemyId } from './enemies/enemyTypes.js'
-import type { AudioController, Bullet, EnemyRender, IncomingProjectileAudioState, Player, CombatEnemyRender, TrailPoint } from './types.js'
+import type { AudioController, Bullet, EnemyRender, IncomingProjectileAudioState, MissileExplosionRender, Player, CombatEnemyRender, TrailPoint } from './types.js'
+import { getMissileTypeDefinition, type MissileTypeDefinition, type MissileTypeId } from './missile-types.js'
+import { MissileThreatManager, type MissileThreatSample } from './missile-threat-manager.js'
 import { getLayoutIdForEntityType } from './target-layout.js'
 import { SURFACE_MATERIAL, resolveWorldSurfaceMaterial } from './surface-material.js'
 
@@ -54,10 +57,20 @@ const PROJECTILE_VISUAL_MISSILE = 3
 const PROJECTILE_VISUAL_LASER_BEAM = 4
 const PROJECTILE_OWNER_PLAYER = 1
 const PROJECTILE_OWNER_ENEMY = 2
+const MISSILE_TARGET_NONE = 0
+const MISSILE_TARGET_PLAYER = 0xffffffff
 const BULLET_HIT_RADIUS = 0.25
 const PLAYER_HIT_HALF_HEIGHT = 0.55
 const TANK_HIT_HALF_HEIGHT = 0.6
 const WORLD_CHUNK_SIZE = 64
+const MISSILE_SPEED_GLOBAL_SCALE = 0.45
+const MISSILE_LIFETIME_GUIDANCE_BUFFER_SECONDS = 0.45
+const MISSILE_LIFETIME_GUIDANCE_SCALE = 1.45
+const MISSILE_MAX_LIFETIME_SECONDS = 6.5
+const MISSILE_INTERCEPT_MAX_LEAD_SECONDS = 0.75
+const MISSILE_INTERCEPT_LEAD_FACTOR = 0
+const MISSILE_GUIDANCE_SMOOTHING_FACTOR = 0.45
+const MISSILE_PITCH_TURN_RATE_SCALE = 0.9
 const MAX_ACTIVE_ENEMIES = 20
 const MAX_ACTIVE_AIR_ENEMIES = 5
 const SPAWN_MIN_PLAYER_DISTANCE = 8
@@ -69,6 +82,7 @@ const ENEMY_BACKGROUND_SIM_RANGE = 360
 const ENEMY_BACKGROUND_AI_TICK_SECONDS = 0.22
 const ENEMY_DISTANT_AI_TICK_SECONDS = 0.55
 const ENEMY_LOS_MAX_DISTANCE = 170
+const EXPLOSION_LOS_TRACE_RADIUS = 0.06
 const NATO_CALLSIGNS = [
   'Alpha',
   'Bravo',
@@ -167,20 +181,57 @@ const ProjectileStats = defineComponent({
 })
 
 const MissileStats = defineComponent({
+  ownerId: Types.ui32,
   targetId: Types.ui32,
-  trackingRating: Types.f32,
-  guidanceTimer: Types.f32,
-  explosionRadius: Types.f32,
-  explosionDamage: Types.f32
+  velocityX: Types.f32,
+  velocityY: Types.f32,
+  directionX: Types.f32,
+  directionY: Types.f32,
+  speed: Types.f32,
+  turnRate: Types.f32,
+  damage: Types.f32,
+  blastRadius: Types.f32,
+  collisionRadius: Types.f32,
+  proximityFuseDistance: Types.f32,
+  lifetime: Types.f32,
+  active: Types.ui8,
+  detonated: Types.ui8
 })
 
 const CombatQuery = defineQuery([Position, Facing, Meta])
 const TankQuery = defineQuery([Position, Facing, Meta, Health, Behavior, EnemyProfile])
 
+interface MissileExplosionBurstState {
+  x: number
+  y: number
+  z: number
+  radius: number
+  timeRemaining: number
+  maxDuration: number
+}
+
+interface MissileGuidanceDirectionState {
+  x: number
+  y: number
+}
+
+interface MissileTargetVelocityState {
+  x: number
+  y: number
+  z: number
+  velocityX: number
+  velocityY: number
+  velocityZ: number
+}
+
 type CombatEcsWorld = IWorld & {
   customConfigs: Map<number, EnemyDefinitionConfig>
   missileExplosionSounds: Map<number, string[]>
   missileTrails: Map<number, TrailPoint[]>
+  missileExplosionBursts: MissileExplosionBurstState[]
+  missileGuidanceDirections: Map<number, MissileGuidanceDirectionState>
+  missileTargetVelocityById: Map<number, MissileTargetVelocityState>
+  missileThreatManager: MissileThreatManager
   enemyCallsignByEntity: Map<number, string>
   enemyCallsignReservationsByArchetype: Map<string, Set<string>>
   enemyCallsignNextIndexByArchetype: Map<string, number>
@@ -309,6 +360,61 @@ function spawnTankProjectile(
   ProjectileStats.owner[bullet] = PROJECTILE_OWNER_ENEMY
 } // end function spawnTankProjectile
 
+function spawnEnemyMissile(
+  world: CombatEcsWorld,
+  tankEntity: number,
+  tankX: number,
+  tankY: number,
+  player: Player
+): void {
+  const enemyProfileId = EnemyProfile.id[tankEntity] ?? ENEMY_NUMERIC_ID.tank
+  const customConfig = world.customConfigs.get(tankEntity)
+  const definition = customConfig ?? getEnemyDefinitionFromNumericId(enemyProfileId)
+  const launcher = definition.missileLauncher
+  if (!launcher?.enabled) {
+    return
+  } // end if enemy does not have missile launcher enabled
+
+  const originHeight = Math.max(0, Flight.height[tankEntity] ?? 0) + PLAYER_HEIGHT
+  const angle = Math.atan2(player.y - tankY, player.x - tankX)
+  const targetZ = (player.z ?? 0) + PLAYER_HEIGHT
+  const pitchToTarget = getPitchToTarget(tankX, tankY, originHeight, player.x, player.y, targetZ)
+  const launcherSpeed = Math.max(1, (launcher.speed ?? getMissileTypeDefinition(launcher.missileType).speed) * MISSILE_SPEED_GLOBAL_SCALE)
+  const distanceToTarget = Math.hypot(player.x - tankX, player.y - tankY, targetZ - originHeight)
+  const guidedLifetime = (distanceToTarget / launcherSpeed) * MISSILE_LIFETIME_GUIDANCE_SCALE + MISSILE_LIFETIME_GUIDANCE_BUFFER_SECONDS
+  const lifetimeOverride = Math.min(
+    MISSILE_MAX_LIFETIME_SECONDS,
+    Math.max(launcher.lifetime ?? 0, guidedLifetime)
+  )
+  const pitch = pitchToTarget
+  spawn_missile(
+    world,
+    PROJECTILE_OWNER_ENEMY,
+    MISSILE_TARGET_PLAYER,
+    launcher.missileType,
+    {
+      x: tankX,
+      y: tankY,
+      z: originHeight,
+      angle,
+      pitch
+    },
+    {
+      projectileVisualType: launcher.projectileVisualType ?? 'missile',
+      explosionSounds: launcher.explosionSounds,
+      overrides: {
+        speed: launcher.speed,
+        turnRate: launcher.turnRate,
+        damage: launcher.damage,
+        blastRadius: launcher.blastRadius,
+        collisionRadius: launcher.collisionRadius,
+        proximityFuseDistance: launcher.proximityFuseDistance,
+        lifetime: lifetimeOverride
+      }
+    }
+  )
+} // end function spawnEnemyMissile
+
 function chooseAutomaticBurstRoundCount(definition: EnemyDefinitionConfig): number {
   const automaticFire = getAutomaticFireDefinition(definition)
   if (!automaticFire?.enabled) {
@@ -329,6 +435,10 @@ export function createCombatEcsWorld(): CombatEcsWorld {
   world.customConfigs = new Map()
   world.missileExplosionSounds = new Map()
   world.missileTrails = new Map()
+  world.missileExplosionBursts = []
+  world.missileGuidanceDirections = new Map()
+  world.missileTargetVelocityById = new Map()
+  world.missileThreatManager = new MissileThreatManager()
   world.enemyCallsignByEntity = new Map()
   world.enemyCallsignReservationsByArchetype = new Map()
   world.enemyCallsignNextIndexByArchetype = new Map()
@@ -765,6 +875,122 @@ function spawnPlayerProjectileBurst(
   } // end for each projectile in burst
 } // end function spawnPlayerProjectileBurst
 
+interface MissileSpawnPosition {
+  x: number
+  y: number
+  z: number
+  angle: number
+  pitch: number
+}
+
+interface MissileSpawnOptions {
+  projectileVisualType?: 'rocket' | 'missile'
+  explosionSounds?: string[]
+  overrides?: Partial<MissileTypeDefinition>
+}
+
+function normalizeAngleRadians(radians: number): number {
+  let normalized = radians
+  while (normalized > Math.PI) normalized -= Math.PI * 2
+  while (normalized < -Math.PI) normalized += Math.PI * 2
+  return normalized
+} // end function normalizeAngleRadians
+
+function resolveSpawnHeadingToTarget(
+  targetId: number,
+  fallbackAngle: number,
+  spawnX: number,
+  spawnY: number
+): number {
+  if (targetId === MISSILE_TARGET_NONE || targetId === MISSILE_TARGET_PLAYER) {
+    return fallbackAngle
+  } // end if target is non-entity sentinel
+
+  if ((Meta.alive[targetId] ?? 0) !== 1) {
+    return fallbackAngle
+  } // end if target entity no longer valid
+
+  const targetX = getNumber(Position.x, targetId)
+  const targetY = getNumber(Position.y, targetId)
+  if (targetX === null || targetY === null) {
+    return fallbackAngle
+  } // end if target position is unavailable
+
+  return Math.atan2(targetY - spawnY, targetX - spawnX)
+} // end function resolveSpawnHeadingToTarget
+
+export function spawn_missile(
+  world: CombatEcsWorld,
+  owner_id: number,
+  target_id: number,
+  missile_type: MissileTypeId | string,
+  spawn_position: MissileSpawnPosition,
+  options?: MissileSpawnOptions
+): number {
+  const baseStats = getMissileTypeDefinition(missile_type)
+  const overrideStats = options?.overrides ?? {}
+  const speed = Math.max(1, (overrideStats.speed ?? baseStats.speed) * MISSILE_SPEED_GLOBAL_SCALE)
+  const turnRate = Math.max(0, overrideStats.turnRate ?? baseStats.turnRate)
+  const damage = Math.max(0, overrideStats.damage ?? baseStats.damage)
+  const blastRadius = Math.max(0.2, overrideStats.blastRadius ?? baseStats.blastRadius)
+  const collisionRadius = Math.max(0.08, overrideStats.collisionRadius ?? baseStats.collisionRadius)
+  const proximityFuseDistance = Math.max(0, overrideStats.proximityFuseDistance ?? baseStats.proximityFuseDistance)
+  const lifetime = Math.max(0.05, overrideStats.lifetime ?? baseStats.lifetime)
+
+  const initialAngle = resolveSpawnHeadingToTarget(target_id, spawn_position.angle, spawn_position.x, spawn_position.y)
+  const directionX = Math.cos(initialAngle)
+  const directionY = Math.sin(initialAngle)
+  const velocityX = directionX * speed
+  const velocityY = directionY * speed
+  const missile = addEntity(world)
+  addComponent(world, Position, missile)
+  addComponent(world, Facing, missile)
+  addComponent(world, Meta, missile)
+  addComponent(world, ProjectileStats, missile)
+  addComponent(world, MissileStats, missile)
+
+  Position.x[missile] = spawn_position.x
+  Position.y[missile] = spawn_position.y
+  Facing.angle[missile] = initialAngle
+  Facing.pitch[missile] = clampProjectilePitch(spawn_position.pitch)
+  Meta.kind[missile] = KIND_MISSILE
+  Meta.radius[missile] = collisionRadius
+  Meta.distance[missile] = 0
+  Meta.alive[missile] = 1
+  ProjectileStats.speed[missile] = speed
+  ProjectileStats.damage[missile] = Math.max(0, Math.round(damage))
+  ProjectileStats.maxDistance[missile] = speed * lifetime
+  ProjectileStats.originHeight[missile] = Math.max(0.02, spawn_position.z)
+  ProjectileStats.nearMissPlayed[missile] = 0
+  ProjectileStats.visualType[missile] = (options?.projectileVisualType ?? 'missile') === 'rocket'
+    ? PROJECTILE_VISUAL_ROCKET
+    : PROJECTILE_VISUAL_MISSILE
+  ProjectileStats.owner[missile] = owner_id
+
+  MissileStats.ownerId[missile] = owner_id
+  MissileStats.targetId[missile] = target_id
+  MissileStats.velocityX[missile] = velocityX
+  MissileStats.velocityY[missile] = velocityY
+  MissileStats.directionX[missile] = directionX
+  MissileStats.directionY[missile] = directionY
+  MissileStats.speed[missile] = speed
+  MissileStats.turnRate[missile] = turnRate
+  MissileStats.damage[missile] = damage
+  MissileStats.blastRadius[missile] = blastRadius
+  MissileStats.collisionRadius[missile] = collisionRadius
+  MissileStats.proximityFuseDistance[missile] = proximityFuseDistance
+  MissileStats.lifetime[missile] = lifetime
+  MissileStats.active[missile] = 1
+  MissileStats.detonated[missile] = 0
+
+  const explosionSounds = options?.explosionSounds ?? baseStats.explosionSounds
+  world.missileExplosionSounds.set(missile, [...explosionSounds])
+  world.missileTrails.set(missile, [
+    { x: spawn_position.x, y: Math.max(0.02, spawn_position.z), z: spawn_position.y }
+  ])
+  return missile
+}
+
 /**
  * Fires a player bullet aimed at (targetX, targetY) with an accuracy cone.
  * accuracy: 0.0 = widest cone, 1.0 = perfect aim.
@@ -841,44 +1067,45 @@ export function spawnPlayerMissile(
     ? 0
     : clampedSpeedFraction * (WEAPON_MOVEMENT_ACCURACY_PENALTY / clampedStability)
   const accuracyHalfAngle = baseHalfAngle * (1 + movementPenaltyFactor)
-  const launchOffset = sampleConeOffset(accuracyHalfAngle)
-  const missile = addEntity(world)
-  addComponent(world, Position, missile)
-  addComponent(world, Facing, missile)
-  addComponent(world, Meta, missile)
-  addComponent(world, ProjectileStats, missile)
-  addComponent(world, MissileStats, missile)
-
-  Position.x[missile] = player.x
-  Position.y[missile] = player.y
-  Facing.angle[missile] = angle + launchOffset.yawOffset
-  Facing.pitch[missile] = clampProjectilePitch(
-    (hasValidTarget
-      ? getPitchToTarget(player.x, player.y, originHeight, targetX, targetY, targetZ)
-      : player.pitch) + launchOffset.pitchOffset
+  const launchOffset = hasValidTarget
+    ? { yawOffset: 0, pitchOffset: 0 }
+    : sampleConeOffset(accuracyHalfAngle)
+  const turnRate = Math.max(0, Math.min(1, trackingRating)) * 8.8
+  const helicopterLauncherSpeed = getEnemyDefinition('helicopter').missileLauncher?.speed
+  const homingSpeed = Math.max(1, helicopterLauncherSpeed ?? speed)
+  const effectiveSpeed = Math.max(1, homingSpeed * MISSILE_SPEED_GLOBAL_SCALE)
+  const baseLifetime = Math.max(0.08, Math.max(1, maxDistance) / effectiveSpeed)
+  const targetDistance = Math.hypot(targetX - player.x, targetY - player.y, targetZ - originHeight)
+  const guidedLifetime = (targetDistance / effectiveSpeed) * MISSILE_LIFETIME_GUIDANCE_SCALE + MISSILE_LIFETIME_GUIDANCE_BUFFER_SECONDS
+  const lifetime = Math.min(MISSILE_MAX_LIFETIME_SECONDS, Math.max(baseLifetime, guidedLifetime))
+  spawn_missile(
+    world,
+    PROJECTILE_OWNER_PLAYER,
+    targetTankId ?? MISSILE_TARGET_NONE,
+    'medium',
+    {
+      x: player.x,
+      y: player.y,
+      z: originHeight,
+      angle: angle + launchOffset.yawOffset,
+      pitch: (hasValidTarget
+        ? getPitchToTarget(player.x, player.y, originHeight, targetX, targetY, targetZ)
+        : player.pitch) + launchOffset.pitchOffset
+    },
+    {
+      projectileVisualType,
+      explosionSounds,
+      overrides: {
+        speed: homingSpeed,
+        turnRate,
+        damage: Math.max(0, explosionDamage > 0 ? explosionDamage : damage),
+        blastRadius: explosionRadius,
+        collisionRadius: projectileSize,
+        proximityFuseDistance: Math.max(0.25, projectileSize * 1.4),
+        lifetime
+      }
+    }
   )
-  Meta.kind[missile] = KIND_MISSILE
-  Meta.radius[missile] = Math.max(0.08, projectileSize)
-  Meta.distance[missile] = 0
-  Meta.alive[missile] = 1
-  ProjectileStats.speed[missile] = Math.max(1, speed)
-  ProjectileStats.damage[missile] = Math.max(1, Math.round(damage))
-  ProjectileStats.maxDistance[missile] = Math.max(1, maxDistance)
-  ProjectileStats.originHeight[missile] = originHeight
-  ProjectileStats.nearMissPlayed[missile] = 0
-  ProjectileStats.visualType[missile] = projectileVisualType === 'rocket'
-    ? PROJECTILE_VISUAL_ROCKET
-    : PROJECTILE_VISUAL_MISSILE
-  ProjectileStats.owner[missile] = PROJECTILE_OWNER_PLAYER
-  MissileStats.targetId[missile] = targetTankId ?? 0
-  MissileStats.trackingRating[missile] = Math.max(0, Math.min(1, trackingRating))
-  MissileStats.guidanceTimer[missile] = 0
-  MissileStats.explosionRadius[missile] = Math.max(0.2, explosionRadius)
-  MissileStats.explosionDamage[missile] = Math.max(1, explosionDamage)
-  world.missileExplosionSounds.set(missile, explosionSounds)
-  world.missileTrails.set(missile, [
-    { x: player.x, y: (player.z ?? 0) + PLAYER_HEIGHT, z: player.y }
-  ])
 } // end function spawnPlayerMissile
 
 function computeFloorCeilHitDistance(originHeight: number, pitch: number): number {
@@ -1008,6 +1235,74 @@ function getFirstContactFraction(
   return -1
 } // end function getFirstContactFraction
 
+function getFirstSphereContactFraction(
+  startX: number,
+  startY: number,
+  startZ: number,
+  endX: number,
+  endY: number,
+  endZ: number,
+  targetX: number,
+  targetY: number,
+  targetZ: number,
+  hitRadius: number
+): number {
+  const segmentX = endX - startX
+  const segmentY = endY - startY
+  const segmentZ = endZ - startZ
+  const originToCenterX = startX - targetX
+  const originToCenterY = startY - targetY
+  const originToCenterZ = startZ - targetZ
+  const radius = Math.max(0.0001, hitRadius)
+
+  const a = (segmentX * segmentX) + (segmentY * segmentY) + (segmentZ * segmentZ)
+  const b = 2 * ((originToCenterX * segmentX) + (originToCenterY * segmentY) + (originToCenterZ * segmentZ))
+  const c = (originToCenterX * originToCenterX) + (originToCenterY * originToCenterY) + (originToCenterZ * originToCenterZ) - (radius * radius)
+
+  if (a <= 0.000001) {
+    return c <= 0 ? 0 : -1
+  } // end if segment has no meaningful length
+
+  const discriminant = (b * b) - (4 * a * c)
+  if (discriminant < 0) {
+    return -1
+  } // end if no line-sphere intersection
+
+  const sqrtDiscriminant = Math.sqrt(discriminant)
+  const t0 = (-b - sqrtDiscriminant) / (2 * a)
+  const t1 = (-b + sqrtDiscriminant) / (2 * a)
+
+  if (t0 >= 0 && t0 <= 1) {
+    return t0
+  } // end if first intersection point is within this frame segment
+  if (t1 >= 0 && t1 <= 1) {
+    return t1
+  } // end if second intersection point is within this frame segment
+
+  return -1
+} // end function getFirstSphereContactFraction
+
+function getExplosionExposureMultiplier(obstacleType: 'wall' | 'tree' | 'rock' | 'pillar' | null): number {
+  if (obstacleType === null) {
+    return 1
+  }
+
+  // Hard cover fully blocks blast; softer obstacles heavily attenuate exposure.
+  if (obstacleType === 'wall' || obstacleType === 'pillar') {
+    return 0
+  }
+  if (obstacleType === 'rock') {
+    return 0.25
+  }
+  return 0.4
+} // end function getExplosionExposureMultiplier
+
+function computeExplosionDamageMultiplier(distance: number, radius: number): number {
+  const normalizedDistance = Math.max(0, Math.min(1, distance / Math.max(0.0001, radius)))
+  const inverseDistance = Math.max(0, 1 - normalizedDistance)
+  return inverseDistance * inverseDistance
+} // end function computeExplosionDamageMultiplier
+
 function getNumber(store: ArrayLike<number>, entity: number): number | null {
   const value = store[entity]
   if (value === undefined) {
@@ -1106,7 +1401,50 @@ export function stepCombatEcsWorld(
   let impactFrameCount = 0
   const IMPACT_STAGGER_SECONDS = 0.001
   const incomingProjectileAudioStates: IncomingProjectileAudioState[] = []
+  const missileThreatSamples: MissileThreatSample[] = []
   const tankEntities = TankQuery(world)
+  const safeDeltaSeconds = Math.max(0.0001, deltaSeconds)
+
+  const updateTargetVelocitySample = (targetId: number, worldX: number, worldY: number, worldZ: number): void => {
+    const previousSample = world.missileTargetVelocityById.get(targetId)
+    const velocityX = previousSample ? (worldX - previousSample.x) / safeDeltaSeconds : 0
+    const velocityY = previousSample ? (worldY - previousSample.y) / safeDeltaSeconds : 0
+    const velocityZ = previousSample ? (worldZ - previousSample.z) / safeDeltaSeconds : 0
+    world.missileTargetVelocityById.set(targetId, {
+      x: worldX,
+      y: worldY,
+      z: worldZ,
+      velocityX,
+      velocityY,
+      velocityZ
+    })
+  } // end function updateTargetVelocitySample
+
+  updateTargetVelocitySample(MISSILE_TARGET_PLAYER, player.x, player.y, (player.z ?? 0) + PLAYER_HEIGHT)
+  for (const candidate of tankEntities) {
+    if ((Meta.alive[candidate] ?? 0) !== 1) {
+      continue
+    }
+    const targetX = getNumber(Position.x, candidate)
+    const targetY = getNumber(Position.y, candidate)
+    if (targetX === null || targetY === null) {
+      continue
+    }
+    updateTargetVelocitySample(candidate, targetX, targetY, Math.max(0, getNumber(Flight.height, candidate) ?? 0) + PLAYER_HEIGHT)
+  }
+
+  for (let burstIndex = world.missileExplosionBursts.length - 1; burstIndex >= 0; burstIndex -= 1) {
+    const burst = world.missileExplosionBursts[burstIndex]
+    if (!burst) {
+      world.missileExplosionBursts.splice(burstIndex, 1)
+      continue
+    } // end if burst entry is invalid
+
+    burst.timeRemaining = Math.max(0, burst.timeRemaining - deltaSeconds)
+    if (burst.timeRemaining <= 0) {
+      world.missileExplosionBursts.splice(burstIndex, 1)
+    } // end if burst visual has expired
+  } // end for each missile explosion burst
 
   // --- Update tanks ---
   for (const tank of tankEntities) {
@@ -1315,7 +1653,11 @@ export function stepCombatEcsWorld(
           Behavior.burstShotTimerSeconds[tank] = 0
           audio.playEnemyAttack(`tank-${tank}`, enemyDefinition.id, roundsInBurst)
         } else {
-          spawnTankProjectile(world, tank, nextX, nextY, player.x, player.y, (player.z ?? 0) + PLAYER_HEIGHT)
+          if (enemyDefinition.missileLauncher?.enabled) {
+            spawnEnemyMissile(world, tank, nextX, nextY, player)
+          } else {
+            spawnTankProjectile(world, tank, nextX, nextY, player.x, player.y, (player.z ?? 0) + PLAYER_HEIGHT)
+          }
           audio.playEnemyAttack(`tank-${tank}`, enemyDefinition.id)
         } // end if automatic or single-shot fire mode
       } // end if windup completed and target valid
@@ -1340,7 +1682,11 @@ export function stepCombatEcsWorld(
       burstTimerSeconds = Math.max(0, burstTimerSeconds - simulationStepSeconds)
 
       while (remainingBurstShots > 0 && burstTimerSeconds <= 0) {
-        spawnTankProjectile(world, tank, nextX, nextY, player.x, player.y, (player.z ?? 0) + PLAYER_HEIGHT)
+        if (enemyDefinition.missileLauncher?.enabled) {
+          spawnEnemyMissile(world, tank, nextX, nextY, player)
+        } else {
+          spawnTankProjectile(world, tank, nextX, nextY, player.x, player.y, (player.z ?? 0) + PLAYER_HEIGHT)
+        }
         remainingBurstShots -= 1
         burstTimerSeconds += burstIntervalSeconds
       } // end while burst can fire another round this frame
@@ -1352,76 +1698,131 @@ export function stepCombatEcsWorld(
       : 0
   } // end for each tank
 
-  const triggerMissileExplosion = (entity: number, worldX: number, worldY: number, worldZ: number): void => {
-    const explosionRadius = getNumber(MissileStats.explosionRadius, entity) ?? 1.6
-    const explosionDamage = getNumber(MissileStats.explosionDamage, entity) ?? 20
-    const sounds = world.missileExplosionSounds.get(entity) ?? []
+  const create_explosion = (
+    position: { x: number; y: number; z: number },
+    radius: number,
+    damage: number,
+    owner_id: number,
+    sounds: string[]
+  ): void => {
+    const effectiveRadius = Math.max(0.001, radius)
+    const effectiveDamage = Math.max(0, damage)
+    const burstDuration = Math.max(0.7, Math.min(1.9, 0.75 + (effectiveRadius * 0.22)))
+    world.missileExplosionBursts.push({
+      x: position.x,
+      y: position.y,
+      z: Math.max(0, position.z),
+      radius: effectiveRadius,
+      timeRemaining: burstDuration,
+      maxDuration: burstDuration
+    })
 
-    for (const tank of tankEntities) {
-      const tankAlive = Meta.alive[tank] ?? 0
-      if (tankAlive !== 1) {
+    for (const candidate of allEntities) {
+      if ((Meta.alive[candidate] ?? 0) !== 1 || !hasComponent(world, Health, candidate)) {
         continue
-      } // end if tank already dead
+      } // end if entity cannot receive HP damage
 
-      const tankX = getNumber(Position.x, tank)
-      const tankY = getNumber(Position.y, tank)
-      const tankRadius = getNumber(Meta.radius, tank)
-      if (tankX === null || tankY === null || tankRadius === null) {
+      const targetX = getNumber(Position.x, candidate)
+      const targetY = getNumber(Position.y, candidate)
+      if (targetX === null || targetY === null) {
         continue
-      } // end if tank is missing data
+      } // end if target lacks position
 
-      const tankZ = Math.max(0, Flight.height[tank] ?? 0) + PLAYER_HEIGHT
-      const horizontalDistance = Math.hypot(tankX - worldX, tankY - worldY)
-      const edgeDistance = Math.max(0, horizontalDistance - tankRadius)
-      const verticalDistance = Math.abs(tankZ - worldZ)
-      const distance = Math.hypot(edgeDistance, verticalDistance)
-      if (distance > explosionRadius) {
+      const targetZ = Math.max(0, hasComponent(world, Flight, candidate)
+        ? (getNumber(Flight.height, candidate) ?? 0)
+        : 0) + PLAYER_HEIGHT
+      const distance = Math.hypot(targetX - position.x, targetY - position.y, targetZ - position.z)
+      if (distance > effectiveRadius) {
         continue
-      } // end if tank out of explosion radius
+      } // end if outside explosion radius
 
-      const falloff = Math.max(0, 1 - (distance / Math.max(0.001, explosionRadius)))
-      const appliedDamage = Math.max(1, Math.round(explosionDamage * falloff))
-      Health.hp[tank] = (Health.hp[tank] ?? 0) - appliedDamage
-      audio.playTankHitConfirm(tankX, tankY, player.x, player.y, player.angle)
-      if ((Health.hp[tank] ?? 0) <= 0) {
-        Meta.alive[tank] = 0
-        TankExplosion.maxDuration[tank] = 0.7
-        TankExplosion.timeRemaining[tank] = 0.7
-        audio.playTankDeathConfirm(tankX, tankY, player.x, player.y, player.angle)
-      } // end if tank killed by explosion
-    } // end for each tank in explosion radius
+      const occlusionHit = traceWorldHit3D(
+        collisionWorld,
+        { x: position.x, y: position.y, z: position.z },
+        { x: targetX, y: targetY, z: targetZ },
+        EXPLOSION_LOS_TRACE_RADIUS
+      )
+      const exposureMultiplier = getExplosionExposureMultiplier(occlusionHit?.obstacleType ?? null)
+      if (exposureMultiplier <= 0) {
+        continue
+      } // end if hard cover fully blocked blast
 
-    const playerZ = (player.z ?? 0) + PLAYER_HEIGHT
-    const playerHorizontalDistance = Math.hypot(player.x - worldX, player.y - worldY)
-    const playerEdgeDistance = Math.max(0, playerHorizontalDistance - PLAYER_RADIUS)
-    const playerVerticalDistance = Math.abs(playerZ - worldZ)
-    const playerDistance = Math.hypot(playerEdgeDistance, playerVerticalDistance)
-    if (playerDistance <= explosionRadius) {
-      const playerFalloff = Math.max(0, 1 - (playerDistance / Math.max(0.001, explosionRadius)))
-      const playerDamage = Math.max(1, Math.round(explosionDamage * playerFalloff))
-      player.hp = Math.max(0, player.hp - playerDamage)
-      onPlayerDamaged?.({ amount: playerDamage, damageType: 'explosive' })
-      audio.playPlayerMechHit()
-    } // end if player was inside explosion radius
+      const damageMultiplier = computeExplosionDamageMultiplier(distance, effectiveRadius) * exposureMultiplier
+      const finalDamage = Math.max(0, effectiveDamage * damageMultiplier)
+      const appliedDamage = Math.max(0, Math.round(finalDamage))
+      if (appliedDamage <= 0) {
+        continue
+      } // end if falloff rounded damage to zero
+
+      Health.hp[candidate] = (Health.hp[candidate] ?? 0) - appliedDamage
+      const candidateKind = Meta.kind[candidate] ?? 0
+      const candidateIsCombatant = candidateKind === KIND_TANK || candidateKind === KIND_ENEMY
+      if (candidateIsCombatant) {
+        audio.playTankHitConfirm(targetX, targetY, player.x, player.y, player.angle)
+      }
+      if ((Health.hp[candidate] ?? 0) <= 0) {
+        Meta.alive[candidate] = 0
+        if (hasComponent(world, TankExplosion, candidate)) {
+          TankExplosion.maxDuration[candidate] = 0.7
+          TankExplosion.timeRemaining[candidate] = 0.7
+        }
+        if (candidateIsCombatant) {
+          audio.playTankDeathConfirm(targetX, targetY, player.x, player.y, player.angle)
+        }
+      } // end if explosion killed target
+    } // end for each damageable entity
+
+    const playerDistance = Math.hypot(player.x - position.x, player.y - position.y, ((player.z ?? 0) + PLAYER_HEIGHT) - position.z)
+    if (playerDistance <= effectiveRadius) {
+      const playerOcclusionHit = traceWorldHit3D(
+        collisionWorld,
+        { x: position.x, y: position.y, z: position.z },
+        { x: player.x, y: player.y, z: (player.z ?? 0) + PLAYER_HEIGHT },
+        EXPLOSION_LOS_TRACE_RADIUS
+      )
+      const playerExposureMultiplier = getExplosionExposureMultiplier(playerOcclusionHit?.obstacleType ?? null)
+      const damageMultiplier = computeExplosionDamageMultiplier(playerDistance, effectiveRadius) * playerExposureMultiplier
+      const finalDamage = Math.max(0, effectiveDamage * damageMultiplier)
+      const playerDamage = Math.max(0, Math.round(finalDamage))
+      if (playerDamage > 0) {
+        player.hp = Math.max(0, player.hp - playerDamage)
+        onPlayerDamaged?.({ amount: playerDamage, damageType: 'explosive' })
+        audio.playPlayerMechHit()
+      }
+    } // end if player is in blast radius
 
     audio.playImpact(
-      worldX,
-      worldY,
+      position.x,
+      position.y,
       player.x,
       player.y,
       player.angle,
       impactFrameCount * IMPACT_STAGGER_SECONDS,
       {
         source: 'explosion',
-        surfaceMaterial: resolveWorldSurfaceMaterial(worldX, worldY),
-        isEnemyImpact: true,
+        surfaceMaterial: resolveWorldSurfaceMaterial(position.x, position.y),
+        isEnemyImpact: owner_id !== PROJECTILE_OWNER_PLAYER,
         priorityBoost: 0.35
       }
     )
-    audio.playExplosion(worldX, worldY, player.x, player.y, player.angle, sounds)
+    audio.playExplosion(position.x, position.y, player.x, player.y, player.angle, sounds)
     impactFrameCount++
+  } // end function create_explosion
+
+  const detonateMissile = (entity: number, worldX: number, worldY: number, worldZ: number): void => {
+    if ((MissileStats.active[entity] ?? 0) !== 1) {
+      return
+    } // end if missile already consumed
+
+    MissileStats.active[entity] = 0
+    MissileStats.detonated[entity] = 1
+    const blastRadius = Math.max(0.2, getNumber(MissileStats.blastRadius, entity) ?? 1.6)
+    const damage = Math.max(0, getNumber(MissileStats.damage, entity) ?? 0)
+    const ownerId = MissileStats.ownerId[entity] ?? (ProjectileStats.owner[entity] ?? PROJECTILE_OWNER_PLAYER)
+    const sounds = world.missileExplosionSounds.get(entity) ?? []
+    create_explosion({ x: worldX, y: worldY, z: Math.max(0, worldZ) }, blastRadius, damage, ownerId, sounds)
     Meta.alive[entity] = 0
-  } // end function triggerMissileExplosion
+  } // end function detonateMissile
 
   // --- Update all projectiles (player bullets + tank projectiles + missiles) ---
   for (const entity of allEntities) {
@@ -1453,53 +1854,126 @@ export function stepCombatEcsWorld(
       continue
     } // end if projectile left streamed simulation region
 
-    const speed = getNumber(ProjectileStats.speed, entity) ?? (kind === KIND_TANK_PROJECTILE ? getEnemyDefinition('tank').projectileSpeed : BULLET_SPEED)
-    const maxDist = getNumber(ProjectileStats.maxDistance, entity) ?? BULLET_MAX_DIST
     const originHeight = getNumber(ProjectileStats.originHeight, entity) ?? PLAYER_HEIGHT
+    const speed = kind === KIND_MISSILE
+      ? Math.max(0, getNumber(MissileStats.speed, entity) ?? getNumber(ProjectileStats.speed, entity) ?? BULLET_SPEED)
+      : (getNumber(ProjectileStats.speed, entity) ?? (kind === KIND_TANK_PROJECTILE ? getEnemyDefinition('tank').projectileSpeed : BULLET_SPEED))
+    const maxDist = getNumber(ProjectileStats.maxDistance, entity) ?? BULLET_MAX_DIST
+
+    let missileTargetX = 0
+    let missileTargetY = 0
+    let missileTargetZ = 0
+    let missileTargetVelocityX = 0
+    let missileTargetVelocityY = 0
+    let missileTargetVelocityZ = 0
+    let missileHasValidTarget = false
 
     if (kind === KIND_MISSILE) {
-      const trackingRating = Math.max(0, Math.min(1, getNumber(MissileStats.trackingRating, entity) ?? 0.4))
-      const targetId = MissileStats.targetId[entity] ?? 0
-      const targetAlive = (Meta.alive[targetId] ?? 0) === 1
-      const targetX = getNumber(Position.x, targetId)
-      const targetY = getNumber(Position.y, targetId)
-      const targetHeight = getNumber(Flight.height, targetId)
-      if (targetAlive && targetX !== null && targetY !== null && targetHeight !== null) {
-        const desiredAngle = Math.atan2(targetY - currentY, targetX - currentX)
-        const currentHeight = originHeight
-        const desiredPitch = getPitchToTarget(
+      if ((MissileStats.active[entity] ?? 0) !== 1) {
+        Meta.alive[entity] = 0
+        continue
+      } // end if missile is no longer active
+
+      const targetId = MissileStats.targetId[entity] ?? MISSILE_TARGET_NONE
+      if (targetId === MISSILE_TARGET_PLAYER && player.hp > 0) {
+        missileHasValidTarget = true
+        missileTargetX = player.x
+        missileTargetY = player.y
+        missileTargetZ = (player.z ?? 0) + PLAYER_HEIGHT
+        const playerVelocitySample = world.missileTargetVelocityById.get(MISSILE_TARGET_PLAYER)
+        missileTargetVelocityX = playerVelocitySample?.velocityX ?? 0
+        missileTargetVelocityY = playerVelocitySample?.velocityY ?? 0
+        missileTargetVelocityZ = playerVelocitySample?.velocityZ ?? 0
+      } else if (targetId !== MISSILE_TARGET_NONE && (Meta.alive[targetId] ?? 0) === 1) {
+        const targetX = getNumber(Position.x, targetId)
+        const targetY = getNumber(Position.y, targetId)
+        if (targetX !== null && targetY !== null) {
+          missileHasValidTarget = true
+          missileTargetX = targetX
+          missileTargetY = targetY
+          missileTargetZ = Math.max(0, getNumber(Flight.height, targetId) ?? 0) + PLAYER_HEIGHT
+          const targetVelocitySample = world.missileTargetVelocityById.get(targetId)
+          missileTargetVelocityX = targetVelocitySample?.velocityX ?? 0
+          missileTargetVelocityY = targetVelocitySample?.velocityY ?? 0
+          missileTargetVelocityZ = targetVelocitySample?.velocityZ ?? 0
+        }
+      } // end if resolving missile entity target
+
+      if (missileHasValidTarget) {
+        const distanceToTarget = Math.hypot(
+          missileTargetX - currentX,
+          missileTargetY - currentY,
+          missileTargetZ - originHeight
+        )
+        const interceptTimeSeconds = Math.min(
+          MISSILE_INTERCEPT_MAX_LEAD_SECONDS,
+          Math.max(0, distanceToTarget / Math.max(0.01, speed))
+        )
+        const predictedTargetX = missileTargetX + (missileTargetVelocityX * interceptTimeSeconds * MISSILE_INTERCEPT_LEAD_FACTOR)
+        const predictedTargetY = missileTargetY + (missileTargetVelocityY * interceptTimeSeconds * MISSILE_INTERCEPT_LEAD_FACTOR)
+        const predictedTargetZ = missileTargetZ + (missileTargetVelocityZ * interceptTimeSeconds * MISSILE_INTERCEPT_LEAD_FACTOR)
+
+        const desiredDirectionXRaw = predictedTargetX - currentX
+        const desiredDirectionYRaw = predictedTargetY - currentY
+        const desiredDirectionLength = Math.hypot(desiredDirectionXRaw, desiredDirectionYRaw, predictedTargetZ - originHeight)
+        const desiredDirectionX = desiredDirectionLength > 0.0001
+          ? desiredDirectionXRaw / desiredDirectionLength
+          : Math.cos(angle)
+        const desiredDirectionY = desiredDirectionLength > 0.0001
+          ? desiredDirectionYRaw / desiredDirectionLength
+          : Math.sin(angle)
+
+        const previousGuidance = world.missileGuidanceDirections.get(entity)
+        const previousDirectionX = previousGuidance?.x ?? desiredDirectionX
+        const previousDirectionY = previousGuidance?.y ?? desiredDirectionY
+        const blendedDirectionX = previousDirectionX + ((desiredDirectionX - previousDirectionX) * MISSILE_GUIDANCE_SMOOTHING_FACTOR)
+        const blendedDirectionY = previousDirectionY + ((desiredDirectionY - previousDirectionY) * MISSILE_GUIDANCE_SMOOTHING_FACTOR)
+        const blendedLength = Math.hypot(blendedDirectionX, blendedDirectionY)
+        const smoothedDirectionX = blendedLength > 0.0001 ? blendedDirectionX / blendedLength : desiredDirectionX
+        const smoothedDirectionY = blendedLength > 0.0001 ? blendedDirectionY / blendedLength : desiredDirectionY
+        world.missileGuidanceDirections.set(entity, { x: smoothedDirectionX, y: smoothedDirectionY })
+
+        const desiredAngle = Math.atan2(smoothedDirectionY, smoothedDirectionX)
+        const deltaAngle = normalizeAngleRadians(desiredAngle - angle)
+        const turnRate = Math.max(0, getNumber(MissileStats.turnRate, entity) ?? 0)
+        const maxTurnThisTick = turnRate * deltaSeconds
+        angle += Math.max(-maxTurnThisTick, Math.min(maxTurnThisTick, deltaAngle))
+        angle = normalizeAngleRadians(angle)
+
+        const desiredPitchRaw = getPitchToTarget(
           currentX,
           currentY,
-          currentHeight,
-          targetX,
-          targetY,
-          targetHeight + PLAYER_HEIGHT
+          originHeight,
+          predictedTargetX,
+          predictedTargetY,
+          predictedTargetZ
         )
-        let deltaAngle = desiredAngle - angle
-        while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2
-        while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2
-        let deltaPitch = desiredPitch - pitch
-        while (deltaPitch > Math.PI) deltaPitch -= Math.PI * 2
-        while (deltaPitch < -Math.PI) deltaPitch += Math.PI * 2
-        const maxTurnRate = Math.max(0, trackingRating) * 8.8
-        const maxTurn = maxTurnRate * deltaSeconds
-        const appliedTurn = Math.max(-maxTurn, Math.min(maxTurn, deltaAngle))
-        const appliedPitchTurn = Math.max(-maxTurn, Math.min(maxTurn, deltaPitch))
-        angle += appliedTurn
-        pitch = clampProjectilePitch(pitch + appliedPitchTurn)
+        const desiredPitch = desiredPitchRaw
+        const maxPitchTurnThisTick = maxTurnThisTick * MISSILE_PITCH_TURN_RATE_SCALE
+        const pitchDelta = desiredPitch - pitch
+        pitch += Math.max(-maxPitchTurnThisTick, Math.min(maxPitchTurnThisTick, pitchDelta))
+        pitch = clampProjectilePitch(pitch)
+
         Facing.angle[entity] = angle
         Facing.pitch[entity] = pitch
-      } // end if valid target for guidance
+      } // end if target-guided heading update
+
+      const directionX = Math.cos(angle)
+      const directionY = Math.sin(angle)
+      MissileStats.directionX[entity] = directionX
+      MissileStats.directionY[entity] = directionY
+      MissileStats.velocityX[entity] = directionX * speed
+      MissileStats.velocityY[entity] = directionY * speed
     } // end if missile guidance path
 
     const step = speed * deltaSeconds
-  const pitchCos = Math.cos(pitch)
-  const horizontalStep = kind === KIND_MISSILE ? step * Math.max(0, pitchCos) : step
+    const pitchCos = Math.cos(pitch)
+    const horizontalStep = kind === KIND_MISSILE ? step * Math.max(0, pitchCos) : step
     const cosA = Math.cos(angle)
     const sinA = Math.sin(angle)
-  const nextX = currentX + cosA * horizontalStep
-  const nextY = currentY + sinA * horizontalStep
-  const nextDist = currentDist + horizontalStep
+    const nextX = currentX + cosA * horizontalStep
+    const nextY = currentY + sinA * horizontalStep
+    const nextDist = currentDist + horizontalStep
 
     // For missiles, originHeight tracks actual Z per frame; for ballistics use straight-line formula.
     const currentHeight = kind === KIND_MISSILE
@@ -1510,15 +1984,14 @@ export function stepCombatEcsWorld(
       : getProjectileHeight(originHeight, nextDist, pitch)
 
     if (kind === KIND_MISSILE) {
-      // guidanceTimer doubles as total-range accumulator for max-distance expiry.
-      const totalRange = (MissileStats.guidanceTimer[entity] ?? 0) + step
-      MissileStats.guidanceTimer[entity] = totalRange
-      if (totalRange >= maxDist) {
-        triggerMissileExplosion(entity, nextX, nextY, Math.max(0, nextHeight))
+      const lifetimeRemaining = (MissileStats.lifetime[entity] ?? 0) - deltaSeconds
+      MissileStats.lifetime[entity] = lifetimeRemaining
+      if (lifetimeRemaining <= 0) {
+        detonateMissile(entity, nextX, nextY, Math.max(0, nextHeight))
         continue
-      } // end if missile exceeded max range
+      } // end if missile lifetime expired
       if (nextHeight <= 0) {
-        triggerMissileExplosion(entity, nextX, nextY, 0)
+        detonateMissile(entity, nextX, nextY, 0)
         continue
       } // end if missile hit ground
     } else {
@@ -1557,7 +2030,7 @@ export function stepCombatEcsWorld(
     )
     if (worldHit) {
       if (kind === KIND_MISSILE) {
-        triggerMissileExplosion(entity, worldHit.x, worldHit.y, Math.max(0, worldHit.z))
+        detonateMissile(entity, worldHit.x, worldHit.y, Math.max(0, worldHit.z))
       } else {
         Meta.alive[entity] = 0
         audio.playImpact(
@@ -1631,70 +2104,35 @@ export function stepCombatEcsWorld(
     } // end if player bullet
 
     if (kind === KIND_MISSILE) {
-      let exploded = false
-      for (const tank of tankEntities) {
-        const tankAlive = Meta.alive[tank] ?? 0
-        if (tankAlive !== 1) {
-          continue
-        } // end if tank dead
-        const targetX = getNumber(Position.x, tank)
-        const targetY = getNumber(Position.y, tank)
-        const targetRadius = getNumber(Meta.radius, tank)
-        if (targetX === null || targetY === null || targetRadius === null) {
-          continue
-        } // end if missing tank collision data
-        const tankCenterHeight = Math.max(0, Flight.height[tank] ?? 0) + PLAYER_HEIGHT
-        const impactFraction = getFirstContactFraction(
-          currentX,
-          currentY,
-          currentHeight,
-          nextX,
-          nextY,
-          nextHeight,
-          targetX,
-          targetY,
-          tankCenterHeight,
-          targetRadius + bulletRadius,
-          TANK_HIT_HALF_HEIGHT
-        )
-        if (impactFraction < 0) {
-          continue
-        } // end if missile did not contact tank this frame
-        const impactX = currentX + ((nextX - currentX) * impactFraction)
-        const impactY = currentY + ((nextY - currentY) * impactFraction)
-        const impactHeight = currentHeight + ((nextHeight - currentHeight) * impactFraction)
-        triggerMissileExplosion(entity, impactX, impactY, Math.max(0, impactHeight))
-        exploded = true
-        break
-      } // end for each tank for missile impact
+      const targetId = MissileStats.targetId[entity] ?? MISSILE_TARGET_NONE
 
-      if (!exploded && (ProjectileStats.owner[entity] ?? 0) !== PROJECTILE_OWNER_PLAYER) {
-        const playerCenterHeight = (player.z ?? 0) + PLAYER_HEIGHT
-        const impactFraction = getFirstContactFraction(
+      if (missileHasValidTarget) {
+        const targetRadius = targetId === MISSILE_TARGET_PLAYER
+          ? PLAYER_RADIUS
+          : Math.max(0.08, getNumber(Meta.radius, targetId) ?? 0.3)
+        const contactRadius = targetId === MISSILE_TARGET_PLAYER
+          ? Math.max(0.03, targetRadius * 0.16)
+          : Math.max(0.04, targetRadius * 0.22)
+        const impactFraction = getFirstSphereContactFraction(
           currentX,
           currentY,
           currentHeight,
           nextX,
           nextY,
           nextHeight,
-          player.x,
-          player.y,
-          playerCenterHeight,
-          PLAYER_RADIUS + bulletRadius,
-          PLAYER_HIT_HALF_HEIGHT
+          missileTargetX,
+          missileTargetY,
+          missileTargetZ,
+          contactRadius
         )
         if (impactFraction >= 0) {
           const impactX = currentX + ((nextX - currentX) * impactFraction)
           const impactY = currentY + ((nextY - currentY) * impactFraction)
           const impactHeight = currentHeight + ((nextHeight - currentHeight) * impactFraction)
-          triggerMissileExplosion(entity, impactX, impactY, Math.max(0, impactHeight))
-          exploded = true
-        } // end if missile impacted player
-      } // end if no missile impact yet
-
-      if (exploded) {
-        continue
-      } // end if missile consumed by explosion
+          detonateMissile(entity, impactX, impactY, Math.max(0, impactHeight))
+          continue
+        } // end if missile directly collided with target
+      } // end if valid target exists for collision checks
     } // end if missile collision checks
 
     // --- Tank projectiles hitting player ---
@@ -1771,8 +2209,31 @@ export function stepCombatEcsWorld(
         trail.shift()
       } // end while trim trail length
       world.missileTrails.set(entity, trail)
+
+      missileThreatSamples.push({
+        id: entity,
+        x: nextX,
+        y: nextY,
+        speed: Math.max(0, getNumber(MissileStats.speed, entity) ?? speed),
+        velocityX: getNumber(MissileStats.velocityX, entity) ?? (Math.cos(angle) * speed),
+        velocityY: getNumber(MissileStats.velocityY, entity) ?? (Math.sin(angle) * speed),
+        damage: Math.max(0, getNumber(MissileStats.damage, entity) ?? getNumber(ProjectileStats.damage, entity) ?? 0),
+        blastRadius: Math.max(0, getNumber(MissileStats.blastRadius, entity) ?? 0),
+        targetsPlayer: (MissileStats.targetId[entity] ?? MISSILE_TARGET_NONE) === MISSILE_TARGET_PLAYER
+      })
     } // end if storing missile trail
   } // end for each projectile
+
+  world.missileThreatManager.update(
+    {
+      missiles: missileThreatSamples,
+      playerX: player.x,
+      playerY: player.y,
+      playerAngle: player.angle,
+      deltaSeconds
+    },
+    audio
+  )
 
   audio.updateIncomingProjectileAudio(incomingProjectileAudioStates, player.x, player.y, player.angle)
 
@@ -1789,6 +2250,7 @@ export function stepCombatEcsWorld(
       world.customConfigs.delete(entity)
       world.missileExplosionSounds.delete(entity)
       world.missileTrails.delete(entity)
+      world.missileGuidanceDirections.delete(entity)
       world.enemyCallsignByEntity.delete(entity)
       removeEntity(world, entity)
     } // end if dead
@@ -1799,10 +2261,12 @@ export function getCombatRenderState(world: CombatEcsWorld): {
   bullets: Bullet[]
   enemies: EnemyRender[]
   tanks: CombatEnemyRender[]
+  missileExplosions: MissileExplosionRender[]
 } {
   const bullets: Bullet[] = []
   const enemies: EnemyRender[] = []
   const tanks: CombatEnemyRender[] = []
+  const missileExplosions: MissileExplosionRender[] = []
   const allEntities = CombatQuery(world)
   const tankEntities = TankQuery(world)
 
@@ -1929,7 +2393,24 @@ export function getCombatRenderState(world: CombatEcsWorld): {
     })
   } // end for each tank
 
-  return { bullets, enemies, tanks }
+  for (const burst of world.missileExplosionBursts) {
+    const intensity = burst.maxDuration > 0
+      ? Math.max(0, Math.min(1, burst.timeRemaining / burst.maxDuration))
+      : 0
+    if (intensity <= 0) {
+      continue
+    } // end if burst has faded out
+
+    missileExplosions.push({
+      x: burst.x,
+      y: burst.y,
+      z: burst.z,
+      radius: burst.radius,
+      intensity
+    })
+  } // end for each active missile explosion burst
+
+  return { bullets, enemies, tanks, missileExplosions }
 } // end function getCombatRenderState
 
 export function getCombatEntityCounts(world: CombatEcsWorld): {
