@@ -38,7 +38,7 @@ export class HelicopterEnemyDefinition extends EnemyDefinitionBase {
         ]
       },
       sounds: {
-        attackSound: 'assets/sounds/weapons/pistol_fire.ogg',
+        attackSound: 'assets/sounds/weapons/missileFire.ogg',
         hurtSound: 'assets/sounds/tankHit.ogg',
         deathSound: 'assets/sounds/explosions/explosion_2a.ogg',
         positionalLoopSound: 'assets/sounds/helicopterLoop.ogg',

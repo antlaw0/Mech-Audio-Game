@@ -711,7 +711,7 @@ function createHelicopterProfile(
       movementLoop: new Tone.Player(loopSoundPath),
       passivePing: new Tone.Player('assets/sounds/servomotor.ogg'),
       threatCue: new Tone.Player(definition?.sounds.startupSound ?? 'assets/sounds/weapons/reload/reload.ogg'),
-      attackSound: new Tone.Player(definition?.sounds.attackSound ?? 'assets/sounds/weapons/pistol_fire.ogg'),
+      attackSound: new Tone.Player(definition?.sounds.attackSound ?? 'assets/sounds/weapons/missileFire.ogg'),
       attackVariants: createAttackVariantPlayers(getEnemyAutomaticFireDefinition(definition)),
       hurtSound: new Tone.Player(definition?.sounds.hurtSound ?? 'assets/sounds/tankHit.ogg'),
       deathSound: new Tone.Player(definition?.sounds.deathSound ?? 'assets/sounds/explosions/explosion_2a.ogg')

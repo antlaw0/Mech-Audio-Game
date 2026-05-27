@@ -50,7 +50,7 @@ import { getEnemyDefinition } from './enemies/index.js'
 import type { EnemyDefinitionConfig, EnemyMovementPattern } from './enemies/enemyTypes.js'
 import type { EnemyId } from './enemies/enemyTypes.js'
 import { getSharedFlightHeight, setSharedFlightHeight } from './runtime-config.js'
-import type { TargetableEnemyRender, WeaponStats } from './types.js'
+import type { InputState, TargetableEnemyRender, WeaponStats } from './types.js'
 import { PLAYER_MELEE_WEAPON_DEFINITIONS, PLAYER_WEAPON_DEFINITIONS, type PlayerMeleeWeaponDefinition, type PlayerWeaponDefinition } from './weapons.js'
 import { formatControlCode, getControlBindingDefinitions, getControlBindings, setControlBinding, type ControlActionId } from './controls.js'
 import { bindInput } from './input.js'
@@ -141,6 +141,26 @@ type HeatState = 'NORMAL' | 'HOT' | 'CRITICAL' | 'DANGER' | 'OVERHEAT'
 
 const EMERGENCY_COOLING_ENGAGE_RATIO = 0.95
 const EMERGENCY_COOLING_DISENGAGE_RATIO = 0.7
+const MELEE_DASH_DURATION_SECONDS = 0.34
+const MELEE_DASH_MIN_SPEED = 2.2
+const MELEE_DASH_DISTANCE_MULTIPLIER = 2
+const MELEE_DASH_SOUND_PATH = 'assets/sounds/dash.ogg'
+
+interface ActiveMeleeDashState {
+  remainingSeconds: number
+  targetEnemyId: number | null
+} // end interface ActiveMeleeDashState
+
+function normalizeAngleDelta(angle: number): number {
+  let wrapped = angle
+  while (wrapped > Math.PI) {
+    wrapped -= Math.PI * 2
+  } // end while angle above positive wrap
+  while (wrapped < -Math.PI) {
+    wrapped += Math.PI * 2
+  } // end while angle below negative wrap
+  return wrapped
+} // end function normalizeAngleDelta
 
 type LoadoutViewId =
   | 'Head'
@@ -376,6 +396,7 @@ function startTestMap(): void {
   const pauseTuneStaggerScalingInput = getInput('pauseTuneStaggerScaling')
   const pauseTuneTractionMultiplierInput = getInput('pauseTuneTractionMultiplier')
   const pauseTuneDriftMultiplierInput = getInput('pauseTuneDriftMultiplier')
+  const pauseTuneMeleeDashSpeedInput = getInput('pauseTuneMeleeDashSpeed')
   const pauseTuneAudioPitchScalingInput = getInput('pauseTuneAudioPitchScaling')
   const pauseTuneAudioVolumeScalingInput = getInput('pauseTuneAudioVolumeScaling')
   const resumeButtonElement = document.getElementById('pauseResumeButton')
@@ -591,9 +612,11 @@ function startTestMap(): void {
   let devStaggerScale = 1
   let devTractionMultiplier = 1
   let devDriftMultiplier = 1
+  let devMeleeDashSpeedMultiplier = 3
   let devAudioPitchScale = 1
   let devAudioVolumeScale = 1
   let devEnergyStarved = false
+  let activeMeleeDash: ActiveMeleeDashState | null = null
   let minigunShotAccumulator = 0
   let minigunPendingShots = 0
   let minigunSustainSeconds = 0
@@ -1901,6 +1924,7 @@ function startTestMap(): void {
     devStaggerScale = Math.max(0, readTuningInput(pauseTuneStaggerScalingInput, devStaggerScale))
     devTractionMultiplier = Math.max(0.1, readTuningInput(pauseTuneTractionMultiplierInput, devTractionMultiplier))
     devDriftMultiplier = Math.max(0.1, readTuningInput(pauseTuneDriftMultiplierInput, devDriftMultiplier))
+    devMeleeDashSpeedMultiplier = Math.max(0.5, Math.min(8, readTuningInput(pauseTuneMeleeDashSpeedInput, devMeleeDashSpeedMultiplier)))
     devAudioPitchScale = Math.max(0.5, Math.min(2, readTuningInput(pauseTuneAudioPitchScalingInput, devAudioPitchScale)))
     devAudioVolumeScale = Math.max(0, Math.min(2, readTuningInput(pauseTuneAudioVolumeScalingInput, devAudioVolumeScale)))
 
@@ -2456,6 +2480,7 @@ function startTestMap(): void {
     if (pauseTuneStaggerScalingInput) pauseTuneStaggerScalingInput.value = devStaggerScale.toFixed(2)
     if (pauseTuneTractionMultiplierInput) pauseTuneTractionMultiplierInput.value = devTractionMultiplier.toFixed(2)
     if (pauseTuneDriftMultiplierInput) pauseTuneDriftMultiplierInput.value = devDriftMultiplier.toFixed(2)
+    if (pauseTuneMeleeDashSpeedInput) pauseTuneMeleeDashSpeedInput.value = devMeleeDashSpeedMultiplier.toFixed(2)
     if (pauseTuneAudioPitchScalingInput) pauseTuneAudioPitchScalingInput.value = devAudioPitchScale.toFixed(2)
     if (pauseTuneAudioVolumeScalingInput) pauseTuneAudioVolumeScalingInput.value = devAudioVolumeScale.toFixed(2)
   } // end function syncPauseTuningInputs
@@ -2468,6 +2493,7 @@ function startTestMap(): void {
     pauseTuneStaggerScalingInput,
     pauseTuneTractionMultiplierInput,
     pauseTuneDriftMultiplierInput,
+    pauseTuneMeleeDashSpeedInput,
     pauseTuneAudioPitchScalingInput,
     pauseTuneAudioVolumeScalingInput
   ]
@@ -2669,6 +2695,53 @@ function startTestMap(): void {
     lockRateMultiplier: 0
   }
   let latestCombatRender = getCombatRenderState(combatWorld)
+
+  const getDashTargetById = (targetId: number | null): TargetableEnemyRender | null => {
+    if (targetId === null) {
+      return null
+    } // end if dash has no current target id
+
+    const enemy = latestCombatRender.enemies.find((candidate) => candidate.id === targetId && candidate.alive)
+    if (enemy) {
+      return enemy
+    } // end if regular enemy target remains alive
+
+    const tank = latestCombatRender.tanks.find((candidate) => candidate.id === targetId && candidate.alive)
+    if (tank) {
+      return tank
+    } // end if tank target remains alive
+
+    return null
+  } // end function getDashTargetById
+
+  const findMeleeDashTarget = (): TargetableEnemyRender | null => {
+    let selectedTarget: TargetableEnemyRender | null = null
+    let selectedDistance = Number.POSITIVE_INFINITY
+
+    const candidates: TargetableEnemyRender[] = [
+      ...latestCombatRender.enemies,
+      ...latestCombatRender.tanks
+    ]
+
+    for (const candidate of candidates) {
+      if (!candidate.alive) {
+        continue
+      } // end if target is not alive
+
+      const deltaX = candidate.x - player.x
+      const deltaY = candidate.y - player.y
+      const centerDistance = Math.hypot(deltaX, deltaY)
+      const edgeDistance = Math.max(0, centerDistance - Math.max(0, candidate.radius))
+
+      if (edgeDistance < selectedDistance) {
+        selectedDistance = edgeDistance
+        selectedTarget = candidate
+      } // end if this candidate is the closest valid dash target
+    } // end for each candidate
+
+    return selectedTarget
+  } // end function findMeleeDashTarget
+
   const resetTargetLockState = (): void => {
     targetLockState.currentTargetId = null
     targetLockState.lockProgress = 0
@@ -6098,8 +6171,10 @@ function startTestMap(): void {
 
     if (input.toggleWorldMapPending) {
       input.toggleWorldMapPending = false
-      isWorldMapVisible = !isWorldMapVisible
-      worldMapOverlay.setVisible(isWorldMapVisible)
+      if (activeMeleeDash === null) {
+        isWorldMapVisible = !isWorldMapVisible
+        worldMapOverlay.setVisible(isWorldMapVisible)
+      }
     } // end if world map visibility changed
 
     if (isPaused) {
@@ -6119,6 +6194,34 @@ function startTestMap(): void {
 
     playerFireCooldownSeconds = Math.max(0, playerFireCooldownSeconds - deltaSeconds)
     playerMeleeCooldownSeconds = Math.max(0, playerMeleeCooldownSeconds - deltaSeconds)
+
+    if (activeMeleeDash !== null) {
+      input.firePending = false
+      input.meleePending = false
+      input.reloadPending = false
+      input.selectedWeaponSlot = null
+      input.flightTogglePending = false
+      input.boostTogglePending = false
+      input.sonarPingPending = false
+      input.snapNorthPending = false
+      input.snapEastPending = false
+      input.snapSouthPending = false
+      input.snapWestPending = false
+      input.snapLeftPending = false
+      input.snapRightPending = false
+      input.spawnTankPending = false
+      input.spawnStrikerPending = false
+      input.spawnBrutePending = false
+      input.spawnHelicopterPending = false
+      input.spawnBruiserPending = false
+      input.spawnTestDummyPending = false
+      input.refillEpPending = false
+      input.refillHpPending = false
+      input.speakHpPending = false
+      input.speakEpPending = false
+      input.speakCoordsPending = false
+      input.speakDestinationPending = false
+    } // end if melee dash should lock out all non-trajectory controls
 
     if (input.selectedWeaponSlot !== null) {
       const requestedSlot = input.selectedWeaponSlot
@@ -6213,23 +6316,69 @@ function startTestMap(): void {
     } // end if boost toggle-on was requested
 
     const flightSpeedLimit = PLAYER_FLIGHT_SPEED * flightRuntimeProfile.speedMultiplier
-    const subsystemModifierHeld = input.subsystemSelectModifier
+    const dashActive = activeMeleeDash !== null
+    const dashTurnInput = dashActive
+      ? ((input.turnRight ? 1 : 0) - (input.turnLeft ? 1 : 0))
+      : 0
     const cachedTurnLeft = input.turnLeft
     const cachedTurnRight = input.turnRight
     const cachedLookUp = input.lookUp
     const cachedLookDown = input.lookDown
+    const subsystemModifierHeld = !dashActive && input.subsystemSelectModifier
 
+    if (dashActive) {
+      input.firePending = false
+      input.reloadPending = false
+      input.meleePending = false
+      input.selectedWeaponSlot = null
+      input.flightTogglePending = false
+      input.boostTogglePending = false
+      input.sonarPingPending = false
+      input.snapNorthPending = false
+      input.snapEastPending = false
+      input.snapSouthPending = false
+      input.snapWestPending = false
+      input.snapLeftPending = false
+      input.snapRightPending = false
+      input.spawnTankPending = false
+      input.spawnStrikerPending = false
+      input.spawnBrutePending = false
+      input.spawnHelicopterPending = false
+      input.spawnBruiserPending = false
+      input.spawnTestDummyPending = false
+      input.refillEpPending = false
+      input.refillHpPending = false
+      input.speakHpPending = false
+      input.speakEpPending = false
+      input.speakCoordsPending = false
+      input.speakDestinationPending = false
+    } // end if dash should lock out non-trajectory controls
+
+    const frameInput: InputState = { ...input }
     if (subsystemModifierHeld) {
-      input.turnLeft = false
-      input.turnRight = false
-      input.lookUp = false
-      input.lookDown = false
+      frameInput.turnLeft = false
+      frameInput.turnRight = false
+      frameInput.lookUp = false
+      frameInput.lookDown = false
     } // end if subsystem-selection modifier remaps directional inputs
+    if (dashActive) {
+      frameInput.moveForward = false
+      frameInput.moveBack = false
+      frameInput.strafeLeft = false
+      frameInput.strafeRight = false
+      frameInput.turnLeft = false
+      frameInput.turnRight = false
+      frameInput.lookUp = false
+      frameInput.lookDown = false
+      frameInput.subsystemSelectModifier = false
+      frameInput.pitchResetPending = false
+      frameInput.toggleWorldMapPending = false
+    } // end if dash should disable movement controls handled by default update
 
     updateFrame(
       {
         player,
-        input,
+        input: frameInput,
         audio,
         state: updateState,
         weightFactor: movementWeightFactor,
@@ -6252,12 +6401,89 @@ function startTestMap(): void {
       movementDeltaSeconds
     )
 
-    if (subsystemModifierHeld) {
-      input.turnLeft = cachedTurnLeft
-      input.turnRight = cachedTurnRight
-      input.lookUp = cachedLookUp
-      input.lookDown = cachedLookDown
-    } // end if restoring directional inputs after movement update
+    if (activeMeleeDash !== null) {
+      const dashHeatRatio = Math.max(0, Math.min(1, devCurrentHeat / Math.max(1, devMaxHeat)))
+      const heatMobilityScale = Math.max(0.55, 1 - (dashHeatRatio * 0.35))
+      const effectiveTopSpeed = Math.max(
+        MELEE_DASH_MIN_SPEED,
+        movementProfile.maxForwardSpeed
+        * Math.max(0.15, movementWeightFactor)
+        * Math.max(0, devMovementScale)
+        * Math.max(0.1, devTractionMultiplier)
+        / Math.max(0.1, devDriftMultiplier)
+        * heatMobilityScale
+      )
+      const dashSpeed = Math.max(MELEE_DASH_MIN_SPEED, effectiveTopSpeed * Math.max(0.5, devMeleeDashSpeedMultiplier))
+      const dashTarget = findMeleeDashTarget()
+      if (dashTarget) {
+        activeMeleeDash.targetEnemyId = dashTarget.id
+      } else {
+        activeMeleeDash.targetEnemyId = null
+      } // end if tracked dash target is no longer valid
+
+      const maxTurnStep = movementProfile.turnRate * Math.max(0.2, movementWeightFactor) * movementDeltaSeconds
+      const manualTurnDelta = dashTurnInput * maxTurnStep
+      let homingTurnDelta = 0
+      if (dashTarget) {
+        const desiredAngle = Math.atan2(dashTarget.y - player.y, dashTarget.x - player.x)
+        const desiredDelta = normalizeAngleDelta(desiredAngle - player.angle)
+        const boundedDelta = Math.max(-maxTurnStep, Math.min(maxTurnStep, desiredDelta))
+        homingTurnDelta = boundedDelta * 0.85
+      } // end if dash has a homing target this frame
+
+      player.angle += homingTurnDelta + manualTurnDelta
+
+      const dashDistance = dashSpeed * movementDeltaSeconds * MELEE_DASH_DISTANCE_MULTIPLIER
+      const nextX = player.x + Math.cos(player.angle) * dashDistance
+      const nextY = player.y + Math.sin(player.angle) * dashDistance
+      const dashFeet = player.z ?? 0
+      const xWithinMap = Math.max(0.06, Math.min(MAP_WIDTH - 0.06, nextX))
+      const yWithinMap = Math.max(0.06, Math.min(MAP_HEIGHT - 0.06, nextY))
+
+      const canMoveX = !isPlayerBlocked(collisionWorld, xWithinMap, player.y, dashFeet, PLAYER_RADIUS, PLAYER_COLLISION_HEIGHT)
+      if (canMoveX) {
+        player.x = xWithinMap
+      }
+      const canMoveY = !isPlayerBlocked(collisionWorld, player.x, yWithinMap, dashFeet, PLAYER_RADIUS, PLAYER_COLLISION_HEIGHT)
+      if (canMoveY) {
+        player.y = yWithinMap
+      }
+
+      activeMeleeDash.remainingSeconds = Math.max(0, activeMeleeDash.remainingSeconds - deltaSeconds)
+      if (activeMeleeDash.remainingSeconds <= 0) {
+        const finishedDashHeatRatio = Math.max(0, Math.min(1, devCurrentHeat / Math.max(1, devMaxHeat)))
+        const speedRatio = Math.max(0, Math.min(1.5, effectiveTopSpeed / Math.max(0.1, movementProfile.maxForwardSpeed)))
+        const recoverySeconds = Math.max(
+          0.55,
+          Math.min(
+            2.4,
+            1
+            * (1 + ((1 - movementWeightFactor) * 0.7) + (finishedDashHeatRatio * 0.6) + ((1 - Math.min(1, speedRatio)) * 0.35))
+          )
+        )
+
+        activeMeleeDash = null
+        if (equippedMeleeWeapon) {
+          const soundPath = equippedMeleeWeapon.swingSoundPaths[Math.floor(Math.random() * equippedMeleeWeapon.swingSoundPaths.length)]
+            ?? equippedMeleeWeapon.swingSoundPaths[0]
+          if (soundPath) {
+            audio.fireGunshot(soundPath)
+          } // end if melee swing sound available
+
+          const dashStrikeRange = equippedMeleeWeapon.reach
+          const dashStrikeConeAngle = 180
+          performPlayerMeleeAttack(
+            combatWorld,
+            audio,
+            player,
+            equippedMeleeWeapon.damagePerSwing,
+            dashStrikeRange,
+            dashStrikeConeAngle
+          )
+          playerMeleeCooldownSeconds = Math.max(playerMeleeCooldownSeconds, equippedMeleeWeapon.meleeCooldownSeconds, recoverySeconds)
+        } // end if melee weapon exists to resolve end-of-dash strike
+      } // end if dash finished this frame
+    } // end if melee dash is active
 
     if (deltaSeconds > 0) {
       const currentZ = player.z ?? 0
@@ -6452,6 +6678,7 @@ function startTestMap(): void {
 
     devTimers.set('player.fireCooldown', playerFireCooldownSeconds)
     devTimers.set('player.meleeCooldown', playerMeleeCooldownSeconds)
+    devTimers.set('player.meleeDash', activeMeleeDash?.remainingSeconds ?? 0)
     devTimers.set('weapon.reload', isReloading ? 1 : 0)
     devTimers.set('missile.lockProgressMs', missileLockProgressMs)
 
@@ -6769,7 +6996,8 @@ function startTestMap(): void {
       missileLockToneTimerSeconds = 0
     } // end if missile-weapon lock processing
 
-    const shouldAttemptShot = playerWeapon.isFullAuto ? input.fireHeld : input.firePending
+    const canUseCombatInputs = activeMeleeDash === null
+    const shouldAttemptShot = canUseCombatInputs && (playerWeapon.isFullAuto ? input.fireHeld : input.firePending)
     if (input.firePending) {
       input.firePending = false
     } // end if consume edge-trigger press
@@ -7198,24 +7426,15 @@ function startTestMap(): void {
         audio.playNegativeActionTone()
       } else if (!canUseMeleeSubsystem()) {
         audio.playNegativeActionTone()
-      } else if (isReloading) {
       } else if (!equippedMeleeWeapon) {
       } else if (playerMeleeCooldownSeconds > 0) {
-      } else if (!isReloading && equippedMeleeWeapon && playerMeleeCooldownSeconds <= 0) {
-        const soundPath = equippedMeleeWeapon.swingSoundPaths[Math.floor(Math.random() * equippedMeleeWeapon.swingSoundPaths.length)]
-          ?? equippedMeleeWeapon.swingSoundPaths[0]
-        if (soundPath) {
-          audio.fireGunshot(soundPath)
-        } // end if melee swing sound available
-        playerMeleeCooldownSeconds = equippedMeleeWeapon.meleeCooldownSeconds
-        performPlayerMeleeAttack(
-          combatWorld,
-          audio,
-          player,
-          equippedMeleeWeapon.damagePerSwing,
-          equippedMeleeWeapon.reach,
-          equippedMeleeWeapon.coneAngleDegrees
-        )
+      } else if (activeMeleeDash === null && equippedMeleeWeapon && playerMeleeCooldownSeconds <= 0) {
+        const dashTarget = findMeleeDashTarget()
+        activeMeleeDash = {
+          remainingSeconds: MELEE_DASH_DURATION_SECONDS,
+          targetEnemyId: dashTarget?.id ?? null
+        }
+        audio.fireGunshot(MELEE_DASH_SOUND_PATH)
       } // end if melee weapon is equipped and ready
     } // end if melee input was pressed
 

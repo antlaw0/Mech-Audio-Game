@@ -1854,6 +1854,7 @@ Developer status: Pending playtest
 	- `play_flyby_sound(direction, speed)`
 - Runtime follow-up update:
 	- Added directional missile warning pulse playback with state-based urgency (detection/tracking/terminal).
+	- Set missile-launching enemy attack SFX to `assets/sounds/weapons/missileFire.ogg` so missile shots no longer reuse pistol-fire audio.
 	- Added 3D positional looping missile flight audio for non-player missiles using `assets/sounds/weapons/missileFlyLoop1.ogg`, with hostile missiles now fed into the incoming-projectile spatial voice pool using live height data.
 	- Added flyby chirp playback tied to overshoot events.
 	- Added explicit missile explosion visual bursts in render state with radius-based scaling.
@@ -1961,3 +1962,47 @@ Developer status: Pending playtest
 - Verify missiles lead strafing player instead of trailing current position.
 - Verify fewer wide-orbit misses against fast lateral targets.
 - Verify guidance remains stable (reduced jitter) during rapid target direction changes.
+
+---
+
+## Player Melee Homing Dash Runtime Update
+
+Copilot status: Complete
+Developer status: Approved
+
+### Implementation Notes
+
+- Added a fixed-duration melee dash flow in `packages/client/src/test-map/main.ts` that starts on melee input and cannot be manually canceled once triggered.
+- Added target acquisition for dash start:
+	- nearest alive enemy in front 180 degree arc
+	- max edge distance 5 meters
+	- falls back to forward dash if no valid target exists.
+- Added dash steering behavior:
+	- target tracking during dash when a valid target remains
+	- heading adjustment limited by current mech turn authority
+	- trajectory-only control during dash, with regular movement/combat inputs locked out until dash end.
+- Added dash speed scaling from effective movement stats with live tuning control:
+	- `melee dash speed multiplier` in pause tuning menu (`pauseTuneMeleeDashSpeed`)
+	- default multiplier set to `3.0`.
+- Added dash start audio trigger using `assets/sounds/dash.ogg`.
+- Added deterministic dash completion behavior:
+	- dash ends strictly by duration
+	- melee strike is executed at dash end (can hit or miss based on final position/orientation).
+- Added post-dash recovery as cooldown scaling influenced by mech factors (movement profile, weight factor, and heat state contribution in the runtime formula).
+- Added debug timer exposure for active dash duration (`player.meleeDash`).
+
+### Suggested Playtest Focus
+
+- Press melee with enemy in front/within range and verify dash homes to nearest valid target.
+- Press melee with no valid target and verify forward dash still executes and ends with a strike.
+- During dash, verify movement/attack controls are suppressed except dash trajectory behavior.
+- Confirm dash speed responds to pause tuning `melee dash speed multiplier` in real time.
+- Confirm dash always ends on fixed duration and triggers end-of-dash melee resolution.
+- Confirm post-dash recovery feels appropriately slower/faster across heavier/lighter and hotter/cooler configurations.
+
+### Runtime Follow-up (2026-05-26)
+
+- Increased dash travel distance by applying a `2x` distance multiplier while preserving fixed dash duration.
+- Updated dash homing target selection to always choose the nearest alive target from current combat render candidates (enemies + tanks), removing front-arc/range gating that could cause fallback forward dashes when a nearby target was visible off-angle.
+- Updated in-dash homing to retarget nearest alive target each frame so trajectory consistently steers toward the nearest threat when available.
+- Updated dash finish strike behavior to avoid disorienting facing snaps: player heading is now preserved at dash end, and the melee resolve uses standard melee reach with a fixed 180-degree forward arc.
