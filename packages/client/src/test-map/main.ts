@@ -80,6 +80,19 @@ import { SURFACE_MATERIAL, resolveWorldSurfaceMaterial } from './surface-materia
 import { createWorldStreamingManager } from './world-streaming.js'
 import { createFrameUpdateScheduler } from './update-scheduler.js'
 import type { GarageSnapshot, MechLoadout, PartCategory, PartDefinition, WeaponMountSlot } from '../data/parts/types.js'
+import type { ItemCategory } from '../data/items/types.js'
+import { createInventoryManager } from '../systems/inventory/inventoryManager.js'
+import { defaultItemDatabase } from '../systems/inventory/itemDatabase.js'
+import { DEFAULT_LOOT_TABLES } from '../data/lootTables/definitions.js'
+import { createLootGenerator } from '../systems/loot/lootGenerator.js'
+import { createPickupSystem } from '../systems/pickup/pickupSystem.js'
+import { createWorldItemPersistenceManager } from '../systems/persistence/worldItemPersistence.js'
+import {
+  DEFAULT_OVERENCUMBRANCE_THRESHOLDS,
+  getOverencumbranceState,
+  getTotalMechWeight,
+  type OverencumbranceThresholds
+} from '../systems/weight/mechWeight.js'
 import type { AudioCategory, AudioVolumeChannel } from './types.js'
 import type { WorldPosition } from './types.js'
 
@@ -136,7 +149,7 @@ interface KnownPoi {
   position: WorldPosition
 } // end interface KnownPoi
 
-type PauseDebugTabId = 'runtime' | 'events' | 'tuning' | 'loadout' | 'controls'
+type PauseDebugTabId = 'runtime' | 'events' | 'tuning' | 'inventory' | 'loadout' | 'controls'
 type HeatState = 'NORMAL' | 'HOT' | 'CRITICAL' | 'DANGER' | 'OVERHEAT'
 
 const EMERGENCY_COOLING_ENGAGE_RATIO = 0.95
@@ -270,6 +283,8 @@ const MOVEMENT_ARCHETYPE_PROFILES: Readonly<Record<MobilityType, MovementArchety
 }
 
 interface DevMechStatsSnapshot {
+  installedPartWeight: number
+  cargoWeight: number
   totalWeight: number
   totalPDEF: number
   totalEDEF: number
@@ -332,7 +347,23 @@ function setupCanvas(): {
 
 function startTestMap(): void {
   const EMPTY_CLIP_SOUND_PATH = 'assets/sounds/weapons/emptyClip.ogg'
+  const UNIVERSAL_AMMO_ITEM_ID = 'ammo_resource'
+  const STARTING_UNIVERSAL_AMMO_QUANTITY = 1200
   const { canvas, width, height } = setupCanvas()
+  const cargoInventory = createInventoryManager({ itemDatabase: defaultItemDatabase })
+  const lootGenerator = createLootGenerator({ itemDatabase: defaultItemDatabase, lootTables: DEFAULT_LOOT_TABLES })
+  const pickupSystem = createPickupSystem({
+    inventory: cargoInventory,
+    itemDatabase: defaultItemDatabase,
+    lootGenerator,
+    interactionKeyLabel: 'E'
+  })
+  const worldItemPersistence = createWorldItemPersistenceManager({
+    pickupSystem,
+    itemDatabase: defaultItemDatabase
+  })
+  let worldItemCleanupCooldownSeconds = 0
+  cargoInventory.addItem(UNIVERSAL_AMMO_ITEM_ID, STARTING_UNIVERSAL_AMMO_QUANTITY)
   let currentCanvasWidth = width
   let currentCanvasHeight = height
 
@@ -374,15 +405,21 @@ function startTestMap(): void {
   const pauseDebugTabRuntimeButtonElement = document.getElementById('pauseDebugTabRuntimeButton')
   const pauseDebugTabEventsButtonElement = document.getElementById('pauseDebugTabEventsButton')
   const pauseDebugTabTuningButtonElement = document.getElementById('pauseDebugTabTuningButton')
+  const pauseDebugTabInventoryButtonElement = document.getElementById('pauseDebugTabInventoryButton')
   const pauseDebugTabLoadoutButtonElement = document.getElementById('pauseDebugTabLoadoutButton')
   const pauseDebugTabControlsButtonElement = document.getElementById('pauseDebugTabControlsButton')
   const pauseDebugRuntimePanelElement = document.getElementById('pauseDebugRuntimePanel')
   const pauseDebugEventsPanelElement = document.getElementById('pauseDebugEventsPanel')
   const pauseDebugTuningPanelElement = document.getElementById('pauseDebugTuningPanel')
+  const pauseDebugInventoryPanelElement = document.getElementById('pauseDebugInventoryPanel')
   const pauseDebugLoadoutPanelElement = document.getElementById('pauseDebugLoadoutPanel')
   const pauseDebugControlsPanelElement = document.getElementById('pauseDebugControlsPanel')
   const pauseDebugRuntimeContentElement = document.getElementById('pauseDebugRuntimeContent')
   const pauseDebugEventsContentElement = document.getElementById('pauseDebugEventsContent')
+  const pauseInventoryCategoryTabsElement = document.getElementById('pauseInventoryCategoryTabs')
+  const pauseInventoryCardListElement = document.getElementById('pauseInventoryCardList')
+  const pauseInventorySummaryElement = document.getElementById('pauseInventorySummary')
+  const pauseInventoryActionStatusElement = document.getElementById('pauseInventoryActionStatus')
   const pauseControlsListElement = document.getElementById('pauseControlsList')
   const pauseControlsStatusElement = document.getElementById('pauseControlsStatus')
   const pauseLoadoutSlotListElement = document.getElementById('pauseLoadoutSlotList')
@@ -538,10 +575,69 @@ function startTestMap(): void {
   let isWeaponEditorOpen = false
   let playerFireCooldownSeconds = 0
   let playerMeleeCooldownSeconds = 0
-  let universalAmmoResource = 1200
   let isReloading = false
   let hasPlayedEmptyClipForCurrentTriggerPull = false
   let pauseControlsCaptureActionId: ControlActionId | null = null
+
+  const getUniversalAmmoResource = (): number => {
+    return cargoInventory.getQuantity(UNIVERSAL_AMMO_ITEM_ID)
+  } // end function getUniversalAmmoResource
+
+  const setUniversalAmmoResource = (nextQuantityRaw: number): number => {
+    const nextQuantity = Math.max(0, Math.floor(nextQuantityRaw))
+    const currentQuantity = getUniversalAmmoResource()
+    if (nextQuantity === currentQuantity) {
+      return currentQuantity
+    } // end if quantity unchanged
+
+    if (nextQuantity > currentQuantity) {
+      cargoInventory.addItem(UNIVERSAL_AMMO_ITEM_ID, nextQuantity - currentQuantity)
+    } else {
+      cargoInventory.removeItem(UNIVERSAL_AMMO_ITEM_ID, currentQuantity - nextQuantity)
+    } // end if adding or removing ammo units
+    return getUniversalAmmoResource()
+  } // end function setUniversalAmmoResource
+
+  const consumeUniversalAmmoResource = (requestedAmountRaw: number): number => {
+    const requestedAmount = Math.max(0, Math.floor(requestedAmountRaw))
+    if (requestedAmount <= 0) {
+      return 0
+    } // end if no ammo requested
+
+    const beforeQuantity = getUniversalAmmoResource()
+    cargoInventory.removeItem(UNIVERSAL_AMMO_ITEM_ID, requestedAmount)
+    return Math.max(0, beforeQuantity - getUniversalAmmoResource())
+  } // end function consumeUniversalAmmoResource
+
+  const resetCargoInventoryToDefaults = (): void => {
+    for (const stack of cargoInventory.getStacks()) {
+      cargoInventory.removeItem(stack.itemId, stack.quantity)
+    } // end for each existing stack
+    const lootGenerator = createLootGenerator({ itemDatabase: defaultItemDatabase, lootTables: DEFAULT_LOOT_TABLES })
+    cargoInventory.addItem(UNIVERSAL_AMMO_ITEM_ID, STARTING_UNIVERSAL_AMMO_QUANTITY)
+  } // end function resetCargoInventoryToDefaults
+
+  const formatInventoryStacks = (stacks: Array<{ itemId: string; quantity: number }>): string[] => {
+    if (stacks.length <= 0) {
+      return ['  empty']
+    } // end if no stacks
+
+    return stacks.map((stack) => {
+      const definition = defaultItemDatabase.getById(stack.itemId)
+      const itemName = definition?.name ?? 'Unknown Item'
+      const stackWeight = (definition?.weightPerUnit ?? 0) * stack.quantity
+      return `  ${stack.itemId} (${itemName}) qty:${stack.quantity} weight:${stackWeight.toFixed(2)}kg`
+    })
+  } // end function formatInventoryStacks
+
+  const getInventorySummaryLines = (): string[] => {
+    const stacks = cargoInventory.getStacks()
+    return [
+      `inventory.stacks = ${stacks.length}`,
+      `inventory.cargoWeight = ${cargoInventory.getCargoWeight().toFixed(2)}kg`,
+      ...formatInventoryStacks(stacks)
+    ]
+  } // end function getInventorySummaryLines
 
   const weaponLoadout: PlayerWeaponDefinition[] = PLAYER_WEAPON_DEFINITIONS.map((weapon) => ({
     ...weapon,
@@ -602,6 +698,8 @@ function startTestMap(): void {
   let devProjectileCount = 0
   let isRuntimeDebugOverlayVisible = false
   let pauseDebugActiveTab: PauseDebugTabId = 'runtime'
+  let pauseInventoryActiveCategory: ItemCategory = 'supplies'
+  let pauseInventoryActionStatus = 'Inventory ready.'
   let pauseLoadoutActiveView: LoadoutViewId = 'Head'
   let garageView: GarageViewController | null = null
   let devHeatMultiplier = 1
@@ -610,6 +708,9 @@ function startTestMap(): void {
   let devEmergencyCoolingActive = false
   let devMovementScale = 1
   let devStaggerScale = 1
+  let devOverencumbranceThresholds: OverencumbranceThresholds = {
+    ...DEFAULT_OVERENCUMBRANCE_THRESHOLDS
+  }
   let devTractionMultiplier = 1
   let devDriftMultiplier = 1
   let devMeleeDashSpeedMultiplier = 3
@@ -1241,6 +1342,65 @@ function startTestMap(): void {
     window.speechSynthesis.speak(utterance)
   } // end function speakSystemAnnouncement
 
+  const INVENTORY_AUDIO_CUE_PATHS = {
+    metallic: 'assets/sounds/weapons/reload/reload.ogg',
+    electrical: 'assets/sounds/energy.ogg',
+    heavyThunk: 'assets/sounds/weapons/equip/rocketEquip.ogg',
+    rareResonant: 'assets/sounds/weapons/equip/plasmaCannonEquip.ogg',
+    industrial: 'assets/sounds/weapons/reload/reloadCannon.ogg',
+    equip: 'assets/sounds/weapons/equip/minigunEquip.ogg'
+  } as const
+
+  let lastInventoryCueTimeMs = 0
+
+  const playInventoryCue = (path: string): void => {
+    const nowMs = performance.now()
+    if ((nowMs - lastInventoryCueTimeMs) < 120) {
+      return
+    } // end if inventory cue cooldown active
+    lastInventoryCueTimeMs = nowMs
+    audio.fireGunshot(path)
+  } // end function playInventoryCue
+
+  const resolveInventoryItemCuePath = (itemId: string): string => {
+    const definition = defaultItemDatabase.getById(itemId)
+    if (!definition) {
+      return INVENTORY_AUDIO_CUE_PATHS.metallic
+    } // end if item definition is unavailable
+
+    const normalizedId = itemId.toLowerCase()
+    if (definition.rarity >= 4) {
+      return INVENTORY_AUDIO_CUE_PATHS.rareResonant
+    } // end if rare item should use resonant cue
+
+    if (normalizedId.includes('rocket') || normalizedId.includes('missile')) {
+      return INVENTORY_AUDIO_CUE_PATHS.heavyThunk
+    } // end if explosive ammo category cue
+
+    if (normalizedId.includes('energy') || definition.useActionId === 'restore_ep') {
+      return INVENTORY_AUDIO_CUE_PATHS.electrical
+    } // end if energy category cue
+
+    if (definition.category === 'parts') {
+      return INVENTORY_AUDIO_CUE_PATHS.equip
+    } // end if part category cue
+
+    return INVENTORY_AUDIO_CUE_PATHS.metallic
+  } // end function resolveInventoryItemCuePath
+
+  const announceInventoryInteraction = (message: string, options?: { cuePath?: string; speak?: boolean }): void => {
+    const shouldSpeak = options?.speak ?? true
+    if (runtimeDebugSpeechStatusElement instanceof HTMLElement) {
+      runtimeDebugSpeechStatusElement.textContent = message
+    } // end if runtime speech status element exists
+    if (options?.cuePath) {
+      playInventoryCue(options.cuePath)
+    } // end if inventory cue path exists
+    if (shouldSpeak) {
+      speakSystemAnnouncement(message)
+    }
+  } // end function announceInventoryInteraction
+
   const updateEmergencyCoolingState = (): void => {
     const thermalPart = getDevPartState('ThermalRegulator')
     const emergencyCoolingAvailable = thermalPart.online && thermalPart.integrity > 0
@@ -1372,7 +1532,7 @@ function startTestMap(): void {
   } // end function getCurrentEnergyRegenPerSecond
 
   const canAffordWeaponReload = (weapon: PlayerWeaponDefinition): boolean => {
-    return universalAmmoResource >= getWeaponReloadCost(weapon)
+    return getUniversalAmmoResource() >= getWeaponReloadCost(weapon)
   } // end function canAffordWeaponReload
 
   const tryStartWeaponReload = (): void => {
@@ -1395,7 +1555,7 @@ function startTestMap(): void {
     } // end if clip already full
 
     const missingRounds = Math.max(0, Math.round(playerWeapon.clipSize) - Math.round(playerWeapon.ammoInClip))
-    const loadableRounds = Math.min(missingRounds, Math.floor(universalAmmoResource / ammoPerRound))
+    const loadableRounds = Math.min(missingRounds, Math.floor(getUniversalAmmoResource() / ammoPerRound))
     if (loadableRounds <= 0) {
       audio.playNegativeActionTone()
       return
@@ -1412,11 +1572,11 @@ function startTestMap(): void {
           const currentAmmoPerRound = Math.max(0, reloadWeapon.ammoResourcePerRound)
           const currentMissingRounds = Math.max(0, Math.round(reloadWeapon.clipSize) - Math.round(reloadWeapon.ammoInClip))
           const roundsToLoad = currentAmmoPerRound > 0
-            ? Math.min(currentMissingRounds, Math.floor(universalAmmoResource / currentAmmoPerRound))
+            ? Math.min(currentMissingRounds, Math.floor(getUniversalAmmoResource() / currentAmmoPerRound))
             : 0
 
           if (roundsToLoad > 0) {
-            universalAmmoResource -= roundsToLoad * currentAmmoPerRound
+            consumeUniversalAmmoResource(roundsToLoad * currentAmmoPerRound)
             reloadWeapon.ammoInClip = Math.min(reloadWeapon.clipSize, reloadWeapon.ammoInClip + roundsToLoad)
           }
         }
@@ -1569,6 +1729,17 @@ function startTestMap(): void {
     return totalWeight / (totalWeight + 1000)
   } // end function calculateWeightResistance
 
+  const getOverencumbranceTelemetry = (totalWeight: number, ratedLoad: number): {
+    loadRatio: number
+    state: string
+  } => {
+    const result = getOverencumbranceState(totalWeight, ratedLoad, devOverencumbranceThresholds)
+    return {
+      loadRatio: result.loadRatio,
+      state: result.state.toUpperCase()
+    }
+  } // end function getOverencumbranceTelemetry
+
   const getLoadoutPartByView = (viewId: LoadoutViewId): DevPartState | null => {
     const view = LOADOUT_SLOT_VIEWS.find((entry) => entry.id === viewId)
     if (!view?.slot) {
@@ -1587,6 +1758,7 @@ function startTestMap(): void {
       loadRatio,
       weightFactor
     } = calculateWeightFactor(stats.totalWeight, movementProfile.ratedLoad)
+    const overencumbrance = getOverencumbranceTelemetry(stats.totalWeight, movementProfile.ratedLoad)
     const forwardSpeed = movementProfile.maxForwardSpeed
     const reverseSpeed = movementProfile.maxReverseSpeed
     const strafeSpeed = movementProfile.maxStrafeSpeed
@@ -1616,7 +1788,11 @@ function startTestMap(): void {
     return [
       'Aggregate Stats',
       `Total Weight: ${formatLoadoutNumber(stats.totalWeight)} kg`,
+      `Installed Weight: ${formatLoadoutNumber(stats.installedPartWeight)} kg`,
+      `Cargo Weight: ${formatLoadoutNumber(stats.cargoWeight)} kg`,
       `Rated Load: ${formatLoadoutNumber(ratedLoad)} kg`,
+      `Load Ratio: ${formatLoadoutNumber(loadRatio, 3)}`,
+      `Load State: ${overencumbrance.state}`,
       `Weight Factor: ${formatLoadoutNumber(weightFactor, 3)}`,
       '',
       `Total PDEF: ${formatLoadoutNumber(stats.totalPDEF)}`,
@@ -1758,6 +1934,328 @@ function startTestMap(): void {
     garageView.render()
   } // end function renderPauseLoadoutTab
 
+  const getInventoryCardActionLabels = (category: ItemCategory): string[] => {
+    if (category === 'supplies') {
+      return ['Use', 'Drop']
+    }
+    if (category === 'resources') {
+      return ['Drop']
+    }
+    return ['Equip', 'Drop']
+  } // end function getInventoryCardActionLabels
+
+  let pauseInventoryFocusHint: { itemId: string; actionLabel: string } | null = null
+
+  const useInventoryItem = (itemId: string): void => {
+    const definition = defaultItemDatabase.getById(itemId)
+    if (!definition) {
+      pauseInventoryActionStatus = 'Selected item is unavailable.'
+      announceInventoryInteraction(pauseInventoryActionStatus, { speak: true })
+      return
+    }
+    if (cargoInventory.getQuantity(itemId) <= 0) {
+      pauseInventoryActionStatus = `${definition.name} is out of stock.`
+      announceInventoryInteraction(pauseInventoryActionStatus, { speak: true })
+      return
+    }
+
+    // Centralized useActionId routing avoids executable item functions in item data.
+    if (definition.useActionId === 'restore_ep') {
+      const beforeEp = player.ep
+      player.ep = Math.min(player.maxEp, player.ep + 30)
+      if (player.ep > beforeEp) {
+        cargoInventory.removeItem(itemId, 1)
+        pauseInventoryActionStatus = `Used ${definition.name}.`
+        nextEventTag(`Used ${definition.name}`)
+        announceInventoryInteraction(pauseInventoryActionStatus, { cuePath: resolveInventoryItemCuePath(itemId), speak: true })
+        return
+      }
+      pauseInventoryActionStatus = `${definition.name} had no effect.`
+      nextEventTag(`${definition.name} had no effect`)
+      announceInventoryInteraction(pauseInventoryActionStatus, { speak: true })
+      return
+    }
+
+    pauseInventoryActionStatus = `${definition.name} cannot be used right now.`
+    nextEventTag(`Use action unavailable: ${definition.useActionId ?? 'none'}`)
+    audio.playNegativeActionTone()
+    announceInventoryInteraction(pauseInventoryActionStatus, { speak: true })
+  } // end function useInventoryItem
+
+  const dropInventoryItem = (itemId: string): void => {
+    const dropped = cargoInventory.dropItem(itemId, 1)
+    if (!dropped) {
+      return
+    }
+    const definition = defaultItemDatabase.getById(itemId)
+    pauseInventoryActionStatus = `Dropped ${definition?.name ?? itemId}.`
+    nextEventTag(`Dropped ${definition?.name ?? itemId} x${dropped.quantity}`)
+    announceInventoryInteraction(pauseInventoryActionStatus, { cuePath: resolveInventoryItemCuePath(itemId), speak: true })
+  } // end function dropInventoryItem
+
+  type InventoryPartEquipTarget =
+    | {
+        kind: 'category'
+        category: PartCategory
+        preferredDefinitionIds: string[]
+      }
+    | {
+        kind: 'weapon'
+        category: 'HandWeapon' | 'ShoulderWeapon'
+        slotPreferences: WeaponMountSlot[]
+        preferredDefinitionIds: string[]
+      }
+
+  const INVENTORY_PART_EQUIP_TARGETS: Record<string, InventoryPartEquipTarget> = {
+    spare_head_mk1: {
+      kind: 'category',
+      category: 'Head',
+      preferredDefinitionIds: ['basic.head']
+    },
+    spare_computer_mk1: {
+      kind: 'category',
+      category: 'Computer',
+      preferredDefinitionIds: ['basic.computer']
+    },
+    spare_core_mk1: {
+      kind: 'category',
+      category: 'Core',
+      preferredDefinitionIds: ['basic.exoshell']
+    },
+    spare_generator_mk1: {
+      kind: 'category',
+      category: 'Generator',
+      preferredDefinitionIds: ['basic.generator']
+    },
+    spare_thermal_regulator_mk1: {
+      kind: 'category',
+      category: 'ThermalRegulator',
+      preferredDefinitionIds: ['basic.thermal']
+    },
+    spare_left_arm_mk1: {
+      kind: 'category',
+      category: 'LeftArm',
+      preferredDefinitionIds: ['basic.left-arm']
+    },
+    spare_right_arm_mk1: {
+      kind: 'category',
+      category: 'RightArm',
+      preferredDefinitionIds: ['basic.right-arm']
+    },
+    spare_utility1_mk1: {
+      kind: 'category',
+      category: 'Utility1',
+      preferredDefinitionIds: ['basic.utility1']
+    },
+    spare_utility2_mk1: {
+      kind: 'category',
+      category: 'Utility2',
+      preferredDefinitionIds: ['basic.jetpack']
+    },
+    spare_hand_weapon_pistol_mk1: {
+      kind: 'weapon',
+      category: 'HandWeapon',
+      slotPreferences: ['RightHand', 'LeftHand'],
+      preferredDefinitionIds: ['basic.pistol']
+    },
+    spare_shoulder_weapon_minigun_mk1: {
+      kind: 'weapon',
+      category: 'ShoulderWeapon',
+      slotPreferences: ['ShoulderLeft', 'ShoulderRight'],
+      preferredDefinitionIds: ['basic.minigun']
+    }
+  }
+
+  const resolveInventoryPartEquipTarget = (itemId: string): InventoryPartEquipTarget | null => {
+    return INVENTORY_PART_EQUIP_TARGETS[itemId] ?? null
+  } // end function resolveInventoryPartEquipTarget
+
+  const resolveGarageDefinitionForCategory = (category: PartCategory, preferredDefinitionIds: string[]): PartDefinition | null => {
+    for (const definitionId of preferredDefinitionIds) {
+      const preferredDefinition = garageStore.getDefinition(definitionId)
+      if (preferredDefinition && preferredDefinition.category === category && !preferredDefinition.deprecated) {
+        return preferredDefinition
+      }
+    } // end for each preferred definition id
+    return garageStore.getDefinitionsByCategory(category).find((definition) => !definition.deprecated) ?? null
+  } // end function resolveGarageDefinitionForCategory
+
+  const equipInventoryPart = (itemId: string): void => {
+    if (cargoInventory.getQuantity(itemId) <= 0) {
+      pauseInventoryActionStatus = 'No item available to equip.'
+      announceInventoryInteraction(pauseInventoryActionStatus, { speak: true })
+      return
+    }
+
+    const target = resolveInventoryPartEquipTarget(itemId)
+    if (!target) {
+      pauseInventoryActionStatus = 'No equip mapping is configured for this inventory part yet.'
+      nextEventTag(`Equip mapping missing for ${itemId}`)
+      announceInventoryInteraction(pauseInventoryActionStatus, { speak: true })
+      return
+    }
+
+    const selectedDefinition = resolveGarageDefinitionForCategory(target.category, target.preferredDefinitionIds)
+    if (!selectedDefinition) {
+      pauseInventoryActionStatus = `No ${target.category} definitions are available in garage catalog.`
+      nextEventTag(`Equip failed for ${itemId}: missing catalog definition`)
+      announceInventoryInteraction(pauseInventoryActionStatus, { speak: true })
+      return
+    }
+
+    if (target.kind === 'category') {
+      const equippedInstance = garageStore.getEquippedInstance(target.category)
+      const equippedDefinition = equippedInstance ? garageStore.getDefinition(equippedInstance.definitionId) : null
+      if (equippedDefinition?.id === selectedDefinition.id) {
+        pauseInventoryActionStatus = `${selectedDefinition.name} is already equipped.`
+        announceInventoryInteraction(pauseInventoryActionStatus, { speak: true })
+        return
+      }
+
+      const instance = garageStore.createInstanceFromDefinition(selectedDefinition.id)
+      garageStore.equipInstance(target.category, instance.instanceId)
+    } else {
+      const matchingSlot = target.slotPreferences.find((slot) => {
+        const equippedInstance = garageStore.getEquippedInWeaponSlot(slot)
+        const equippedDefinition = equippedInstance ? garageStore.getDefinition(equippedInstance.definitionId) : null
+        return equippedDefinition?.id === selectedDefinition.id
+      })
+      if (matchingSlot) {
+        pauseInventoryActionStatus = `${selectedDefinition.name} is already equipped in ${matchingSlot}.`
+        announceInventoryInteraction(pauseInventoryActionStatus, { speak: true })
+        return
+      }
+
+      const targetSlot = target.slotPreferences[0] ?? null
+      if (!targetSlot) {
+        pauseInventoryActionStatus = 'No compatible weapon slot is available for this item.'
+        announceInventoryInteraction(pauseInventoryActionStatus, { speak: true })
+        return
+      }
+
+      const instance = garageStore.createInstanceFromDefinition(selectedDefinition.id)
+      garageStore.equipToWeaponSlot(targetSlot, instance.instanceId)
+    }
+
+    syncGarageLoadoutToDevParts()
+    applySubsystemIntegrityState()
+    syncAuthoritativeMechStats()
+    cargoInventory.removeItem(itemId, 1)
+    pauseInventoryActionStatus = `Equipped ${selectedDefinition.name}.`
+    nextEventTag(`Equipped ${selectedDefinition.name} from inventory part ${itemId}`)
+    announceInventoryInteraction(pauseInventoryActionStatus, { cuePath: INVENTORY_AUDIO_CUE_PATHS.equip, speak: true })
+  } // end function equipInventoryPart
+
+  const renderPauseInventoryTab = (): void => {
+    if (!(pauseInventoryCategoryTabsElement instanceof HTMLElement) || !(pauseInventoryCardListElement instanceof HTMLElement)) {
+      return
+    }
+
+    const categories: ItemCategory[] = ['supplies', 'resources', 'parts']
+    const categoryLabels: Record<ItemCategory, string> = {
+      supplies: 'Supplies',
+      resources: 'Resources',
+      parts: 'Parts'
+    }
+    pauseInventoryCategoryTabsElement.replaceChildren()
+    for (const category of categories) {
+      const categoryButton = document.createElement('button')
+      categoryButton.type = 'button'
+      categoryButton.className = 'pause-inventory-category-button'
+      categoryButton.role = 'tab'
+      categoryButton.setAttribute('aria-selected', pauseInventoryActiveCategory === category ? 'true' : 'false')
+      categoryButton.textContent = categoryLabels[category]
+      categoryButton.addEventListener('click', () => {
+        pauseInventoryActiveCategory = category
+        renderPauseInventoryTab()
+      })
+      pauseInventoryCategoryTabsElement.append(categoryButton)
+    } // end for each inventory category
+
+    const stacks = cargoInventory.getItemsByCategory(pauseInventoryActiveCategory)
+      .map((stack) => ({ stack, definition: defaultItemDatabase.getById(stack.itemId) }))
+      .filter((entry): entry is { stack: { itemId: string; quantity: number }; definition: NonNullable<ReturnType<typeof defaultItemDatabase.getById>> } => entry.definition !== null)
+      .sort((left, right) => left.definition.name.localeCompare(right.definition.name))
+
+    pauseInventoryCardListElement.replaceChildren()
+    if (stacks.length <= 0) {
+      const emptyRow = document.createElement('div')
+      emptyRow.className = 'pause-inventory-card'
+      emptyRow.textContent = 'No items in this category.'
+      pauseInventoryCardListElement.append(emptyRow)
+    } else {
+      for (const entry of stacks) {
+        const totalStackWeight = entry.definition.weightPerUnit * entry.stack.quantity
+
+        const card = document.createElement('article')
+        card.className = 'pause-inventory-card'
+
+        const title = document.createElement('h3')
+        title.className = 'pause-inventory-card-title'
+        title.textContent = entry.definition.name
+
+        const meta = document.createElement('div')
+        meta.className = 'pause-inventory-card-meta'
+        meta.textContent = `Qty ${entry.stack.quantity} | Weight ${totalStackWeight.toFixed(2)} kg`
+
+        const description = document.createElement('p')
+        description.className = 'pause-inventory-card-description'
+        description.textContent = entry.definition.description
+
+        const actions = document.createElement('div')
+        actions.className = 'pause-inventory-card-actions'
+
+        for (const actionLabel of getInventoryCardActionLabels(pauseInventoryActiveCategory)) {
+          const actionButton = document.createElement('button')
+          actionButton.type = 'button'
+          actionButton.className = 'pause-inventory-action-button'
+          actionButton.textContent = actionLabel
+          actionButton.dataset.itemId = entry.stack.itemId
+          actionButton.dataset.actionLabel = actionLabel
+          actionButton.setAttribute('aria-label', `${actionLabel} ${entry.definition.name}`)
+          actionButton.addEventListener('click', () => {
+            pauseInventoryFocusHint = {
+              itemId: entry.stack.itemId,
+              actionLabel
+            }
+            if (actionLabel === 'Use') {
+              useInventoryItem(entry.stack.itemId)
+            } else if (actionLabel === 'Drop') {
+              dropInventoryItem(entry.stack.itemId)
+            } else if (actionLabel === 'Equip') {
+              equipInventoryPart(entry.stack.itemId)
+            }
+            renderPauseInventoryTab()
+            updatePauseDebugTabs()
+          })
+          actions.append(actionButton)
+        } // end for each inventory action
+
+        card.append(title, meta, description, actions)
+        pauseInventoryCardListElement.append(card)
+      } // end for each inventory stack card
+
+      if (pauseInventoryFocusHint) {
+        const selector = `.pause-inventory-action-button[data-item-id="${pauseInventoryFocusHint.itemId}"][data-action-label="${pauseInventoryFocusHint.actionLabel}"]`
+        const matchingButton = pauseInventoryCardListElement.querySelector<HTMLButtonElement>(selector)
+        if (matchingButton) {
+          matchingButton.focus()
+        } else {
+          const firstActionButton = pauseInventoryCardListElement.querySelector<HTMLButtonElement>('.pause-inventory-action-button')
+          firstActionButton?.focus()
+        } // end if matching action button remains available
+        pauseInventoryFocusHint = null
+      } // end if focus hint exists
+    }
+
+    if (pauseInventorySummaryElement instanceof HTMLElement) {
+      pauseInventorySummaryElement.textContent = `Category ${pauseInventoryActiveCategory}. ${stacks.length} stacks. Cargo weight ${cargoInventory.getCargoWeight().toFixed(2)} kg.`
+    }
+    if (pauseInventoryActionStatusElement instanceof HTMLElement) {
+      pauseInventoryActionStatusElement.textContent = pauseInventoryActionStatus
+    }
+  } // end function renderPauseInventoryTab
+
   const updatePauseControlsStatus = (): void => {
     if (!(pauseControlsStatusElement instanceof HTMLElement)) {
       return
@@ -1866,36 +2364,44 @@ function startTestMap(): void {
   const setPauseDebugActiveTab = (nextTab: PauseDebugTabId, forceLoadoutRender = false): void => {
     const tabChanged = pauseDebugActiveTab !== nextTab
     pauseDebugActiveTab = nextTab
-    const buttonState = [
-      { button: pauseDebugTabRuntimeButtonElement, selected: nextTab === 'runtime' },
-      { button: pauseDebugTabEventsButtonElement, selected: nextTab === 'events' },
-      { button: pauseDebugTabTuningButtonElement, selected: nextTab === 'tuning' },
-      { button: pauseDebugTabLoadoutButtonElement, selected: nextTab === 'loadout' },
-      { button: pauseDebugTabControlsButtonElement, selected: nextTab === 'controls' }
-    ]
-    for (const entry of buttonState) {
-      if (!(entry.button instanceof HTMLButtonElement)) {
-        continue
-      } // end if tab button is unavailable
-      entry.button.setAttribute('aria-selected', entry.selected ? 'true' : 'false')
-    } // end for each tab button
+    if (tabChanged) {
+      const buttonState = [
+        { button: pauseDebugTabRuntimeButtonElement, selected: nextTab === 'runtime' },
+        { button: pauseDebugTabEventsButtonElement, selected: nextTab === 'events' },
+        { button: pauseDebugTabTuningButtonElement, selected: nextTab === 'tuning' },
+        { button: pauseDebugTabInventoryButtonElement, selected: nextTab === 'inventory' },
+        { button: pauseDebugTabLoadoutButtonElement, selected: nextTab === 'loadout' },
+        { button: pauseDebugTabControlsButtonElement, selected: nextTab === 'controls' }
+      ]
+      for (const entry of buttonState) {
+        if (!(entry.button instanceof HTMLButtonElement)) {
+          continue
+        } // end if tab button is unavailable
+        entry.button.setAttribute('aria-selected', entry.selected ? 'true' : 'false')
+      } // end for each tab button
 
-    const panelState = [
-      { panel: pauseDebugRuntimePanelElement, active: nextTab === 'runtime' },
-      { panel: pauseDebugEventsPanelElement, active: nextTab === 'events' },
-      { panel: pauseDebugTuningPanelElement, active: nextTab === 'tuning' },
-      { panel: pauseDebugLoadoutPanelElement, active: nextTab === 'loadout' },
-      { panel: pauseDebugControlsPanelElement, active: nextTab === 'controls' }
-    ]
-    for (const entry of panelState) {
-      if (!(entry.panel instanceof HTMLElement)) {
-        continue
-      } // end if tab panel is unavailable
-      entry.panel.classList.toggle('active', entry.active)
-    } // end for each tab panel
+      const panelState = [
+        { panel: pauseDebugRuntimePanelElement, active: nextTab === 'runtime' },
+        { panel: pauseDebugEventsPanelElement, active: nextTab === 'events' },
+        { panel: pauseDebugTuningPanelElement, active: nextTab === 'tuning' },
+        { panel: pauseDebugInventoryPanelElement, active: nextTab === 'inventory' },
+        { panel: pauseDebugLoadoutPanelElement, active: nextTab === 'loadout' },
+        { panel: pauseDebugControlsPanelElement, active: nextTab === 'controls' }
+      ]
+      for (const entry of panelState) {
+        if (!(entry.panel instanceof HTMLElement)) {
+          continue
+        } // end if tab panel is unavailable
+        entry.panel.classList.toggle('active', entry.active)
+      } // end for each tab panel
+    } // end if tab changed
 
     if (nextTab === 'loadout' && (tabChanged || forceLoadoutRender)) {
       renderPauseLoadoutTab()
+    }
+
+    if (nextTab === 'inventory' && tabChanged) {
+      renderPauseInventoryTab()
     }
 
     if (nextTab === 'controls' && tabChanged) {
@@ -2459,6 +2965,7 @@ function startTestMap(): void {
     [pauseDebugTabRuntimeButtonElement instanceof HTMLButtonElement ? pauseDebugTabRuntimeButtonElement : null, 'runtime'],
     [pauseDebugTabEventsButtonElement instanceof HTMLButtonElement ? pauseDebugTabEventsButtonElement : null, 'events'],
     [pauseDebugTabTuningButtonElement instanceof HTMLButtonElement ? pauseDebugTabTuningButtonElement : null, 'tuning'],
+    [pauseDebugTabInventoryButtonElement instanceof HTMLButtonElement ? pauseDebugTabInventoryButtonElement : null, 'inventory'],
     [pauseDebugTabLoadoutButtonElement instanceof HTMLButtonElement ? pauseDebugTabLoadoutButtonElement : null, 'loadout'],
     [pauseDebugTabControlsButtonElement instanceof HTMLButtonElement ? pauseDebugTabControlsButtonElement : null, 'controls']
   ]
@@ -3314,6 +3821,8 @@ function startTestMap(): void {
 
   const getDevMechStatsSnapshot = (): DevMechStatsSnapshot => {
     const snapshot: DevMechStatsSnapshot = {
+      installedPartWeight: 0,
+      cargoWeight: cargoInventory.getCargoWeight(),
       totalWeight: 0,
       totalPDEF: 0,
       totalEDEF: 0,
@@ -3325,13 +3834,14 @@ function startTestMap(): void {
       if (!part.online || !AGGREGATE_PART_SLOTS.has(slot)) {
         continue
       }
-      snapshot.totalWeight += part.weight
+      snapshot.installedPartWeight += part.weight
       snapshot.totalPDEF += part.PDEF
       snapshot.totalEDEF += part.EDEF
       snapshot.maxEP += Math.max(0, part.energyCapacity ?? 0)
       snapshot.maxHeat += Math.max(0, part.heatCapacity ?? 0)
     } // end for each equipped aggregate part
 
+    snapshot.totalWeight = getTotalMechWeight(snapshot.installedPartWeight, snapshot.cargoWeight)
     snapshot.maxEP = Math.max(0, snapshot.maxEP)
     snapshot.maxHeat = Math.max(1, snapshot.maxHeat)
     return snapshot
@@ -4123,6 +4633,7 @@ function startTestMap(): void {
       loadRatio,
       weightFactor
     } = calculateWeightFactor(stats.totalWeight, movementProfile.ratedLoad)
+    const overencumbrance = getOverencumbranceTelemetry(stats.totalWeight, movementProfile.ratedLoad)
     const currentEnergyRegenPerSecond = getCurrentEnergyRegenPerSecond(stats.totalWeight, movementProfile.ratedLoad)
     const staggerResistance = calculateWeightResistance(stats.totalWeight)
     const flightRuntimeProfile = getFlightRuntimeProfile()
@@ -4189,6 +4700,7 @@ function startTestMap(): void {
       `Total Weight: ${stats.totalWeight.toFixed(1)}`,
       `Rated Load: ${ratedLoad.toFixed(1)}`,
       `Load Ratio: ${loadRatio.toFixed(3)}`,
+      `Load State: ${overencumbrance.state}`,
       `Weight Factor: ${weightFactor.toFixed(3)}`,
       `Heat State: ${getHeatStateLabel()}`,
       `Energy State: ${getEnergyStateLabel()}`,
@@ -4293,6 +4805,9 @@ function startTestMap(): void {
   const getStateLines = (): string[] => {
     const centered = mapToCenteredCoordinates(player.x, player.y)
     const frontBackSettings = audio.getFrontBackSettings()
+    const movementProfile = getCurrentMovementArchetypeProfile()
+    const stats = syncAuthoritativeMechStats()
+    const overencumbrance = getOverencumbranceTelemetry(stats.totalWeight, movementProfile.ratedLoad)
 
     return [
       `paused = ${isPaused}`,
@@ -4300,9 +4815,10 @@ function startTestMap(): void {
       `player = mapX:${player.x.toFixed(2)} mapY:${player.y.toFixed(2)} centeredX:${centered.x.toFixed(2)} centeredY:${centered.y.toFixed(2)} z:${(player.z ?? 0).toFixed(2)} angle:${((player.angle * 180) / Math.PI).toFixed(1)} pitch:${((player.pitch * 180) / Math.PI).toFixed(1)}`,
       `player vitals = hp:${player.hp.toFixed(1)}/${player.maxHp.toFixed(1)} ep:${player.ep.toFixed(1)}/${player.maxEp.toFixed(1)}`,
       `player.flight = state:${player.flightState ?? 'grounded'} flying:${player.isFlying ? 'true' : 'false'} sharedHeight:${getSharedFlightHeight().toFixed(2)}`,
+      `weight = total:${stats.totalWeight.toFixed(1)} rated:${movementProfile.ratedLoad.toFixed(1)} loadRatio:${overencumbrance.loadRatio.toFixed(3)} state:${overencumbrance.state}`,
       `music.track = ${audio.getMusicTrack()}`,
       `weapon = type:${playerWeapon.weaponType} accuracy:${playerWeapon.accuracy.toFixed(2)} pellets:${playerWeapon.projectileCount} spread:${playerWeapon.spreadDegrees.toFixed(1)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fullAuto:${playerWeapon.isFullAuto} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)} clip:${playerWeapon.ammoInClip}/${playerWeapon.clipSize} reloadCost:${getWeaponReloadCost(playerWeapon)}`,
-      `ammo.universal = ${Math.round(universalAmmoResource)} reloading:${isReloading}`,
+      `ammo.universal = ${Math.round(getUniversalAmmoResource())} reloading:${isReloading}`,
       `audio frontBack = enabled:${frontBackSettings.enabled} rearCue:${frontBackSettings.rearCueLayerEnabled} intensity:${frontBackSettings.intensity.toFixed(2)} debug:${frontBackSettings.debugLogging}`,
       `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} music:${audio.getVolumeChannel('music').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)} energy:${audio.getVolumeChannel('energyStatus').toFixed(2)}`,
       `audio categories = proximity:${audio.getCategoryEnabled('proximity')}@${audio.getVolumeChannel('proximity').toFixed(2)} objects:${audio.getCategoryEnabled('objects')}@${audio.getVolumeChannel('objects').toFixed(2)} enemies:${audio.getCategoryEnabled('enemies')}@${audio.getVolumeChannel('enemies').toFixed(2)} navigation:${audio.getCategoryEnabled('navigation')}@${audio.getVolumeChannel('navigation').toFixed(2)}`
@@ -4353,6 +4869,45 @@ function startTestMap(): void {
       set: (rawValue) => {
         player.ep = Math.max(0, Math.min(player.maxEp, parseFiniteNumber(rawValue, 'player.ep')))
         return player.ep
+      }
+    },
+    'player.weight.state': {
+      description: 'Current overencumbrance state derived from total weight and movement rated load.',
+      helpPath: ['Player', 'Vitals'],
+      get: () => {
+        const stats = syncAuthoritativeMechStats()
+        const movementProfile = getCurrentMovementArchetypeProfile()
+        return getOverencumbranceTelemetry(stats.totalWeight, movementProfile.ratedLoad).state
+      }
+    },
+    'player.weight.threshold.heavy': {
+      description: 'Load ratio threshold where overencumbrance transitions from NORMAL to HEAVY.',
+      helpPath: ['Gameplay', 'Session'],
+      get: () => devOverencumbranceThresholds.heavyMinRatio,
+      set: (rawValue) => {
+        const nextValue = Math.max(0, parseFiniteNumber(rawValue, 'player.weight.threshold.heavy'))
+        devOverencumbranceThresholds.heavyMinRatio = nextValue
+        return devOverencumbranceThresholds.heavyMinRatio
+      }
+    },
+    'player.weight.threshold.severe': {
+      description: 'Load ratio threshold where overencumbrance transitions from HEAVY to SEVERE.',
+      helpPath: ['Gameplay', 'Session'],
+      get: () => devOverencumbranceThresholds.severeMinRatio,
+      set: (rawValue) => {
+        const nextValue = Math.max(0, parseFiniteNumber(rawValue, 'player.weight.threshold.severe'))
+        devOverencumbranceThresholds.severeMinRatio = nextValue
+        return devOverencumbranceThresholds.severeMinRatio
+      }
+    },
+    'player.weight.threshold.extreme': {
+      description: 'Load ratio threshold where overencumbrance transitions from SEVERE to EXTREME.',
+      helpPath: ['Gameplay', 'Session'],
+      get: () => devOverencumbranceThresholds.extremeMinRatio,
+      set: (rawValue) => {
+        const nextValue = Math.max(0, parseFiniteNumber(rawValue, 'player.weight.threshold.extreme'))
+        devOverencumbranceThresholds.extremeMinRatio = nextValue
+        return devOverencumbranceThresholds.extremeMinRatio
       }
     },
     'player.angle': {
@@ -4736,10 +5291,10 @@ function startTestMap(): void {
       helpPath: ['Console', 'Reference']
     },
     {
-      syntax: 'list parts|slots|weapons|enemies|projectiles|audio|timers|events',
+      syntax: 'list parts|slots|weapons|enemies|projectiles|audio|timers|events|inventory',
       description: 'List runtime entities and diagnostics grouped by topic.',
       helpPath: ['Console', 'Reference'],
-      examples: ['list parts', 'list slots', 'list audio', 'list events']
+      examples: ['list parts', 'list slots', 'list audio', 'list events', 'list inventory']
     },
     {
       syntax: 'target.layout <layoutId>',
@@ -4795,6 +5350,138 @@ function startTestMap(): void {
       description: 'Inspect player values using Ticket views such as all, stats, heat, and target.',
       helpPath: ['Player', 'Vitals'],
       examples: ['player.get all', 'player.get movement', 'player.get heat', 'player.get target']
+    },
+    {
+      syntax: 'inventory.get <view>',
+      description: 'Inspect cargo inventory summary, weight, category slices, or a specific itemId.',
+      helpPath: ['Inventory', 'Cargo'],
+      examples: ['inventory.get all', 'inventory.get weight', 'inventory.get supplies', 'inventory.get ammo_resource']
+    },
+    {
+      syntax: 'inventory.add <itemId> <quantity>',
+      description: 'Add stack quantity to cargo inventory for testing.',
+      helpPath: ['Inventory', 'Cargo'],
+      examples: ['inventory.add ammo_resource 300', 'inventory.add energy_cell 2']
+    },
+    {
+      syntax: 'inventory.remove <itemId> <quantity>',
+      description: 'Remove stack quantity from cargo inventory for testing.',
+      helpPath: ['Inventory', 'Cargo'],
+      examples: ['inventory.remove ammo_resource 120', 'inventory.remove energy_cell 1']
+    },
+    {
+      syntax: 'inventory.drop <itemId> <quantity>',
+      description: 'Drop stack quantity from cargo inventory (currently removes from inventory only).',
+      helpPath: ['Inventory', 'Cargo'],
+      examples: ['inventory.drop ammo_resource 40']
+    },
+    {
+      syntax: 'generateforentity <tableId>',
+      description: 'Roll loot for an entity loot table and print the generated stacks.',
+      helpPath: ['Inventory', 'Loot'],
+      examples: ['generateforentity raider_basic']
+    },
+    {
+      syntax: 'generateforcontainer <tableId>',
+      description: 'Roll loot for a container loot table and print the generated stacks.',
+      helpPath: ['Inventory', 'Loot'],
+      examples: ['generateforcontainer supply_crate_common']
+    },
+    {
+      syntax: 'pickup.spawn loose <itemId> <quantity> [auto|manual]',
+      description: 'Spawn a loose pickup near the player for contact or interaction testing.',
+      helpPath: ['Inventory', 'Pickup'],
+      examples: ['pickup.spawn loose ammo_resource 40 auto', 'pickup.spawn loose spare_core_mk1 1 manual']
+    },
+    {
+      syntax: 'pickup.spawn container <tableId>',
+      description: 'Spawn a container pickup using a container loot table.',
+      helpPath: ['Inventory', 'Pickup'],
+      examples: ['pickup.spawn container supply_crate_common']
+    },
+    {
+      syntax: 'pickup.spawn static <tableId>',
+      description: 'Spawn a static world container with persistent metadata and positional audio cue id.',
+      helpPath: ['Inventory', 'Containers'],
+      examples: ['pickup.spawn static stash_rare_parts']
+    },
+    {
+      syntax: 'pickup.spawn runtime <tableId>',
+      description: 'Spawn a runtime-generated container with auto-remove when emptied.',
+      helpPath: ['Inventory', 'Containers'],
+      examples: ['pickup.spawn runtime supply_crate_common']
+    },
+    {
+      syntax: 'pickup.spawn wreck <tableId>',
+      description: 'Spawn a wreck/corpse-style loot source using an entity loot table.',
+      helpPath: ['Inventory', 'Pickup'],
+      examples: ['pickup.spawn wreck raider_basic']
+    },
+    {
+      syntax: 'pickup.scan',
+      description: 'Run pickup contact scan and report prompt text and any auto-collected items.',
+      helpPath: ['Inventory', 'Pickup'],
+      examples: ['pickup.scan']
+    },
+    {
+      syntax: 'pickup.interact',
+      description: 'Interact with the nearest manual pickup or container in range.',
+      helpPath: ['Inventory', 'Pickup'],
+      examples: ['pickup.interact']
+    },
+    {
+      syntax: 'pickup.container.list',
+      description: 'List active containers including static/runtime and persistence metadata.',
+      helpPath: ['Inventory', 'Containers'],
+      examples: ['pickup.container.list']
+    },
+    {
+      syntax: 'pickup.container.take <containerId> <itemId> <quantity>',
+      description: 'Partially loot one item stack from a container.',
+      helpPath: ['Inventory', 'Containers'],
+      examples: ['pickup.container.take pickup-container-1 ammo_resource 20']
+    },
+    {
+      syntax: 'pickup.container.takeall <containerId>',
+      description: 'Loot all remaining stacks from a specific container.',
+      helpPath: ['Inventory', 'Containers'],
+      examples: ['pickup.container.takeall pickup-container-1']
+    },
+    {
+      syntax: 'persistence.chunks',
+      description: 'Show loose/container counts grouped by chunk for world item persistence.',
+      helpPath: ['Inventory', 'Persistence'],
+      examples: ['persistence.chunks']
+    },
+    {
+      syntax: 'persistence.cleanup',
+      description: 'Run priority cleanup with current persistence limits.',
+      helpPath: ['Inventory', 'Persistence'],
+      examples: ['persistence.cleanup']
+    },
+    {
+      syntax: 'persistence.limits',
+      description: 'Print active world item persistence limits.',
+      helpPath: ['Inventory', 'Persistence'],
+      examples: ['persistence.limits']
+    },
+    {
+      syntax: 'persistence.set <field> <value>',
+      description: 'Set one world item persistence limit field for playtesting.',
+      helpPath: ['Inventory', 'Persistence'],
+      examples: ['persistence.set maxLoosePerChunk 12', 'persistence.set looseMaxAgeMs 60000']
+    },
+    {
+      syntax: 'persistence.save <name>',
+      description: 'Save persistent containers snapshot to localStorage (loose drops are excluded).',
+      helpPath: ['Inventory', 'Persistence'],
+      examples: ['persistence.save phase8test']
+    },
+    {
+      syntax: 'persistence.load <name>',
+      description: 'Load persistent containers snapshot from localStorage.',
+      helpPath: ['Inventory', 'Persistence'],
+      examples: ['persistence.load phase8test']
     },
     {
       syntax: 'part.get <slot>',
@@ -4938,6 +5625,7 @@ function startTestMap(): void {
   const topLevelHelpCategories: Array<{ title: string; description: string }> = [
     { title: 'Audio', description: 'Audio mix, categories, and assist settings.' },
     { title: 'Gameplay', description: 'Session control and gameplay-wide settings.' },
+    { title: 'Inventory', description: 'Cargo and item stack inspection/editing commands.' },
     { title: 'Player', description: 'Player position, view, and flight controls.' },
     { title: 'Weapon', description: 'Weapon combat and lock-on tuning.' },
     { title: 'Enemies', description: 'Enemy-related commands.' },
@@ -5354,6 +6042,10 @@ function startTestMap(): void {
       return ['events:', `  ${devLastEvent}`]
     } // end if list events command
 
+    if (normalizedCommand === 'list inventory') {
+      return ['inventory:', ...getInventorySummaryLines().map((line) => `  ${line}`)]
+    } // end if list inventory command
+
     if (normalizedCommand.startsWith('target.layout ')) {
       const requestedLayoutId = commandLine.trim().split(/\s+/)[1] as TargetLayoutId | undefined
       if (!requestedLayoutId) {
@@ -5390,11 +6082,13 @@ function startTestMap(): void {
       const targetId = targetLockState.currentTargetId
       const stats = syncAuthoritativeMechStats()
       const weight = stats.totalWeight
+      const movementProfile = getCurrentMovementArchetypeProfile()
+      const weightTelemetry = getOverencumbranceTelemetry(weight, movementProfile.ratedLoad)
       if (mode === 'all') {
         return [
           `position = (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${(player.z ?? 0).toFixed(2)})`,
           `velocity = (${devVelocityX.toFixed(2)}, ${devVelocityY.toFixed(2)}, ${devVelocityZ.toFixed(2)})`,
-          `stats = hp:${player.hp.toFixed(1)}/${player.maxHp.toFixed(1)} ep:${player.ep.toFixed(1)}/${stats.maxEP.toFixed(1)} heat:${devCurrentHeat.toFixed(1)}/${stats.maxHeat.toFixed(1)} weight:${weight.toFixed(1)}`,
+          `stats = hp:${player.hp.toFixed(1)}/${player.maxHp.toFixed(1)} ep:${player.ep.toFixed(1)}/${stats.maxEP.toFixed(1)} heat:${devCurrentHeat.toFixed(1)}/${stats.maxHeat.toFixed(1)} weight:${weight.toFixed(1)} load:${weightTelemetry.state}`,
           `movement = ${getPlayerMovementStateLabel()}`,
           `target = ${targetId === null ? 'none' : String(targetId)}`
         ]
@@ -5405,6 +6099,8 @@ function startTestMap(): void {
           `ep = ${player.ep.toFixed(1)}/${stats.maxEP.toFixed(1)}`,
           `heat = ${devCurrentHeat.toFixed(1)}/${stats.maxHeat.toFixed(1)}`,
           `weight = ${weight.toFixed(1)}`,
+          `loadRatio = ${weightTelemetry.loadRatio.toFixed(3)}`,
+          `loadState = ${weightTelemetry.state}`,
           `PDEF = ${stats.totalPDEF.toFixed(1)}`,
           `EDEF = ${stats.totalEDEF.toFixed(1)}`
         ]
@@ -5416,7 +6112,12 @@ function startTestMap(): void {
         return [`energy = ${player.ep.toFixed(1)}/${stats.maxEP.toFixed(1)}`]
       } // end if player.get energy
       if (mode === 'weight') {
-        return [`weight = ${weight.toFixed(1)}`]
+        return [
+          `weight = ${weight.toFixed(1)}`,
+          `ratedLoad = ${movementProfile.ratedLoad.toFixed(1)}`,
+          `loadRatio = ${weightTelemetry.loadRatio.toFixed(3)}`,
+          `loadState = ${weightTelemetry.state}`
+        ]
       } // end if player.get weight
       if (mode === 'movement') {
         return [`movement = ${getPlayerMovementStateLabel()} flightState:${player.flightState ?? 'grounded'} flying:${!!player.isFlying}`]
@@ -5432,6 +6133,515 @@ function startTestMap(): void {
       } // end if player.get target
       throw new Error('Usage: player.get <all|stats|heat|energy|weight|movement|position|velocity|target>')
     } // end if player.get command
+
+    if (normalizedCommand === 'inventory.get' || normalizedCommand.startsWith('inventory.get ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const mode = (rawArgs[1] ?? 'all').toLowerCase()
+      if (mode === 'all') {
+        return getInventorySummaryLines()
+      } // end if inventory.get all
+      if (mode === 'weight') {
+        return [`inventory.cargoWeight = ${cargoInventory.getCargoWeight().toFixed(2)}kg`]
+      } // end if inventory.get weight
+      if (mode === 'supplies' || mode === 'resources' || mode === 'parts') {
+        const stacks = cargoInventory.getItemsByCategory(mode)
+        return [
+          `inventory.${mode} = ${stacks.length}`,
+          ...formatInventoryStacks(stacks)
+        ]
+      } // end if inventory.get by category
+
+      const itemId = rawArgs[1] ?? ''
+      if (itemId.length <= 0) {
+        throw new Error('Usage: inventory.get <all|weight|supplies|resources|parts|itemId>')
+      } // end if inventory.get item id missing
+      const definition = defaultItemDatabase.getById(itemId)
+      if (!definition) {
+        throw new Error(`Unknown itemId: ${itemId}`)
+      } // end if unknown item id
+      const quantity = cargoInventory.getQuantity(itemId)
+      const stackWeight = quantity * definition.weightPerUnit
+      return [
+        `inventory.item = ${itemId}`,
+        `name = ${definition.name}`,
+        `quantity = ${quantity}`,
+        `stackWeight = ${stackWeight.toFixed(2)}kg`
+      ]
+    } // end if inventory.get command
+
+    if (normalizedCommand.startsWith('inventory.add ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const itemId = rawArgs[1] ?? ''
+      const quantity = Math.max(0, Math.floor(parseFiniteNumber(rawArgs[2] ?? '', 'inventory.add quantity')))
+      if (itemId.length <= 0 || quantity <= 0) {
+        throw new Error('Usage: inventory.add <itemId> <quantity>')
+      } // end if inventory.add args invalid
+      const definition = defaultItemDatabase.getById(itemId)
+      if (!definition) {
+        throw new Error(`Unknown itemId: ${itemId}`)
+      } // end if inventory.add item unknown
+
+      const nextQuantity = cargoInventory.addItem(itemId, quantity)
+      nextEventTag(`Inventory add: ${itemId} +${quantity}`)
+      announceInventoryInteraction(`Inventory add ${itemId} plus ${quantity}.`, {
+        cuePath: resolveInventoryItemCuePath(itemId),
+        speak: true
+      })
+      return [
+        `inventory.add ok: ${itemId} +${quantity}`,
+        `quantity = ${nextQuantity}`,
+        `cargoWeight = ${cargoInventory.getCargoWeight().toFixed(2)}kg`,
+        `ammo.universal = ${getUniversalAmmoResource()}`
+      ]
+    } // end if inventory.add command
+
+    if (normalizedCommand.startsWith('inventory.remove ') || normalizedCommand.startsWith('inventory.drop ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const commandVerb = rawArgs[0]?.toLowerCase() === 'inventory.drop' ? 'drop' : 'remove'
+      const itemId = rawArgs[1] ?? ''
+      const quantity = Math.max(0, Math.floor(parseFiniteNumber(rawArgs[2] ?? '', `inventory.${commandVerb} quantity`)))
+      if (itemId.length <= 0 || quantity <= 0) {
+        throw new Error(`Usage: inventory.${commandVerb} <itemId> <quantity>`)
+      } // end if inventory.remove/drop args invalid
+      if (!defaultItemDatabase.has(itemId)) {
+        throw new Error(`Unknown itemId: ${itemId}`)
+      } // end if inventory.remove/drop item unknown
+
+      const beforeQuantity = cargoInventory.getQuantity(itemId)
+      const dropped = commandVerb === 'drop'
+        ? (cargoInventory.dropItem(itemId, quantity)?.quantity ?? 0)
+        : Math.max(0, beforeQuantity - cargoInventory.removeItem(itemId, quantity))
+      nextEventTag(`Inventory ${commandVerb}: ${itemId} -${dropped}`)
+      announceInventoryInteraction(`Inventory ${commandVerb} ${itemId} minus ${dropped}.`, {
+        cuePath: resolveInventoryItemCuePath(itemId),
+        speak: true
+      })
+      return [
+        `inventory.${commandVerb} ok: ${itemId} -${dropped}`,
+        `quantity = ${cargoInventory.getQuantity(itemId)}`,
+        `cargoWeight = ${cargoInventory.getCargoWeight().toFixed(2)}kg`,
+        `ammo.universal = ${getUniversalAmmoResource()}`
+      ]
+    } // end if inventory.remove/drop command
+
+    if (normalizedCommand.startsWith('generateforentity ') || normalizedCommand.startsWith('generateforcontainer ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const commandName = (rawArgs[0] ?? '').toLowerCase()
+      const tableId = rawArgs[1] ?? ''
+      if (tableId.length <= 0) {
+        throw new Error(`Usage: ${commandName} <tableId>`)
+      } // end if table id missing
+
+      const result = commandName === 'generateforcontainer'
+        ? lootGenerator.generateForContainer(tableId)
+        : lootGenerator.generateForEntity(tableId)
+      nextEventTag(`${commandName}: ${tableId} -> ${result.stacks.length} stacks`)
+      return [
+        `${commandName} ${tableId}:`,
+        `  tableId = ${result.tableId}`,
+        `  stacks = ${result.stacks.length}`,
+        ...formatInventoryStacks(result.stacks)
+      ]
+    } // end if loot generation command
+
+    if (normalizedCommand.startsWith('pickup.spawn loose ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const itemId = rawArgs[2] ?? ''
+      const quantity = Math.max(0, Math.floor(parseFiniteNumber(rawArgs[3] ?? '', 'pickup.spawn loose quantity')))
+      const mode = (rawArgs[4] ?? 'auto').toLowerCase()
+      if (!itemId || quantity <= 0) {
+        throw new Error('Usage: pickup.spawn loose <itemId> <quantity> [auto|manual]')
+      } // end if pickup.spawn loose args invalid
+      if (!defaultItemDatabase.has(itemId)) {
+        throw new Error(`Unknown itemId: ${itemId}`)
+      } // end if pickup.spawn loose item unknown
+
+      const autoPickup = mode !== 'manual'
+      const pickup = pickupSystem.spawnLoosePickup({
+        position: {
+          x: player.x,
+          y: player.y,
+          z: player.z ?? 0
+        },
+        itemId,
+        quantity,
+        autoPickup,
+        label: autoPickup ? 'Auto Pickup' : 'Manual Pickup'
+      })
+      nextEventTag(`Spawned loose pickup ${pickup.id} (${itemId} x${quantity}, ${autoPickup ? 'auto' : 'manual'})`)
+      announceInventoryInteraction(
+        autoPickup
+          ? `Spawned auto pickup ${itemId} quantity ${quantity}.`
+          : `Spawned manual pickup ${itemId} quantity ${quantity}.`,
+        { cuePath: resolveInventoryItemCuePath(itemId), speak: true }
+      )
+      return [
+        `pickup.spawn loose ok: ${pickup.id}`,
+        `item = ${itemId} qty = ${quantity}`,
+        `mode = ${autoPickup ? 'auto' : 'manual'}`
+      ]
+    } // end if pickup.spawn loose command
+
+    if (normalizedCommand.startsWith('pickup.spawn container ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const tableId = rawArgs[2] ?? ''
+      if (!tableId) {
+        throw new Error('Usage: pickup.spawn container <tableId>')
+      } // end if pickup.spawn container table missing
+
+      const container = pickupSystem.spawnContainerFromLootTable({
+        position: {
+          x: player.x,
+          y: player.y,
+          z: player.z ?? 0
+        },
+        tableId,
+        type: 'container',
+        origin: 'runtime',
+        name: `Container ${tableId}`
+      })
+      nextEventTag(`Spawned loot container ${container.id} (${tableId})`)
+      announceInventoryInteraction(`Spawned container ${tableId}.`, {
+        cuePath: INVENTORY_AUDIO_CUE_PATHS.industrial,
+        speak: true
+      })
+      return [
+        `pickup.spawn container ok: ${container.id}`,
+        `table = ${tableId}`,
+        `stacks = ${container.items.length}`,
+        ...formatInventoryStacks(container.items)
+      ]
+    } // end if pickup.spawn container command
+
+    if (normalizedCommand.startsWith('pickup.spawn static ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const tableId = rawArgs[2] ?? ''
+      if (!tableId) {
+        throw new Error('Usage: pickup.spawn static <tableId>')
+      } // end if pickup.spawn static table missing
+
+      const container = pickupSystem.spawnContainerFromLootTable({
+        position: {
+          x: player.x,
+          y: player.y,
+          z: player.z ?? 0
+        },
+        tableId,
+        type: 'container',
+        origin: 'static',
+        name: `Static ${tableId}`,
+        rarityPriority: 3,
+        isPersistent: true,
+        autoRemoveWhenEmpty: false,
+        audioCueId: 'container.static'
+      })
+      nextEventTag(`Spawned static container ${container.id} (${tableId})`)
+      announceInventoryInteraction(`Spawned static container ${tableId}.`, {
+        cuePath: INVENTORY_AUDIO_CUE_PATHS.industrial,
+        speak: true
+      })
+      return [
+        `pickup.spawn static ok: ${container.id}`,
+        `origin = ${container.origin} persistent = ${container.isPersistent}`,
+        `rarityPriority = ${container.rarityPriority} autoRemoveWhenEmpty = ${container.autoRemoveWhenEmpty}`,
+        `audioCueId = ${container.audioCueId ?? 'none'}`,
+        ...formatInventoryStacks(container.items)
+      ]
+    } // end if pickup.spawn static command
+
+    if (normalizedCommand.startsWith('pickup.spawn runtime ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const tableId = rawArgs[2] ?? ''
+      if (!tableId) {
+        throw new Error('Usage: pickup.spawn runtime <tableId>')
+      } // end if pickup.spawn runtime table missing
+
+      const container = pickupSystem.spawnContainerFromLootTable({
+        position: {
+          x: player.x,
+          y: player.y,
+          z: player.z ?? 0
+        },
+        tableId,
+        type: 'container',
+        origin: 'runtime',
+        name: `Runtime ${tableId}`,
+        rarityPriority: 1,
+        isPersistent: false,
+        autoRemoveWhenEmpty: true,
+        audioCueId: 'container.runtime'
+      })
+      nextEventTag(`Spawned runtime container ${container.id} (${tableId})`)
+      announceInventoryInteraction(`Spawned runtime container ${tableId}.`, {
+        cuePath: INVENTORY_AUDIO_CUE_PATHS.industrial,
+        speak: true
+      })
+      return [
+        `pickup.spawn runtime ok: ${container.id}`,
+        `origin = ${container.origin} persistent = ${container.isPersistent}`,
+        `rarityPriority = ${container.rarityPriority} autoRemoveWhenEmpty = ${container.autoRemoveWhenEmpty}`,
+        `audioCueId = ${container.audioCueId ?? 'none'}`,
+        ...formatInventoryStacks(container.items)
+      ]
+    } // end if pickup.spawn runtime command
+
+    if (normalizedCommand.startsWith('pickup.spawn wreck ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const tableId = rawArgs[2] ?? ''
+      if (!tableId) {
+        throw new Error('Usage: pickup.spawn wreck <tableId>')
+      } // end if pickup.spawn wreck table missing
+
+      const wreck = pickupSystem.spawnWreckFromEntityLoot({
+        position: {
+          x: player.x,
+          y: player.y,
+          z: player.z ?? 0
+        },
+        tableId,
+        type: 'wreck',
+        origin: 'runtime',
+        name: `Wreck ${tableId}`,
+        rarityPriority: 2,
+        isPersistent: false,
+        autoRemoveWhenEmpty: true,
+        audioCueId: 'container.wreck'
+      })
+      nextEventTag(`Spawned wreck container ${wreck.id} (${tableId})`)
+      announceInventoryInteraction(`Spawned wreck container ${tableId}.`, {
+        cuePath: INVENTORY_AUDIO_CUE_PATHS.industrial,
+        speak: true
+      })
+      return [
+        `pickup.spawn wreck ok: ${wreck.id}`,
+        `table = ${tableId}`,
+        `stacks = ${wreck.items.length}`,
+        ...formatInventoryStacks(wreck.items)
+      ]
+    } // end if pickup.spawn wreck command
+
+    if (normalizedCommand === 'pickup.scan') {
+      const update = pickupSystem.updatePlayerPresence({
+        x: player.x,
+        y: player.y,
+        z: player.z ?? 0
+      })
+      return [
+        'pickup.scan:',
+        `  autoCollected = ${update.autoCollected.length}`,
+        ...formatInventoryStacks(update.autoCollected),
+        `  prompt = ${update.prompt?.text ?? 'none'}`,
+        `  accessiblePrompt = ${update.prompt?.accessibilityText ?? 'none'}`
+      ]
+    } // end if pickup.scan command
+
+    if (normalizedCommand === 'pickup.interact') {
+      const result = pickupSystem.interactNearest({
+        x: player.x,
+        y: player.y,
+        z: player.z ?? 0
+      })
+      if (!result) {
+        return ['pickup.interact: no interactable pickup in range.']
+      } // end if no interaction target
+      nextEventTag(`Pickup interaction ${result.sourceType}:${result.sourceId}`)
+      announceInventoryInteraction(`Pickup interaction complete for ${result.sourceType}.`, {
+        cuePath: result.sourceType === 'loose' ? INVENTORY_AUDIO_CUE_PATHS.metallic : INVENTORY_AUDIO_CUE_PATHS.industrial,
+        speak: true
+      })
+      return [
+        `pickup.interact ok: ${result.sourceType}:${result.sourceId}`,
+        `collected = ${result.collected.length}`,
+        ...formatInventoryStacks(result.collected),
+        ...getInventorySummaryLines()
+      ]
+    } // end if pickup.interact command
+
+    if (normalizedCommand === 'pickup.container.list') {
+      const containers = pickupSystem.listContainers()
+      if (containers.length <= 0) {
+        return ['pickup.container.list: no active containers.']
+      } // end if no containers exist
+      return [
+        `pickup.container.list: ${containers.length} container(s)`,
+        ...containers.flatMap((container) => {
+          return [
+            `  ${container.id} name:${container.name} type:${container.type} origin:${container.origin}`,
+            `    persistent:${container.isPersistent} rarityPriority:${container.rarityPriority} autoRemove:${container.autoRemoveWhenEmpty} audioCueId:${container.audioCueId ?? 'none'}`,
+            ...formatInventoryStacks(container.items).map((line) => `    ${line.trimStart()}`)
+          ]
+        })
+      ]
+    } // end if pickup.container.list command
+
+    if (normalizedCommand.startsWith('pickup.container.take ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const containerId = rawArgs[1] ?? ''
+      const itemId = rawArgs[2] ?? ''
+      const quantity = Math.max(0, Math.floor(parseFiniteNumber(rawArgs[3] ?? '', 'pickup.container.take quantity')))
+      if (!containerId || !itemId || quantity <= 0) {
+        throw new Error('Usage: pickup.container.take <containerId> <itemId> <quantity>')
+      } // end if pickup.container.take args invalid
+
+      const result = pickupSystem.lootContainerItem(containerId, itemId, quantity)
+      if (!result) {
+        return [`pickup.container.take: container ${containerId} was not found or item is invalid.`]
+      } // end if container/item target invalid
+      nextEventTag(`Container partial loot ${containerId} ${itemId} x${quantity}`)
+      announceInventoryInteraction(`Container loot ${itemId} quantity ${quantity}.`, {
+        cuePath: resolveInventoryItemCuePath(itemId),
+        speak: true
+      })
+      return [
+        `pickup.container.take ok: ${containerId}`,
+        `removed = ${result.removed ? 'yes' : 'no'}`,
+        `collected = ${result.collected.length}`,
+        ...formatInventoryStacks(result.collected),
+        `remainingStacks = ${result.remainingStacks.length}`,
+        ...formatInventoryStacks(result.remainingStacks),
+        ...getInventorySummaryLines()
+      ]
+    } // end if pickup.container.take command
+
+    if (normalizedCommand.startsWith('pickup.container.takeall ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const containerId = rawArgs[1] ?? ''
+      if (!containerId) {
+        throw new Error('Usage: pickup.container.takeall <containerId>')
+      } // end if pickup.container.takeall args invalid
+
+      const result = pickupSystem.lootContainerAll(containerId)
+      if (!result) {
+        return [`pickup.container.takeall: container ${containerId} was not found.`]
+      } // end if container target invalid
+      nextEventTag(`Container take all ${containerId}`)
+      announceInventoryInteraction('Container looted completely.', {
+        cuePath: INVENTORY_AUDIO_CUE_PATHS.industrial,
+        speak: true
+      })
+      return [
+        `pickup.container.takeall ok: ${containerId}`,
+        `removed = ${result.removed ? 'yes' : 'no'}`,
+        `collected = ${result.collected.length}`,
+        ...formatInventoryStacks(result.collected),
+        ...getInventorySummaryLines()
+      ]
+    } // end if pickup.container.takeall command
+
+    if (normalizedCommand === 'persistence.chunks') {
+      const chunkSummaries = worldItemPersistence.getChunkSummaries()
+      if (chunkSummaries.length <= 0) {
+        return ['persistence.chunks: no tracked world items.']
+      } // end if no chunk summaries exist
+      return [
+        `persistence.chunks: ${chunkSummaries.length} chunk(s)`,
+        ...chunkSummaries.map((entry) => `  chunk ${entry.chunkKey} loose=${entry.looseCount} containers=${entry.containerCount}`)
+      ]
+    } // end if persistence.chunks command
+
+    if (normalizedCommand === 'persistence.cleanup') {
+      const result = worldItemPersistence.cleanup()
+      nextEventTag(`Persistence cleanup removed loose:${result.removedLooseIds.length} containers:${result.removedContainerIds.length}`)
+      return [
+        'persistence.cleanup:',
+        `  loose ${result.looseBefore} -> ${result.looseAfter} removed=${result.removedLooseIds.length}`,
+        `  containers ${result.containersBefore} -> ${result.containersAfter} removed=${result.removedContainerIds.length}`
+      ]
+    } // end if persistence.cleanup command
+
+    if (normalizedCommand === 'persistence.limits') {
+      const limits = worldItemPersistence.getLimits()
+      return [
+        'persistence.limits:',
+        ...Object.entries(limits).map(([key, value]) => `  ${key} = ${String(value)}`)
+      ]
+    } // end if persistence.limits command
+
+    if (normalizedCommand.startsWith('persistence.set ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const key = rawArgs[1] ?? ''
+      const rawValue = rawArgs[2] ?? ''
+      if (!key || !rawValue) {
+        throw new Error('Usage: persistence.set <field> <value>')
+      } // end if persistence.set args invalid
+
+      const value = parseFiniteNumber(rawValue, `persistence.set ${key}`)
+      const nextLimits = worldItemPersistence.setLimits({ [key]: value } as {
+        chunkSizeMeters?: number
+        maxLoosePerChunk?: number
+        maxContainersPerChunk?: number
+        maxLooseGlobal?: number
+        maxContainersGlobal?: number
+        looseMaxAgeMs?: number
+        containerMaxAgeMs?: number
+        rareItemMinRarity?: number
+      })
+      return [
+        `persistence.set ok: ${key} = ${value}`,
+        ...Object.entries(nextLimits).map(([entryKey, entryValue]) => `  ${entryKey} = ${String(entryValue)}`)
+      ]
+    } // end if persistence.set command
+
+    if (normalizedCommand.startsWith('persistence.save ')) {
+      const name = commandLine.trim().slice('persistence.save '.length).trim()
+      if (!name) {
+        throw new Error('Usage: persistence.save <name>')
+      } // end if persistence save name missing
+
+      const snapshot = worldItemPersistence.createSnapshot(Date.now())
+      localStorage.setItem(`mech.world.persistence.${name}`, JSON.stringify(snapshot))
+      return [
+        `persistence.save ok: ${name}`,
+        `  version = ${snapshot.version}`,
+        `  persistentContainers = ${snapshot.containers.length}`,
+        '  looseRuntimeDropsPersisted = 0'
+      ]
+    } // end if persistence.save command
+
+    if (normalizedCommand.startsWith('persistence.load ')) {
+      const name = commandLine.trim().slice('persistence.load '.length).trim()
+      if (!name) {
+        throw new Error('Usage: persistence.load <name>')
+      } // end if persistence load name missing
+
+      const rawSnapshot = localStorage.getItem(`mech.world.persistence.${name}`)
+      if (!rawSnapshot) {
+        throw new Error(`No persistence snapshot saved with name "${name}".`)
+      } // end if persistence snapshot missing
+
+      const snapshot = JSON.parse(rawSnapshot) as {
+        version?: number
+        savedAtMs?: number
+        containers?: Array<{
+          id: string
+          name: string
+          type: 'container' | 'wreck' | 'corpse'
+          origin: 'static' | 'runtime'
+          position: { x: number; y: number; z: number }
+          interactionRadius: number
+          items: Array<{ itemId: string; quantity: number }>
+          rarityPriority: number
+          isPersistent: boolean
+          autoRemoveWhenEmpty: boolean
+          audioCueId?: string
+        }>
+      }
+
+      const loaded = worldItemPersistence.loadSnapshot({
+        version: snapshot.version === 1 ? 1 : 1,
+        savedAtMs: Number(snapshot.savedAtMs ?? Date.now()),
+        containers: Array.isArray(snapshot.containers) ? snapshot.containers : []
+      })
+      return [
+        `persistence.load ok: ${name}`,
+        `  loadedContainers = ${loaded}`
+      ]
+    } // end if persistence.load command
+
+    if (normalizedCommand === 'pickup.clear') {
+      pickupSystem.clearAll()
+      return ['pickup.clear: removed all loose pickups and containers.']
+    } // end if pickup.clear command
 
     if (normalizedCommand.startsWith('part.get ')) {
       const rawArgs = commandLine.trim().split(/\s+/)
@@ -5752,6 +6962,8 @@ function startTestMap(): void {
           z: player.z ?? 0
         },
         parts: getAllDevParts().map(({ slot, part }) => ({ slot, part })),
+        cargoStacks: cargoInventory.getStacks(),
+        overencumbranceThresholds: { ...devOverencumbranceThresholds },
         timeScale: devTimeScale,
         aiEnabled: devAiEnabled
       }
@@ -5772,6 +6984,8 @@ function startTestMap(): void {
       const snapshot = JSON.parse(rawSnapshot) as {
         player?: { hp?: number; ep?: number; heat?: number; maxHeat?: number; x?: number; y?: number; z?: number }
         parts?: Array<{ slot: DevPartSlot; part: DevPartState | undefined }>
+        cargoStacks?: Array<{ itemId?: string; quantity?: number }>
+        overencumbranceThresholds?: { heavyMinRatio?: number; severeMinRatio?: number; extremeMinRatio?: number }
         timeScale?: number
         aiEnabled?: boolean
       }
@@ -5807,6 +7021,36 @@ function startTestMap(): void {
           devParts.set(entry.slot, normalizedPart)
         }
       }
+      if (Array.isArray(snapshot.cargoStacks)) {
+        resetCargoInventoryToDefaults()
+        for (const stack of snapshot.cargoStacks) {
+          const itemId = typeof stack?.itemId === 'string' ? stack.itemId : ''
+          const quantity = Math.max(0, Math.floor(Number(stack?.quantity ?? 0)))
+          if (!itemId || quantity <= 0 || itemId === UNIVERSAL_AMMO_ITEM_ID) {
+            continue
+          } // end if saved cargo stack entry is invalid or ammo
+          if (!defaultItemDatabase.has(itemId)) {
+            continue
+          } // end if saved cargo stack item id is unknown
+          cargoInventory.addItem(itemId, quantity)
+        } // end for each saved non-ammo cargo stack
+        const savedAmmoStack = snapshot.cargoStacks.find((stack) => stack?.itemId === UNIVERSAL_AMMO_ITEM_ID)
+        setUniversalAmmoResource(Number(savedAmmoStack?.quantity ?? STARTING_UNIVERSAL_AMMO_QUANTITY))
+      }
+      if (snapshot.overencumbranceThresholds) {
+        const heavyMinRatio = Number(snapshot.overencumbranceThresholds.heavyMinRatio)
+        const severeMinRatio = Number(snapshot.overencumbranceThresholds.severeMinRatio)
+        const extremeMinRatio = Number(snapshot.overencumbranceThresholds.extremeMinRatio)
+        if (Number.isFinite(heavyMinRatio)) {
+          devOverencumbranceThresholds.heavyMinRatio = Math.max(0, heavyMinRatio)
+        }
+        if (Number.isFinite(severeMinRatio)) {
+          devOverencumbranceThresholds.severeMinRatio = Math.max(0, severeMinRatio)
+        }
+        if (Number.isFinite(extremeMinRatio)) {
+          devOverencumbranceThresholds.extremeMinRatio = Math.max(0, extremeMinRatio)
+        }
+      }
       applySubsystemIntegrityState()
       syncAuthoritativeMechStats()
       if (Number.isFinite(snapshot.timeScale)) {
@@ -5829,11 +7073,15 @@ function startTestMap(): void {
       devPhysicsDebugEnabled = false
       devAudioDebugEnabled = false
       devEventsDebugEnabled = false
+      devOverencumbranceThresholds = {
+        ...DEFAULT_OVERENCUMBRANCE_THRESHOLDS
+      }
       audio.setFrontBackDebugLogging(false)
       audio.setOcclusionDebugLogging(false)
       for (const slot of DEV_PART_SLOTS) {
         devParts.set(slot, createPlaceholderPart(slot))
       }
+      resetCargoInventoryToDefaults()
       applySubsystemIntegrityState()
       syncAuthoritativeMechStats()
       nextEventTag('Build reset to placeholder defaults')
@@ -6027,6 +7275,100 @@ function startTestMap(): void {
       return ['weapon edit on']
         .filter((entry) => entry.startsWith(`weapon ${suffix}`.trim()))
     } // end if completing weapon command
+
+    if (currentCommand === 'inventory.get') {
+      const views = [
+        'all',
+        'weight',
+        'supplies',
+        'resources',
+        'parts',
+        ...defaultItemDatabase.list().map((item) => item.id)
+      ]
+      const currentView = hasTrailingWhitespace ? '' : ((tokens[1] ?? '').toLowerCase())
+      return views
+        .filter((view, index, source) => source.indexOf(view) === index)
+        .filter((view) => view.toLowerCase().startsWith(currentView))
+        .map((view) => `inventory.get ${view}`)
+    } // end if completing inventory.get command
+
+    if (currentCommand === 'inventory.add' || currentCommand === 'inventory.remove' || currentCommand === 'inventory.drop') {
+      const currentItemId = hasTrailingWhitespace ? '' : ((tokens[1] ?? '').toLowerCase())
+      return defaultItemDatabase.list()
+        .map((item) => item.id)
+        .filter((itemId) => itemId.toLowerCase().startsWith(currentItemId))
+        .map((itemId) => `${currentCommand} ${itemId} `)
+    } // end if completing inventory mutation commands
+
+    if (currentCommand === 'generateforentity' || currentCommand === 'generateforcontainer') {
+      const currentTableId = hasTrailingWhitespace ? '' : ((tokens[1] ?? '').toLowerCase())
+      const tables = currentCommand === 'generateforcontainer'
+        ? Object.keys(DEFAULT_LOOT_TABLES.container)
+        : Object.keys(DEFAULT_LOOT_TABLES.entity)
+      return tables
+        .filter((tableId) => tableId.toLowerCase().startsWith(currentTableId))
+        .map((tableId) => `${currentCommand} ${tableId}`)
+    } // end if completing loot generation commands
+
+    if (currentCommand === 'pickup.spawn') {
+      const currentType = hasTrailingWhitespace ? '' : ((tokens[1] ?? '').toLowerCase())
+      return ['loose', 'container', 'static', 'runtime', 'wreck']
+        .filter((type) => type.startsWith(currentType))
+        .map((type) => `pickup.spawn ${type} `)
+    } // end if completing pickup.spawn command type
+
+    if (
+      currentCommand === 'pickup.container.list'
+      || currentCommand === 'pickup.scan'
+      || currentCommand === 'pickup.interact'
+      || currentCommand === 'pickup.clear'
+      || currentCommand === 'persistence.chunks'
+      || currentCommand === 'persistence.cleanup'
+      || currentCommand === 'persistence.limits'
+    ) {
+      return [`${currentCommand}`]
+    } // end if completing pickup utility commands
+
+    if (currentCommand === 'pickup.container.takeall') {
+      const containerId = hasTrailingWhitespace ? '' : ((tokens[1] ?? '').toLowerCase())
+      return pickupSystem.listContainers()
+        .map((container) => container.id)
+        .filter((id) => id.toLowerCase().startsWith(containerId))
+        .map((id) => `pickup.container.takeall ${id}`)
+    } // end if completing pickup.container.takeall command
+
+    if (currentCommand === 'pickup.container.take') {
+      const containerId = hasTrailingWhitespace ? '' : ((tokens[1] ?? '').toLowerCase())
+      return pickupSystem.listContainers()
+        .map((container) => container.id)
+        .filter((id) => id.toLowerCase().startsWith(containerId))
+        .map((id) => `pickup.container.take ${id} `)
+    } // end if completing pickup.container.take command
+
+    if (currentCommand === 'persistence.set') {
+      const fieldPrefix = hasTrailingWhitespace ? '' : ((tokens[1] ?? '').toLowerCase())
+      const fields = [
+        'chunkSizeMeters',
+        'maxLoosePerChunk',
+        'maxContainersPerChunk',
+        'maxLooseGlobal',
+        'maxContainersGlobal',
+        'looseMaxAgeMs',
+        'containerMaxAgeMs',
+        'rareItemMinRarity'
+      ]
+      return fields
+        .filter((field) => field.toLowerCase().startsWith(fieldPrefix))
+        .map((field) => `persistence.set ${field} `)
+    } // end if completing persistence.set command
+
+    if (currentCommand === 'persistence.save') {
+      return ['persistence.save phase8test']
+    } // end if completing persistence.save command
+
+    if (currentCommand === 'persistence.load') {
+      return ['persistence.load phase8test']
+    } // end if completing persistence.load command
 
     if (currentCommand === 'target.layout' || (currentCommand === 'target' && (tokens[1] ?? '').toLowerCase() === 'layout')) {
       const layoutIds = ['HumanoidMech', 'Tank', 'Helicopter', 'APC', 'Drone']
@@ -6497,6 +7839,33 @@ function startTestMap(): void {
       devPrevY = player.y
       devPrevZ = currentZ
     } // end if velocity sample is valid
+
+    const pickupUpdate = pickupSystem.updatePlayerPresence({
+      x: player.x,
+      y: player.y,
+      z: player.z ?? 0
+    })
+    if (pickupUpdate.autoCollected.length > 0) {
+      const totalCollected = pickupUpdate.autoCollected.reduce((sum, stack) => sum + stack.quantity, 0)
+      nextEventTag(`Auto pickup collected ${totalCollected} item(s)`)
+      const firstCollected = pickupUpdate.autoCollected[0]
+      if (firstCollected) {
+        announceInventoryInteraction(`Auto pickup collected ${totalCollected} item${totalCollected === 1 ? '' : 's'}.`, {
+          cuePath: resolveInventoryItemCuePath(firstCollected.itemId),
+          speak: false
+        })
+      }
+    } // end if any auto pickup stacks were collected this frame
+
+    worldItemCleanupCooldownSeconds -= deltaSeconds
+    if (worldItemCleanupCooldownSeconds <= 0) {
+      worldItemCleanupCooldownSeconds = 2
+      const cleanupResult = worldItemPersistence.cleanup(Date.now())
+      const totalRemoved = cleanupResult.removedLooseIds.length + cleanupResult.removedContainerIds.length
+      if (totalRemoved > 0) {
+        nextEventTag(`World item cleanup removed ${totalRemoved} item source(s)`)
+      } // end if periodic cleanup removed any items
+    } // end if periodic world item cleanup trigger elapsed
 
     const hpBeforeCombat = Math.max(0, player.hp)
 
@@ -7572,7 +8941,7 @@ function startTestMap(): void {
       heatBarLabelElement.textContent = `${Math.round(devCurrentHeat)} / ${Math.round(devMaxHeat)}`
     } // end if heat label element exists
     if (ammoResourceLabelElement) {
-      ammoResourceLabelElement.textContent = `${Math.round(universalAmmoResource)} | clip ${playerWeapon.ammoInClip}/${playerWeapon.clipSize}${isReloading ? ' | RELOADING' : ''}`
+      ammoResourceLabelElement.textContent = `${Math.round(getUniversalAmmoResource())} | clip ${playerWeapon.ammoInClip}/${playerWeapon.clipSize}${isReloading ? ' | RELOADING' : ''}`
     } // end if universal ammo label exists
     if (hpBarFillElement instanceof HTMLElement) {
       hpBarFillElement.style.width = `${hpPercent}%`
