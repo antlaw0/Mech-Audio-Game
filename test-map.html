@@ -1043,15 +1043,32 @@
     #weaponEditorModal .editor-fieldset legend {
       color: #ffc83c;
     }
+
+    .menu-focus-anchor {
+      margin: 0;
+      outline-offset: 4px;
+    }
+
+    .menu-focus-anchor-sr {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
   </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="navigationOverlay" aria-hidden="true">
-  <header class="navigation-panel" role="dialog" aria-modal="false" aria-label="Navigation Menu">
+  <header class="navigation-panel" aria-label="Navigation Menu">
     <div class="navigation-header">
       <div>
-        <div class="navigation-title">Navigation POI Menu</div>
+        <h2 id="navigationMenuAnchor" tabindex="-1" class="navigation-title menu-focus-anchor">Navigation POI Menu</h2>
         <div class="navigation-subtitle">M: Close Menu | Enter: Select Destination | N: Speak Destination Distance | V: Toggle Navigation Audio</div>
       </div>
       <div class="navigation-actions">
@@ -1127,7 +1144,7 @@
 </div>
 <div id="pauseOverlay" aria-hidden="true">
   <div id="pausePanelDialog" class="pause-panel" aria-label="Pause menu overlay">
-    <div id="pauseMenuTitle" class="pause-title">Paused</div>
+    <h2 id="pauseMenuTitle" tabindex="-1" class="pause-title menu-focus-anchor">Paused</h2>
     <div class="pause-debug-tabs" aria-label="Developer Debug Tabs">
       <div class="pause-debug-tab-buttons" role="tablist" aria-label="Pause Debug Tabs">
         <button id="pauseDebugTabRuntimeButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="true" aria-controls="pauseDebugRuntimePanel">Runtime Stats</button>
@@ -1161,6 +1178,8 @@
         <div class="pause-debug-hint">Live tuning applies instantly while paused and after resuming.</div>
       </section>
       <section id="pauseDebugInventoryPanel" class="pause-debug-tab-panel pause-inventory-panel" role="tabpanel" aria-label="Inventory">
+        <h2 id="pauseInventoryAnchor" tabindex="-1" class="menu-focus-anchor menu-focus-anchor-sr">Inventory</h2>
+        <h2 id="pauseCargoAnchor" tabindex="-1" class="menu-focus-anchor menu-focus-anchor-sr">Cargo</h2>
         <div class="pause-inventory-toolbar" hidden aria-hidden="true">
           <div id="pauseContainerContextLabel" class="pause-container-caption" hidden>Container</div>
           <div id="pauseContainerActions" class="pause-inventory-inline-actions" hidden>
@@ -1177,7 +1196,7 @@
         <div class="pause-loadout-layout">
           <ul id="pauseLoadoutSlotList" class="pause-loadout-slots" aria-label="Loadout slots"></ul>
           <section class="pause-loadout-details" aria-live="off" aria-atomic="false">
-            <h3 id="pauseLoadoutTitle" class="pause-loadout-title">Garage</h3>
+            <h3 id="pauseLoadoutTitle" tabindex="-1" class="pause-loadout-title menu-focus-anchor">Garage</h3>
             <div id="pauseLoadoutContent" class="garage-part-list">Garage loading...</div>
             <div id="pauseLoadoutSummary" class="pause-loadout-summary">Browse owned parts, equip them to the current mech, or toggle dev mode to edit the catalog.</div>
           </section>
@@ -1193,9 +1212,9 @@
   </div>
 </div>
 <div id="devConsoleOverlay" aria-hidden="true">
-  <div class="dev-console-panel" role="dialog" aria-modal="true" aria-label="Developer Console">
+  <div class="dev-console-panel" aria-label="Developer Console">
     <div class="dev-console-header">
-      <div>Developer Console</div>
+      <h2 id="devConsoleAnchor" tabindex="-1" class="menu-focus-anchor">Developer Console</h2>
       <div id="devConsoleStatus" class="dev-console-status">PAUSED | ENTER: RUN | TAB: COMPLETE | ESC OR `: CLOSE</div>
     </div>
     <div id="devConsoleOutput" class="dev-console-output"></div>
@@ -1208,13 +1227,11 @@
 </div>
 <div
   id="enemyEditorModal"
-  role="dialog"
-  aria-modal="true"
   aria-label="Edit spawned enemy"
   aria-hidden="true"
 >
   <div class="editor-panel">
-    <h2 id="enemyEditorTitle" class="editor-title">Edit Enemy</h2>
+    <h2 id="enemyEditorTitle" tabindex="-1" class="editor-title menu-focus-anchor">Edit Enemy</h2>
     <form id="enemyEditorForm" novalidate>
       <fieldset class="editor-fieldset">
         <legend>Core Stats</legend>
@@ -1330,13 +1347,11 @@
 
 <div
   id="weaponEditorModal"
-  role="dialog"
-  aria-modal="true"
   aria-label="Edit weapon stats"
   aria-hidden="true"
 >
   <div class="editor-panel">
-    <h2 class="editor-title">Weapon Editor</h2>
+    <h2 id="weaponEditorTitle" tabindex="-1" class="editor-title menu-focus-anchor">Weapon Editor</h2>
     <form id="weaponEditorForm" novalidate>
       <fieldset class="editor-fieldset">
         <legend>Identity</legend>

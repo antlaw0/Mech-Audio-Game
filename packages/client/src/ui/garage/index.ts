@@ -99,7 +99,20 @@ const renderModal = (modalContent: HTMLElement, focusOptions: ModalFocusOptions 
       modal.setAttribute('aria-labelledby', headingElement.id)
     }
 
+    const getInitialFocusTarget = (): HTMLElement | null => {
+      if (headingElement) {
+        return headingElement
+      }
+      return getFocusableElements(modal)[0] ?? null
+    }
+
+    let closed = false
+
     const close = (result: boolean): void => {
+      if (closed) {
+        return
+      }
+      closed = true
       overlay.remove()
       resolve(result)
 
@@ -144,6 +157,13 @@ const renderModal = (modalContent: HTMLElement, focusOptions: ModalFocusOptions 
     }) as EventListener)
 
     overlay.addEventListener('keydown', (event) => {
+      if (event.code === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        close(false)
+        return
+      }
+
       if (event.code !== 'Tab') {
         return
       }
@@ -174,6 +194,17 @@ const renderModal = (modalContent: HTMLElement, focusOptions: ModalFocusOptions 
       }
     })
 
+    overlay.addEventListener('focusin', (event) => {
+      const target = event.target
+      if (!(target instanceof HTMLElement) || modal.contains(target)) {
+        return
+      }
+      const nextFocus = getInitialFocusTarget()
+      if (nextFocus) {
+        nextFocus.focus()
+      }
+    })
+
     const cancelButtons = modal.querySelectorAll('[data-garage-modal-cancel="true"]')
     cancelButtons.forEach((button) => {
       button.addEventListener('click', () => close(false))
@@ -186,12 +217,7 @@ const renderModal = (modalContent: HTMLElement, focusOptions: ModalFocusOptions 
 
     document.body.appendChild(overlay)
     window.requestAnimationFrame(() => {
-      if (headingElement) {
-        headingElement.focus()
-        return
-      }
-      const firstFocusable = getFocusableElements(modal)[0]
-      firstFocusable?.focus()
+      getInitialFocusTarget()?.focus()
     })
   })
 }

@@ -55,6 +55,7 @@ import { PLAYER_MELEE_WEAPON_DEFINITIONS, PLAYER_WEAPON_DEFINITIONS, type Player
 import { formatControlCode, getControlBindingDefinitions, getControlBindings, setControlBinding, type ControlActionId } from './controls.js'
 import { bindInput } from './input.js'
 import { createDeveloperConsole } from './dev-console.js'
+import { accessibilityModeManager } from './accessibility-mode-manager.js'
 import { createMapData } from './map-data.js'
 import { createInputState, createPlayer } from './player-state.js'
 import { isTypingContextActive } from './keyboard-focus.js'
@@ -406,6 +407,7 @@ function startTestMap(): void {
   const heatBarFillElement = document.getElementById('heatBarFill')
   const playerNameElement = document.getElementById('playerName')
   const pauseOverlayElement = document.getElementById('pauseOverlay')
+  const pauseMenuAnchorElement = document.getElementById('pauseMenuTitle')
   const pauseDebugTabRuntimeButtonElement = document.getElementById('pauseDebugTabRuntimeButton')
   const pauseDebugTabEventsButtonElement = document.getElementById('pauseDebugTabEventsButton')
   const pauseDebugTabTuningButtonElement = document.getElementById('pauseDebugTabTuningButton')
@@ -416,6 +418,8 @@ function startTestMap(): void {
   const pauseDebugEventsPanelElement = document.getElementById('pauseDebugEventsPanel')
   const pauseDebugTuningPanelElement = document.getElementById('pauseDebugTuningPanel')
   const pauseDebugInventoryPanelElement = document.getElementById('pauseDebugInventoryPanel')
+  const pauseInventoryAnchorElement = document.getElementById('pauseInventoryAnchor')
+  const pauseCargoAnchorElement = document.getElementById('pauseCargoAnchor')
   const pauseDebugLoadoutPanelElement = document.getElementById('pauseDebugLoadoutPanel')
   const pauseDebugControlsPanelElement = document.getElementById('pauseDebugControlsPanel')
   const pauseDebugRuntimeContentElement = document.getElementById('pauseDebugRuntimeContent')
@@ -449,10 +453,12 @@ function startTestMap(): void {
   const resumeButtonElement = document.getElementById('pauseResumeButton')
   const exitButtonElement = document.getElementById('pauseExitButton')
   const devConsoleOverlayElement = document.getElementById('devConsoleOverlay')
+  const devConsoleAnchorElement = document.getElementById('devConsoleAnchor')
   const devConsoleOutputElement = document.getElementById('devConsoleOutput')
   const devConsoleInputElement = document.getElementById('devConsoleInput')
   const devConsoleStatusElement = document.getElementById('devConsoleStatus')
   const navigationOverlayElement = document.getElementById('navigationOverlay')
+  const navigationMenuAnchorElement = document.getElementById('navigationMenuAnchor')
   const navClearButtonElement = document.getElementById('navClearButton')
   const navCloseButtonElement = document.getElementById('navCloseButton')
   const navCategoryCitiesButtonElement = document.getElementById('navCategoryCitiesButton')
@@ -470,6 +476,7 @@ function startTestMap(): void {
   const editorCancelButtonElement = document.getElementById('editorCancelButton')
 
   const weaponEditorModalElement = document.getElementById('weaponEditorModal')
+  const weaponEditorTitleElement = document.getElementById('weaponEditorTitle')
   const weaponEditorApplyButtonElement = document.getElementById('weaponEditorApplyButton')
   const weaponEditorCancelButtonElement = document.getElementById('weaponEditorCancelButton')
   const weaponTypeSelect = getSelect('weaponType')
@@ -607,6 +614,7 @@ function startTestMap(): void {
   let hasPlayedEmptyClipForCurrentTriggerPull = false
   let pauseControlsCaptureActionId: ControlActionId | null = null
   let isDebugFpsModeEnabled = false
+  let gameplayKeyboardInputEnabled = true
 
   const getUniversalAmmoResource = (): number => {
     return cargoInventory.getQuantity(UNIVERSAL_AMMO_ITEM_ID)
@@ -1321,6 +1329,42 @@ function startTestMap(): void {
     hasPlayedEmptyClipForCurrentTriggerPull = false
   } // end function clearGameplayInputs
 
+  const isGarageModalOpen = (): boolean => {
+    return document.querySelector('.garage-modal-overlay') instanceof HTMLElement
+  }
+
+  const closeGarageModals = (): void => {
+    const overlays = document.querySelectorAll('.garage-modal-overlay')
+    overlays.forEach((overlay) => {
+      overlay.dispatchEvent(new CustomEvent<boolean>('garage:close', { bubbles: true, detail: false }))
+    })
+  }
+
+  const registerA11yMenu = (menuElement: Element | null, focusAnchor: Element | null): void => {
+    if (!(menuElement instanceof HTMLElement) || !(focusAnchor instanceof HTMLElement)) {
+      return
+    }
+    accessibilityModeManager.registerMenu(menuElement, focusAnchor)
+  }
+
+  accessibilityModeManager.configure({
+    gameRoot: canvas,
+    onGameplayInputToggle: (enabled) => {
+      gameplayKeyboardInputEnabled = enabled
+      if (!enabled) {
+        clearGameplayInputs()
+      }
+    }
+  })
+
+  registerA11yMenu(pauseOverlayElement, pauseMenuAnchorElement)
+  registerA11yMenu(navigationOverlayElement, navigationMenuAnchorElement)
+  registerA11yMenu(devConsoleOverlayElement, devConsoleAnchorElement)
+  registerA11yMenu(enemyEditorModalElement, enemyEditorTitleElement)
+  registerA11yMenu(weaponEditorModalElement, weaponEditorTitleElement)
+
+  accessibilityModeManager.enterGameMode()
+
   const getWeaponReloadCost = (weapon: PlayerWeaponDefinition): number => {
     if (Math.max(0, weapon.ammoResourcePerRound) <= 0) {
       return 0
@@ -1928,28 +1972,6 @@ function startTestMap(): void {
       return
     } // end if pause overlay element missing
 
-    const setGameplayAccessibilityMode = (gameplayActive: boolean): void => {
-      if (gameplayActive) {
-        canvas.setAttribute('role', 'application')
-        canvas.setAttribute('aria-label', 'Game screen. Keyboard gameplay controls are active. Press Escape to open pause menu.')
-        canvas.tabIndex = 0
-        pauseOverlayElement.setAttribute('role', 'presentation')
-        pauseOverlayElement.removeAttribute('aria-label')
-        if (document.activeElement !== canvas) {
-          canvas.focus({ preventScroll: true })
-        }
-        return
-      }
-
-      canvas.removeAttribute('role')
-      canvas.setAttribute('aria-label', 'Game screen')
-      pauseOverlayElement.setAttribute('role', 'region')
-      pauseOverlayElement.setAttribute('aria-label', 'Pause menu')
-      if (document.activeElement === canvas) {
-        canvas.blur()
-      }
-    } // end function setGameplayAccessibilityMode
-
     if (hudElement instanceof HTMLElement) {
       hudElement.hidden = visible
       hudElement.setAttribute('aria-hidden', visible ? 'true' : 'false')
@@ -1957,7 +1979,15 @@ function startTestMap(): void {
 
     pauseOverlayElement.style.display = visible ? 'flex' : 'none'
     pauseOverlayElement.setAttribute('aria-hidden', visible ? 'false' : 'true')
-    setGameplayAccessibilityMode(!visible)
+    if (!visible) {
+      closeGarageModals()
+    }
+    if (visible) {
+      accessibilityModeManager.openMenu('pauseOverlay')
+    } else {
+      accessibilityModeManager.closeMenu('pauseOverlay')
+    }
+
     if (visible) {
       updatePauseOverlayContextUi()
       updatePauseDebugTabs()
@@ -2786,6 +2816,15 @@ function startTestMap(): void {
     if (nextTab === 'controls' && tabChanged) {
       renderPauseControlsTab()
     }
+
+    if (isPaused && !isConsoleOpen && !isNavigationMenuOpen && !isGarageModalOpen()) {
+      const focusTarget = nextTab === 'inventory'
+        ? (pauseOverlayMode === 'container-transfer' ? pauseCargoAnchorElement : pauseInventoryAnchorElement)
+        : (nextTab === 'loadout' ? pauseLoadoutTitleElement : pauseMenuAnchorElement)
+      if (focusTarget instanceof HTMLElement) {
+        accessibilityModeManager.enterUiMode(focusTarget)
+      }
+    }
   } // end function setPauseDebugActiveTab
 
   const applyDebugAudioVolumeScale = (): void => {
@@ -2857,6 +2896,11 @@ function startTestMap(): void {
     } // end if navigation overlay missing
     navigationOverlayElement.style.display = visible ? 'flex' : 'none'
     navigationOverlayElement.setAttribute('aria-hidden', visible ? 'false' : 'true')
+    if (visible) {
+      accessibilityModeManager.openMenu('navigationOverlay')
+    } else {
+      accessibilityModeManager.closeMenu('navigationOverlay')
+    }
   } // end function updateNavigationOverlayVisibility
 
   const setDestinationPoi = (poiId: string): void => {
@@ -3113,12 +3157,14 @@ function startTestMap(): void {
     populateWeaponEditorForm(playerWeapon)
     setWeaponEditorModalVisible(true)
     isWeaponEditorOpen = true
+    accessibilityModeManager.openMenu('weaponEditorModal')
     weaponTypeSelect?.focus()
   } // end function openWeaponEditor
 
   const closeWeaponEditor = (): void => {
     setWeaponEditorModalVisible(false)
     isWeaponEditorOpen = false
+    accessibilityModeManager.closeMenu('weaponEditorModal')
   } // end function closeWeaponEditor
 
   const populateEditorForm = (config: EnemyDefinitionConfig): void => {
@@ -3193,15 +3239,14 @@ function startTestMap(): void {
     populateEditorForm(def)
     setEditorModalVisible(true)
     isEditorModalOpen = true
+    accessibilityModeManager.openMenu('enemyEditorModal')
     editorNameInput?.focus()
   } // end function openEnemyEditorModal
 
   const closeEnemyEditorModal = (): void => {
     setEditorModalVisible(false)
     isEditorModalOpen = false
-    if (resumeButtonElement instanceof HTMLButtonElement) {
-      resumeButtonElement.focus()
-    } // end if resume button exists
+    accessibilityModeManager.closeMenu('enemyEditorModal')
   } // end function closeEnemyEditorModal
 
   const getNearestEnterInteractContainer = (): ReturnType<typeof pickupSystem.listContainers>[number] | null => {
@@ -3252,11 +3297,16 @@ function startTestMap(): void {
     pauseContainerInventoryActiveCategory = 'supplies'
     pauseContainerTransferStatus = `${container.name} opened.`
 
+    accessibilityModeManager.pushFocus()
+
     await enterPausedState(true)
     setPauseDebugActiveTab('inventory')
     updatePauseOverlayContextUi()
     renderPauseInventoryTab()
     updatePauseDebugTabs()
+    if (pauseCargoAnchorElement instanceof HTMLElement) {
+      accessibilityModeManager.enterUiMode(pauseCargoAnchorElement)
+    }
   } // end function openContainerTransferOverlay
 
   const closeContainerTransferOverlay = async (): Promise<void> => {
@@ -3265,6 +3315,7 @@ function startTestMap(): void {
     }
     pauseOverlayMode = 'pause'
     activeContainerTransferId = null
+    accessibilityModeManager.popFocus()
     await resumeGame()
   } // end function closeContainerTransferOverlay
 
@@ -3333,7 +3384,15 @@ function startTestMap(): void {
     await pauseGame()
   } // end function togglePause
 
-  const isGameplayInputBlocked = (): boolean => isPaused || isWeaponEditorOpen || isConsoleOpen || isNavigationMenuOpen || isWorldMapVisible
+  const isGameplayInputBlocked = (): boolean => {
+    return !gameplayKeyboardInputEnabled
+      || isGarageModalOpen()
+      || isPaused
+      || isWeaponEditorOpen
+      || isConsoleOpen
+      || isNavigationMenuOpen
+      || isWorldMapVisible
+  }
 
   bindInput(input, audio, isGameplayInputBlocked, () => isDebugFpsModeEnabled)
 
@@ -3507,6 +3566,10 @@ function startTestMap(): void {
       return
     }
 
+    if (isGarageModalOpen()) {
+      return
+    }
+
     if (!isPaused || isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen || isNavigationMenuOpen || isWorldMapVisible) {
       pauseControlsCaptureActionId = null
       updatePauseControlsStatus()
@@ -3533,7 +3596,7 @@ function startTestMap(): void {
       return
     } // end if typing in editable field
 
-    if (event.code !== 'KeyM' || event.repeat || isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen || isWorldMapVisible) {
+    if (event.code !== 'KeyM' || event.repeat || isGarageModalOpen() || isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen || isWorldMapVisible) {
       return
     } // end if not menu toggle key or conflicting modal state
 
@@ -3546,7 +3609,7 @@ function startTestMap(): void {
       return
     } // end if typing in editable field
 
-    if (event.repeat || isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen || isNavigationMenuOpen || isWorldMapVisible) {
+    if (event.repeat || isGarageModalOpen() || isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen || isNavigationMenuOpen || isWorldMapVisible) {
       return
     } // end if another overlay owns Enter input
 
@@ -3578,6 +3641,11 @@ function startTestMap(): void {
 
     event.preventDefault()
 
+    if (isGarageModalOpen()) {
+      closeGarageModals()
+      return
+    }
+
     if (isConsoleOpen) {
       void closeDeveloperConsole()
       return
@@ -3606,7 +3674,7 @@ function startTestMap(): void {
       return
     } // end if typing in editable field
 
-    if (event.code !== 'Backquote' || event.repeat || isEditorModalOpen || isWeaponEditorOpen || isNavigationMenuOpen || isWorldMapVisible) {
+    if (event.code !== 'Backquote' || event.repeat || isGarageModalOpen() || isEditorModalOpen || isWeaponEditorOpen || isNavigationMenuOpen || isWorldMapVisible) {
       return
     } // end if not developer console key or another editor is open
 
@@ -3624,7 +3692,7 @@ function startTestMap(): void {
       return
     } // end if typing in editable field
 
-    if (event.repeat || isEditorModalOpen || isWeaponEditorOpen || isWorldMapVisible) {
+    if (event.repeat || isGarageModalOpen() || isEditorModalOpen || isWeaponEditorOpen || isWorldMapVisible) {
       return
     } // end if editor modal blocks debug overlay shortcuts
 
@@ -6528,6 +6596,7 @@ function startTestMap(): void {
 
     isConsoleOpen = false
     devConsole?.close()
+    accessibilityModeManager.closeMenu('devConsoleOverlay')
     const shouldResume = resumeGameplay
     consoleResumeOnClose = false
     if (shouldResume) {
@@ -6546,6 +6615,8 @@ function startTestMap(): void {
       return
     } // end if another modal already owns input focus
 
+    closeGarageModals()
+
     await audio.ensureAudio()
 
     if (!isPaused) {
@@ -6557,8 +6628,9 @@ function startTestMap(): void {
     } // end if console opened from active gameplay or pause menu
 
     isConsoleOpen = true
-  helpMenuSelectionPath = null
+    helpMenuSelectionPath = null
     devConsole?.open()
+    accessibilityModeManager.openMenu('devConsoleOverlay')
     devConsole?.setStatus(consoleResumeOnClose
       ? 'PAUSED FOR CONSOLE | ENTER: RUN | TAB: COMPLETE | ESC OR `: RESUME'
       : 'PAUSE MENU HELD | ENTER: RUN | TAB: COMPLETE | ESC OR `: RETURN')
