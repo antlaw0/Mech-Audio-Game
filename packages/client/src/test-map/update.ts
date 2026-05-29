@@ -79,6 +79,7 @@ export interface UpdateEnvironment {
   collisionWorld: WorldCollisionWorld
   ignorePlayerCollision?: boolean
   movementProfile: MovementArchetypeProfile
+  fpsModeEnabled?: boolean
 } // end interface UpdateEnvironment
 
 export function createUpdateState(): UpdateState {
@@ -158,6 +159,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
 
   const movementProfile = environment.movementProfile
   const ignorePlayerCollision = environment.ignorePlayerCollision ?? false
+  const fpsModeEnabled = environment.fpsModeEnabled ?? false
   const weightFactor = clamp(environment.weightFactor, 0, 1)
   const flightConfig = environment.flightConfig
   const { input, player, audio, state } = environment
@@ -194,7 +196,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   if (!Number.isFinite(state.pitchHardRecenterTimeRemainingSeconds)) {
     state.pitchHardRecenterTimeRemainingSeconds = 0
   } // end if hard recenter timer state is uninitialized
-  const turnInput = (input.turnRight ? 1 : 0) - (input.turnLeft ? 1 : 0)
+  const turnInput = fpsModeEnabled ? 0 : ((input.turnRight ? 1 : 0) - (input.turnLeft ? 1 : 0))
   if (turnInput !== 0) {
     const isFlying = player.isFlying || player.flightState === 'ascending' || player.flightState === 'airborne'
     if (isFlying) {
@@ -292,7 +294,15 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   const supportHeight = getTopSurfaceHeight(environment.collisionWorld, player.x, player.y, PLAYER_RADIUS)
   let justLanded = false
 
-  if (player.flightState === 'ascending') {
+  if (fpsModeEnabled) {
+    // FPS flycam altitude is controlled externally (wheel) and must not trigger flight/fall landing transitions.
+    playerAltitude = Math.max(0, playerAltitude)
+    state.verticalVelocityZ = 0
+    player.flightState = 'grounded'
+    player.isFlying = false
+    state.rotorSpinupElapsedSeconds = 0
+    state.rotorSpinNormalized = 0
+  } else if (player.flightState === 'ascending') {
     if (flightConfig.mode === 'rotor') {
       const clampedSpinUpSeconds = Math.max(0.4, flightConfig.spinUpSeconds)
       state.rotorSpinupElapsedSeconds = Math.min(clampedSpinUpSeconds, state.rotorSpinupElapsedSeconds + deltaSeconds)
@@ -458,46 +468,56 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     } // end if reset returned pitch to neutral
   } // end if pitch reset requested
 
-  const lookInputAxis = (input.lookDown ? 1 : 0) - (input.lookUp ? 1 : 0)
-  if (lookInputAxis !== 0) {
-    state.pitchHardRecenterTimeRemainingSeconds = 0
-    state.targetPitchVelocity = lookInputAxis * maxPitchSpeed
-    state.pitchVelocity = moveToward(
-      state.pitchVelocity,
-      state.targetPitchVelocity,
-      pitchAcceleration * deltaSeconds
-    )
-  } else {
+  if (fpsModeEnabled) {
+    state.currentPitch = player.pitch
     state.targetPitchVelocity = 0
-    state.pitchHardRecenterTimeRemainingSeconds = Math.max(0, state.pitchHardRecenterTimeRemainingSeconds - deltaSeconds)
-    const springStrength = state.pitchHardRecenterTimeRemainingSeconds > 0
+    state.pitchVelocity = 0
+    state.pitchHardRecenterTimeRemainingSeconds = 0
+    state.pitchSpringStrength = 0
+    state.pitchSpringSuppressed = true
+    state.targetElevationOffset = targetElevationOffset
+  } else {
+    const lookInputAxis = (input.lookDown ? 1 : 0) - (input.lookUp ? 1 : 0)
+    if (lookInputAxis !== 0) {
+      state.pitchHardRecenterTimeRemainingSeconds = 0
+      state.targetPitchVelocity = lookInputAxis * maxPitchSpeed
+      state.pitchVelocity = moveToward(
+        state.pitchVelocity,
+        state.targetPitchVelocity,
+        pitchAcceleration * deltaSeconds
+      )
+    } else {
+      state.targetPitchVelocity = 0
+      state.pitchHardRecenterTimeRemainingSeconds = Math.max(0, state.pitchHardRecenterTimeRemainingSeconds - deltaSeconds)
+      const springStrength = state.pitchHardRecenterTimeRemainingSeconds > 0
+        ? hardRecenterSpringStrength
+        : passiveSpringStrength * springSuppressionMultiplier
+      const pitchAccelerationTowardHorizon = getCriticallyDampedSpringAcceleration(
+        state.currentPitch,
+        state.pitchVelocity,
+        springStrength
+      )
+      state.pitchVelocity += pitchAccelerationTowardHorizon * deltaSeconds
+    }
+
+    state.pitchVelocity = clamp(state.pitchVelocity, -maxPitchSpeed, maxPitchSpeed)
+    state.currentPitch = clamp(
+      state.currentPitch + (state.pitchVelocity * deltaSeconds),
+      -maxPitchAngle,
+      maxPitchAngle
+    )
+
+    if ((state.currentPitch <= -maxPitchAngle && state.pitchVelocity < 0) || (state.currentPitch >= maxPitchAngle && state.pitchVelocity > 0)) {
+      state.pitchVelocity = 0
+    } // end if pitch reached clamp boundary
+
+    player.pitch = state.currentPitch
+    state.pitchSpringStrength = state.pitchHardRecenterTimeRemainingSeconds > 0
       ? hardRecenterSpringStrength
       : passiveSpringStrength * springSuppressionMultiplier
-    const pitchAccelerationTowardHorizon = getCriticallyDampedSpringAcceleration(
-      state.currentPitch,
-      state.pitchVelocity,
-      springStrength
-    )
-    state.pitchVelocity += pitchAccelerationTowardHorizon * deltaSeconds
+    state.pitchSpringSuppressed = springSuppressed
+    state.targetElevationOffset = targetElevationOffset
   }
-
-  state.pitchVelocity = clamp(state.pitchVelocity, -maxPitchSpeed, maxPitchSpeed)
-  state.currentPitch = clamp(
-    state.currentPitch + (state.pitchVelocity * deltaSeconds),
-    -maxPitchAngle,
-    maxPitchAngle
-  )
-
-  if ((state.currentPitch <= -maxPitchAngle && state.pitchVelocity < 0) || (state.currentPitch >= maxPitchAngle && state.pitchVelocity > 0)) {
-    state.pitchVelocity = 0
-  } // end if pitch reached clamp boundary
-
-  player.pitch = state.currentPitch
-  state.pitchSpringStrength = state.pitchHardRecenterTimeRemainingSeconds > 0
-    ? hardRecenterSpringStrength
-    : passiveSpringStrength * springSuppressionMultiplier
-  state.pitchSpringSuppressed = springSuppressed
-  state.targetElevationOffset = targetElevationOffset
   const normalizedPitchAssistMotion = maxPitchSpeed <= 0.0001
     ? 0
     : clamp(Math.abs(state.pitchVelocity) / maxPitchSpeed, 0, 1)

@@ -13,7 +13,8 @@ function matchesBoundControl(event: KeyboardEvent, actionId: ControlActionId): b
 export function bindInput(
   input: InputState,
   audio: AudioController,
-  isInputBlocked: () => boolean = () => false
+  isInputBlocked: () => boolean = () => false,
+  isFpsModeEnabled: () => boolean = () => false
 ): void {
   const keys: Record<string, boolean> = {}
   const shouldHandleDirectionalSnap = (event: KeyboardEvent): boolean => {
@@ -46,6 +47,39 @@ export function bindInput(
       } // end if prevent default while blocked
       return
     } // end if input blocked
+
+    const fpsModeEnabled = isFpsModeEnabled()
+    if (fpsModeEnabled) {
+      if (!keys[event.code]) {
+        keys[event.code] = true
+
+        if (matchesBoundControl(event, 'fire')) {
+          input.fireHeld = true
+          input.firePending = true
+        } else if (matchesBoundControl(event, 'melee')) {
+          input.meleePending = true
+        } else if (matchesBoundControl(event, 'speakEnergy')) {
+          input.speakEpPending = true
+        } else if (matchesBoundControl(event, 'speakHealth')) {
+          input.speakHpPending = true
+        } else if (matchesBoundControl(event, 'speakCoordinates')) {
+          input.speakCoordsPending = true
+        } else if (matchesBoundControl(event, 'speakDestination')) {
+          input.speakDestinationPending = true
+        } else if (matchesBoundControl(event, 'moveForward')) {
+          input.moveForward = true
+        } else if (matchesBoundControl(event, 'moveBack')) {
+          input.moveBack = true
+        } else if (matchesBoundControl(event, 'strafeLeft')) {
+          input.strafeLeft = true
+        } else if (matchesBoundControl(event, 'strafeRight')) {
+          input.strafeRight = true
+        }
+      }
+
+      event.preventDefault()
+      return
+    } // end if FPS mode input should bypass mech controls
 
     await audio.ensureAudio()
 
@@ -212,6 +246,21 @@ export function bindInput(
     } // end if typing in editable field
 
     keys[event.code] = false
+
+    if (isFpsModeEnabled()) {
+      if (matchesBoundControl(event, 'fire')) {
+        input.fireHeld = false
+      } else if (matchesBoundControl(event, 'moveForward')) {
+        input.moveForward = false
+      } else if (matchesBoundControl(event, 'moveBack')) {
+        input.moveBack = false
+      } else if (matchesBoundControl(event, 'strafeLeft')) {
+        input.strafeLeft = false
+      } else if (matchesBoundControl(event, 'strafeRight')) {
+        input.strafeRight = false
+      } // end if FPS mode movement key release
+      return
+    } // end if FPS mode key release should not affect mech controls
 
     if (event.code === 'AltLeft' || event.code === 'AltRight') {
       input.subsystemSelectModifier = !!keys.AltLeft || !!keys.AltRight

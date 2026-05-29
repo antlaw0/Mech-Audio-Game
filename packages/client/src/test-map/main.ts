@@ -599,6 +599,7 @@ function startTestMap(): void {
   let isReloading = false
   let hasPlayedEmptyClipForCurrentTriggerPull = false
   let pauseControlsCaptureActionId: ControlActionId | null = null
+  let isDebugFpsModeEnabled = false
 
   const getUniversalAmmoResource = (): number => {
     return cargoInventory.getQuantity(UNIVERSAL_AMMO_ITEM_ID)
@@ -3030,7 +3031,38 @@ function startTestMap(): void {
     await pauseGame()
   } // end function togglePause
 
-  bindInput(input, audio, () => isPaused || isWeaponEditorOpen || isConsoleOpen || isNavigationMenuOpen || isWorldMapVisible)
+  const isGameplayInputBlocked = (): boolean => isPaused || isWeaponEditorOpen || isConsoleOpen || isNavigationMenuOpen || isWorldMapVisible
+
+  bindInput(input, audio, isGameplayInputBlocked, () => isDebugFpsModeEnabled)
+
+  document.addEventListener('mousemove', (event) => {
+    if (!isDebugFpsModeEnabled || isGameplayInputBlocked()) {
+      return
+    } // end if debug flycam look should be ignored
+
+    applyDebugFlycamLook(event.movementX, event.movementY)
+  })
+
+  document.addEventListener('wheel', (event) => {
+    if (!isDebugFpsModeEnabled || isGameplayInputBlocked()) {
+      return
+    } // end if debug flycam wheel should be ignored
+
+    event.preventDefault()
+    applyDebugFlycamAltitudeStep(event.deltaY < 0 ? debugFlycamAltitudeStep : -debugFlycamAltitudeStep)
+  }, { passive: false })
+
+  document.addEventListener('mousedown', () => {
+    if (isDebugFpsModeEnabled && document.pointerLockElement === null && !isConsoleOpen) {
+      void document.body.requestPointerLock()
+    }
+  }) // end mousedown pointer lock reacquire listener
+
+  document.addEventListener('pointerlockchange', () => {
+    if (isDebugFpsModeEnabled && document.pointerLockElement === null && !isGameplayInputBlocked()) {
+      void document.body.requestPointerLock()
+    }
+  }) // end pointerlockchange reacquire listener
 
   const primeAudioFromUserGesture = (): void => {
     const removeUnlockListeners = (): void => {
@@ -3647,6 +3679,93 @@ function startTestMap(): void {
     previousPlayerZ = player.z ?? 0
   } // end function syncTrackedPlayerPosition
 
+  const debugFlycamLookSensitivity = 0.0025
+  const debugFlycamAltitudeStep = 0.1
+
+  const clearDebugFlycamBlockedInputs = (): void => {
+    input.turnLeft = false
+    input.turnRight = false
+    input.lookUp = false
+    input.lookDown = false
+    input.subsystemSelectModifier = false
+    input.pitchResetPending = false
+    input.toggleWorldMapPending = false
+    input.reloadPending = false
+    input.flightTogglePending = false
+    input.boostTogglePending = false
+    input.sonarPingPending = false
+    input.snapNorthPending = false
+    input.snapEastPending = false
+    input.snapSouthPending = false
+    input.snapWestPending = false
+    input.snapLeftPending = false
+    input.snapRightPending = false
+    input.selectedWeaponSlot = null
+    input.spawnTankPending = false
+    input.spawnStrikerPending = false
+    input.spawnBrutePending = false
+    input.spawnHelicopterPending = false
+    input.spawnBruiserPending = false
+    input.spawnTestDummyPending = false
+    input.refillEpPending = false
+    input.refillHpPending = false
+  } // end function clearDebugFlycamBlockedInputs
+
+  const enforceDebugFlycamGroundedState = (): void => {
+    const wasFlying = player.isFlying || player.isBoosting || player.flightState !== 'grounded'
+    player.isBoosting = false
+    player.isFlying = false
+    player.flightState = 'grounded'
+    if (wasFlying) {
+      audio.stopBoostAudio()
+      audio.stopFlightLoop({ quickSpinDown: true })
+    } // end if flight audio should be stopped
+  } // end function enforceDebugFlycamGroundedState
+
+  const applyDebugFlycamLook = (deltaX: number, deltaY: number): void => {
+    player.angle = wrapAngle(player.angle + (deltaX * debugFlycamLookSensitivity))
+    player.pitch = Math.max(-MAX_LOOK_PITCH, Math.min(MAX_LOOK_PITCH, player.pitch + (deltaY * debugFlycamLookSensitivity)))
+    updateState.currentPitch = player.pitch
+    updateState.pitchVelocity = 0
+    updateState.targetPitchVelocity = 0
+    updateState.pitchHardRecenterTimeRemainingSeconds = 0
+    updateState.pitchSpringStrength = 0
+    updateState.pitchSpringSuppressed = true
+    updateState.targetElevationOffset = 0
+  } // end function applyDebugFlycamLook
+
+  const applyDebugFlycamAltitudeStep = (deltaMeters: number): void => {
+    player.z = Math.max(0, (player.z ?? 0) + deltaMeters)
+    syncTrackedPlayerPosition()
+  } // end function applyDebugFlycamAltitudeStep
+
+  const setDebugFpsModeEnabled = (enabled: boolean): boolean => {
+    if (isDebugFpsModeEnabled === enabled) {
+      return isDebugFpsModeEnabled
+    } // end if mode already matches
+
+    isDebugFpsModeEnabled = enabled
+    clearDebugFlycamBlockedInputs()
+    updateState.currentPitch = player.pitch
+    updateState.pitchVelocity = 0
+    updateState.targetPitchVelocity = 0
+    updateState.pitchHardRecenterTimeRemainingSeconds = 0
+    updateState.pitchSpringStrength = 0
+    updateState.pitchSpringSuppressed = enabled
+    updateState.targetElevationOffset = 0
+
+    if (enabled) {
+      enforceDebugFlycamGroundedState()
+      if (document.body instanceof HTMLElement && typeof document.body.requestPointerLock === 'function') {
+        void document.body.requestPointerLock()
+      }
+    } else if (document.pointerLockElement !== null) {
+      document.exitPointerLock()
+    }
+
+    return isDebugFpsModeEnabled
+  } // end function setDebugFpsModeEnabled
+
   const parseFiniteNumber = (rawValue: string, label: string): number => {
     const parsed = Number(rawValue)
     if (!Number.isFinite(parsed)) {
@@ -4132,7 +4251,7 @@ function startTestMap(): void {
       } else if (attemptedFlightToggle) {
         announceBlockedAction('flight-offline', 'Cannot fly. Flight subsystem offline.')
       }
-      if (player.isFlying || player.flightState !== 'grounded' || (player.z ?? 0) > 0) {
+      if (!isDebugFpsModeEnabled && (player.isFlying || player.flightState !== 'grounded' || (player.z ?? 0) > 0)) {
         player.isFlying = false
         player.flightState = 'grounded'
         player.z = 0
@@ -6186,6 +6305,7 @@ function startTestMap(): void {
         `  infiniteEp: ${devInfiniteEp ? 'on' : 'off'}`,
         `  infiniteCooling: ${devInfiniteCooling ? 'on' : 'off'}`,
         `  ghostMode: ${devGhostMode ? 'on' : 'off'}`,
+        `  fpsFlycam: ${isDebugFpsModeEnabled ? 'on' : 'off'}`,
         `  godMode: ${(devInfiniteHp && devInfiniteEp && devInfiniteCooling) ? 'on' : 'off'}`,
         `  timeScale: ${devTimeScale.toFixed(2)}`
       ]
@@ -7390,6 +7510,18 @@ function startTestMap(): void {
       return ['dev mode = off']
     } // end if dev mode disabled
 
+    if (normalizedCommand === 'fpsmode on') {
+      setDebugFpsModeEnabled(true)
+      nextEventTag('Debug FPS flycam enabled')
+      return ['FPSmode = on']
+    } // end if debug FPS flycam enabled
+
+    if (normalizedCommand === 'fpsmode off') {
+      setDebugFpsModeEnabled(false)
+      nextEventTag('Debug FPS flycam disabled')
+      return ['FPSmode = off']
+    } // end if debug FPS flycam disabled
+
     if (command === 'help') {
       if (args.length === 0) {
         helpMenuSelectionPath = []
@@ -7698,6 +7830,12 @@ function startTestMap(): void {
         .filter((entry) => entry.startsWith(`dev ${suffix}`.trim()))
     } // end if completing dev commands
 
+    if (currentCommand === 'fpsmode') {
+      const suffix = tokens.slice(1).join(' ').toLowerCase()
+      return ['fpsmode on', 'fpsmode off']
+        .filter((entry) => entry.startsWith(`fpsmode ${suffix}`.trim()))
+    } // end if completing FPS flycam commands
+
     return []
   } // end function getDeveloperConsoleSuggestions
 
@@ -7727,6 +7865,7 @@ function startTestMap(): void {
   window.mechDev = {
     help: () => [
       'window.mechDev.getState()',
+      'window.mechDev.execute("FPSmode on")',
       'window.mechDev.execute("set audio.enemies.volume 0.4")',
       'window.mechDev.execute("set audio.energy.volume 1.6")',
       'window.mechDev.execute("set audio.music.volume 0.2")',
@@ -7754,7 +7893,8 @@ function startTestMap(): void {
         y: player.y,
         z: player.z ?? 0,
         flightState: player.flightState ?? 'grounded',
-        isFlying: !!player.isFlying
+        isFlying: !!player.isFlying,
+        fpsMode: isDebugFpsModeEnabled
       },
       weapon: { ...playerWeapon },
       paused: isPaused
@@ -7838,6 +7978,23 @@ function startTestMap(): void {
       requestAnimationFrame(gameLoop)
       return
     } // end if game paused
+
+    if (isDebugFpsModeEnabled) {
+      // Ghost FPS movement — direct position update bypassing mech physics and footstep sounds
+      const fpsFwdAxis = (input.moveForward ? 1 : 0) - (input.moveBack ? 1 : 0)
+      const fpsStrAxis = (input.strafeRight ? 1 : 0) - (input.strafeLeft ? 1 : 0)
+      if (fpsFwdAxis !== 0 || fpsStrAxis !== 0) {
+        const axisLen = Math.hypot(fpsFwdAxis, fpsStrAxis)
+        const normFwd = fpsFwdAxis / axisLen
+        const normStr = fpsStrAxis / axisLen
+        const fpsGhostSpeed = 10 // m/s
+        player.x += (Math.cos(player.angle) * normFwd + Math.cos(player.angle + Math.PI / 2) * normStr) * fpsGhostSpeed * deltaSeconds
+        player.y += (Math.sin(player.angle) * normFwd + Math.sin(player.angle + Math.PI / 2) * normStr) * fpsGhostSpeed * deltaSeconds
+        syncTrackedPlayerPosition()
+      } // end if FPS movement input is active
+      enforceDebugFlycamGroundedState()
+      clearDebugFlycamBlockedInputs()
+    } // end if debug FPS flycam should suppress mech control state
 
     playerFireCooldownSeconds = Math.max(0, playerFireCooldownSeconds - deltaSeconds)
     playerMeleeCooldownSeconds = Math.max(0, playerMeleeCooldownSeconds - deltaSeconds)
@@ -8012,6 +8169,38 @@ function startTestMap(): void {
     } // end if dash should lock out non-trajectory controls
 
     const frameInput: InputState = { ...input }
+    if (isDebugFpsModeEnabled) {
+      frameInput.moveForward = false
+      frameInput.moveBack = false
+      frameInput.strafeLeft = false
+      frameInput.strafeRight = false
+      frameInput.turnLeft = false
+      frameInput.turnRight = false
+      frameInput.lookUp = false
+      frameInput.lookDown = false
+      frameInput.subsystemSelectModifier = false
+      frameInput.pitchResetPending = false
+      frameInput.toggleWorldMapPending = false
+      frameInput.reloadPending = false
+      frameInput.flightTogglePending = false
+      frameInput.boostTogglePending = false
+      frameInput.sonarPingPending = false
+      frameInput.snapNorthPending = false
+      frameInput.snapEastPending = false
+      frameInput.snapSouthPending = false
+      frameInput.snapWestPending = false
+      frameInput.snapLeftPending = false
+      frameInput.snapRightPending = false
+      frameInput.selectedWeaponSlot = null
+      frameInput.spawnTankPending = false
+      frameInput.spawnStrikerPending = false
+      frameInput.spawnBrutePending = false
+      frameInput.spawnHelicopterPending = false
+      frameInput.spawnBruiserPending = false
+      frameInput.spawnTestDummyPending = false
+      frameInput.refillEpPending = false
+      frameInput.refillHpPending = false
+    } // end if debug FPS flycam should lock out mech controls
     if (subsystemModifierHeld) {
       frameInput.turnLeft = false
       frameInput.turnRight = false
@@ -8054,7 +8243,8 @@ function startTestMap(): void {
         },
         collisionWorld,
         ignorePlayerCollision: devGhostMode,
-        movementProfile
+        movementProfile,
+        fpsModeEnabled: isDebugFpsModeEnabled
       },
       movementDeltaSeconds
     )
