@@ -61,12 +61,74 @@ interface ThreeRenderSystem {
   addPickupMesh: (id: string, object: THREE.Object3D) => void
   /** Remove and dispose the pickup mesh for the given id (no-op if not found). */
   removePickupMesh: (id: string) => void
+  /** Build and place a static world-space debug grid centered near the requested position. */
+  setDebugGrid: (centerX: number, centerY: number, coverageMeters: number) => void
+  /** Remove and dispose the current debug grid overlay, if any. */
+  clearDebugGrid: () => void
   dispose: () => void
 } // end interface ThreeRenderSystem
 
 const DEFAULT_RENDER_CHUNK_SIZE = 32
 const MINIGUN_TRACER_POOL_CAPACITY = 320
 const MINIGUN_IMPACT_POOL_CAPACITY = 220
+const DEBUG_GRID_ELEVATION_Y = 0.02
+
+function disposeObject3DResources(object: THREE.Object3D): void {
+  object.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      child.geometry.dispose()
+      const mats = Array.isArray(child.material) ? child.material : [child.material]
+      for (const mat of mats) mat.dispose()
+    }
+  })
+} // end function disposeObject3DResources
+
+function createDebugGridOverlay(centerX: number, centerY: number, coverageMeters: number): THREE.Group {
+  // Grid remains globally anchored to integer meters, then windowed around the requested center.
+  const coverage = Math.max(1, Math.round(coverageMeters))
+  const startX = Math.round(centerX - (coverage * 0.5))
+  const startY = Math.round(centerY - (coverage * 0.5))
+  const endX = startX + coverage
+  const endY = startY + coverage
+
+  const lineLengthX = Math.max(0.001, endX - startX)
+  const lineLengthY = Math.max(0.001, endY - startY)
+  const grid = new THREE.Group()
+  grid.frustumCulled = false
+
+  const layerDefs = [
+    { color: 0x000000, thickness: 0.09, y: DEBUG_GRID_ELEVATION_Y + 0.000 },
+    { color: 0xffd400, thickness: 0.056, y: DEBUG_GRID_ELEVATION_Y + 0.002 },
+    { color: 0xffffff, thickness: 0.022, y: DEBUG_GRID_ELEVATION_Y + 0.004 }
+  ] as const
+
+  for (const layer of layerDefs) {
+    const verticalGeometry = new THREE.BoxGeometry(layer.thickness, 0.003, lineLengthY)
+    const horizontalGeometry = new THREE.BoxGeometry(lineLengthX, 0.003, layer.thickness)
+    const material = new THREE.MeshBasicMaterial({
+      color: layer.color,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false
+    })
+
+    for (let x = startX; x <= endX; x += 1) {
+      const line = new THREE.Mesh(verticalGeometry, material)
+      line.position.set(x, layer.y, startY + (lineLengthY * 0.5))
+      line.frustumCulled = false
+      grid.add(line)
+    } // end for each vertical line
+
+    for (let y = startY; y <= endY; y += 1) {
+      const line = new THREE.Mesh(horizontalGeometry, material)
+      line.position.set(startX + (lineLengthX * 0.5), layer.y, y)
+      line.frustumCulled = false
+      grid.add(line)
+    } // end for each horizontal line
+  } // end for each visual layer
+
+  return grid
+} // end function createDebugGridOverlay
 
 function toChunkCoord(value: number, chunkSize: number): number {
   return Math.floor(value / chunkSize)
@@ -500,6 +562,8 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
   const missileExplosionGroup = new THREE.Group()
   scene.add(missileExplosionGroup)
   const missileExplosionPool: THREE.Mesh[] = []
+
+  let debugGridOverlay: THREE.Object3D | null = null
 
   const minigunTracerMesh = new THREE.InstancedMesh(
     new THREE.CylinderGeometry(0.014, 0.014, 1, 6),
@@ -955,16 +1019,31 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
         return
       } // end if not found
       pickupGroup.remove(obj)
-      obj.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.geometry.dispose()
-          const mats = Array.isArray(child.material) ? child.material : [child.material]
-          for (const mat of mats) mat.dispose()
-        }
-      })
+      disposeObject3DResources(obj)
       pickupMeshes.delete(id)
     },
+    setDebugGrid(centerX: number, centerY: number, coverageMeters: number): void {
+      if (debugGridOverlay) {
+        scene.remove(debugGridOverlay)
+        disposeObject3DResources(debugGridOverlay)
+      }
+      debugGridOverlay = createDebugGridOverlay(centerX, centerY, coverageMeters)
+      scene.add(debugGridOverlay)
+    },
+    clearDebugGrid(): void {
+      if (!debugGridOverlay) {
+        return
+      }
+      scene.remove(debugGridOverlay)
+      disposeObject3DResources(debugGridOverlay)
+      debugGridOverlay = null
+    },
     dispose(): void {
+      if (debugGridOverlay) {
+        scene.remove(debugGridOverlay)
+        disposeObject3DResources(debugGridOverlay)
+        debugGridOverlay = null
+      }
       renderer.dispose()
       hudCanvas.remove()
     }

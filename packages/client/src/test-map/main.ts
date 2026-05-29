@@ -80,7 +80,7 @@ import { SURFACE_MATERIAL, resolveWorldSurfaceMaterial } from './surface-materia
 import { createWorldStreamingManager } from './world-streaming.js'
 import { createFrameUpdateScheduler } from './update-scheduler.js'
 import type { GarageSnapshot, MechLoadout, PartCategory, PartDefinition, WeaponMountSlot } from '../data/parts/types.js'
-import type { ItemCategory } from '../data/items/types.js'
+import type { InventoryStack, ItemCategory } from '../data/items/types.js'
 import { createInventoryManager } from '../systems/inventory/inventoryManager.js'
 import { defaultItemDatabase } from '../systems/inventory/itemDatabase.js'
 import { DEFAULT_LOOT_TABLES } from '../data/lootTables/definitions.js'
@@ -660,6 +660,8 @@ function startTestMap(): void {
     ]
   } // end function getInventorySummaryLines
 
+  const DEBUG_GRID_DEFAULT_COVERAGE_METERS = 30
+
   const weaponLoadout: PlayerWeaponDefinition[] = PLAYER_WEAPON_DEFINITIONS.map((weapon) => ({
     ...weapon,
     explosionSounds: [...weapon.explosionSounds]
@@ -739,6 +741,10 @@ function startTestMap(): void {
   let devAudioVolumeScale = 1
   let devPickupBeaconMaxDistance = 50
   let devPickupBeaconIntervalSeconds = 3
+  let devGridEnabled = false
+  let devGridCoverageMeters = DEBUG_GRID_DEFAULT_COVERAGE_METERS
+  let devGridCenterX = player.x
+  let devGridCenterY = player.y
   let devInfiniteHp = false
   let devInfiniteEp = false
   let devInfiniteCooling = false
@@ -1408,9 +1414,9 @@ function startTestMap(): void {
 
   let lastInventoryCueTimeMs = 0
 
-  const playInventoryCue = (path: string): void => {
+  const playInventoryCue = (path: string, forceImmediate = false): void => {
     const nowMs = performance.now()
-    if ((nowMs - lastInventoryCueTimeMs) < 120) {
+    if (!forceImmediate && (nowMs - lastInventoryCueTimeMs) < 120) {
       return
     } // end if inventory cue cooldown active
     lastInventoryCueTimeMs = nowMs
@@ -1443,14 +1449,31 @@ function startTestMap(): void {
     return INVENTORY_AUDIO_CUE_PATHS.metallic
   } // end function resolveInventoryItemCuePath
 
-  const announceInventoryInteraction = (message: string, options?: { cuePath?: string; speak?: boolean }): void => {
+  const resolveInventoryItemName = (itemId: string): string => {
+    return defaultItemDatabase.getById(itemId)?.name ?? itemId
+  } // end function resolveInventoryItemName
+
+  const formatStacksForPickupSpeech = (stacks: readonly InventoryStack[]): string => {
+    return stacks
+      .filter((stack) => stack.quantity > 0)
+      .map((stack) => `${resolveInventoryItemName(stack.itemId)} ${stack.quantity}`)
+      .join(', ')
+  } // end function formatStacksForPickupSpeech
+
+  const announceInventoryInteraction = (
+    message: string,
+    options?: { cuePath?: string | readonly string[]; forceCue?: boolean; speak?: boolean }
+  ): void => {
     const shouldSpeak = options?.speak ?? true
     if (runtimeDebugSpeechStatusElement instanceof HTMLElement) {
       runtimeDebugSpeechStatusElement.textContent = message
     } // end if runtime speech status element exists
-    if (options?.cuePath) {
-      playInventoryCue(options.cuePath)
-    } // end if inventory cue path exists
+    const cuePaths = Array.isArray(options?.cuePath)
+      ? options.cuePath
+      : (options?.cuePath ? [options.cuePath] : [])
+    for (const cuePath of cuePaths) {
+      playInventoryCue(cuePath, options?.forceCue ?? false)
+    } // end for each inventory cue path
     if (shouldSpeak) {
       speakSystemAnnouncement(message)
     }
@@ -5555,6 +5578,18 @@ function startTestMap(): void {
       examples: ['pickup.scan']
     },
     {
+      syntax: 'grid on|off [coverageMeters]',
+      description: 'Toggle a static world-space 1m debug grid overlay centered at the player when enabled.',
+      helpPath: ['Debug', 'Rendering'],
+      examples: ['grid on', 'grid on 53', 'grid off']
+    },
+    {
+      syntax: 'center grid',
+      description: 'Re-center and rebuild the debug grid at the player using current coverage.',
+      helpPath: ['Debug', 'Rendering'],
+      examples: ['center grid']
+    },
+    {
       syntax: 'pickup.interact',
       description: 'Interact with the nearest manual pickup or container in range.',
       helpPath: ['Inventory', 'Pickup'],
@@ -6076,6 +6111,20 @@ function startTestMap(): void {
       : 'PAUSE MENU HELD | ENTER: RUN | TAB: COMPLETE | ESC OR `: RETURN')
   } // end function openDeveloperConsole
 
+  const centerDebugGridAtPlayer = (requestedCoverageMeters?: number): { coverage: number; centerX: number; centerY: number } => {
+    const coverage = Math.max(1, Math.round(requestedCoverageMeters ?? devGridCoverageMeters ?? DEBUG_GRID_DEFAULT_COVERAGE_METERS))
+    devGridCoverageMeters = coverage
+    devGridCenterX = player.x
+    devGridCenterY = player.y
+    threeRenderer.setDebugGrid(devGridCenterX, devGridCenterY, devGridCoverageMeters)
+    devGridEnabled = true
+    return {
+      coverage: devGridCoverageMeters,
+      centerX: devGridCenterX,
+      centerY: devGridCenterY
+    }
+  } // end function centerDebugGridAtPlayer
+
   const executeDeveloperCommand = async (commandLine: string): Promise<string[]> => {
     const helpSelectionLines = navigateHelpMenuSelection(commandLine)
     if (helpSelectionLines !== null) {
@@ -6132,6 +6181,7 @@ function startTestMap(): void {
         `  physicsDebug: ${devPhysicsDebugEnabled ? 'on' : 'off'}`,
         `  audioDebug: ${devAudioDebugEnabled ? 'on' : 'off'}`,
         `  eventsDebug: ${devEventsDebugEnabled ? 'on' : 'off'}`,
+        `  debugGrid: ${devGridEnabled ? `on (${devGridCoverageMeters}m at ${devGridCenterX.toFixed(2)}, ${devGridCenterY.toFixed(2)})` : 'off'}`,
         `  infiniteHp: ${devInfiniteHp ? 'on' : 'off'}`,
         `  infiniteEp: ${devInfiniteEp ? 'on' : 'off'}`,
         `  infiniteCooling: ${devInfiniteCooling ? 'on' : 'off'}`,
@@ -6193,6 +6243,38 @@ function startTestMap(): void {
     if (normalizedCommand === 'list inventory') {
       return ['inventory:', ...getInventorySummaryLines().map((line) => `  ${line}`)]
     } // end if list inventory command
+
+    if (normalizedCommand === 'center grid') {
+      const centered = centerDebugGridAtPlayer(devGridCoverageMeters)
+      nextEventTag(`Debug grid centered (${centered.coverage}m)`)
+      return [
+        'grid centered.',
+        `coverage = ${centered.coverage}m`,
+        `center = (${centered.centerX.toFixed(2)}, ${centered.centerY.toFixed(2)})`
+      ]
+    } // end if center grid command
+
+    if (normalizedCommand === 'grid off') {
+      threeRenderer.clearDebugGrid()
+      devGridEnabled = false
+      nextEventTag('Debug grid disabled')
+      return ['grid off.']
+    } // end if grid off command
+
+    if (normalizedCommand === 'grid on' || normalizedCommand.startsWith('grid on ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      let requestedCoverage = devGridCoverageMeters
+      if (rawArgs.length >= 3) {
+        requestedCoverage = parseFiniteNumber(rawArgs[2] ?? '', 'grid coverage')
+      }
+      const centered = centerDebugGridAtPlayer(requestedCoverage)
+      nextEventTag(`Debug grid enabled (${centered.coverage}m)`)
+      return [
+        'grid on.',
+        `coverage = ${centered.coverage}m`,
+        `center = (${centered.centerX.toFixed(2)}, ${centered.centerY.toFixed(2)})`
+      ]
+    } // end if grid on command
 
     if (normalizedCommand.startsWith('target.layout ')) {
       const requestedLayoutId = commandLine.trim().split(/\s+/)[1] as TargetLayoutId | undefined
@@ -6579,10 +6661,19 @@ function startTestMap(): void {
         return ['pickup.interact: no interactable pickup in range.']
       } // end if no interaction target
       nextEventTag(`Pickup interaction ${result.sourceType}:${result.sourceId}`)
-      announceInventoryInteraction(`Pickup interaction complete for ${result.sourceType}.`, {
-        cuePath: result.sourceType === 'loose' ? INVENTORY_AUDIO_CUE_PATHS.metallic : INVENTORY_AUDIO_CUE_PATHS.industrial,
-        speak: true
-      })
+      if (result.sourceType === 'loose' && result.collected.length > 0) {
+        const pickupSpeech = formatStacksForPickupSpeech(result.collected)
+        announceInventoryInteraction(pickupSpeech || 'Pickup complete.', {
+          cuePath: result.collected.map((stack) => resolveInventoryItemCuePath(stack.itemId)),
+          forceCue: true,
+          speak: true
+        })
+      } else {
+        announceInventoryInteraction(`Pickup interaction complete for ${result.sourceType}.`, {
+          cuePath: INVENTORY_AUDIO_CUE_PATHS.industrial,
+          speak: true
+        })
+      }
       return [
         `pickup.interact ok: ${result.sourceType}:${result.sourceId}`,
         `collected = ${result.collected.length}`,
@@ -8073,13 +8164,12 @@ function startTestMap(): void {
     if (pickupUpdate.autoCollected.length > 0) {
       const totalCollected = pickupUpdate.autoCollected.reduce((sum, stack) => sum + stack.quantity, 0)
       nextEventTag(`Auto pickup collected ${totalCollected} item(s)`)
-      const firstCollected = pickupUpdate.autoCollected[0]
-      if (firstCollected) {
-        announceInventoryInteraction(`Auto pickup collected ${totalCollected} item${totalCollected === 1 ? '' : 's'}.`, {
-          cuePath: resolveInventoryItemCuePath(firstCollected.itemId),
-          speak: false
-        })
-      }
+      const pickupSpeech = formatStacksForPickupSpeech(pickupUpdate.autoCollected)
+      announceInventoryInteraction(pickupSpeech || `Auto pickup collected ${totalCollected} item${totalCollected === 1 ? '' : 's'}.`, {
+        cuePath: pickupUpdate.autoCollected.map((stack) => resolveInventoryItemCuePath(stack.itemId)),
+        forceCue: true,
+        speak: true
+      })
     } // end if any auto pickup stacks were collected this frame
 
     worldItemCleanupCooldownSeconds -= deltaSeconds
