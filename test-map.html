@@ -428,6 +428,24 @@
     .pause-inventory-panel {
       text-align: left;
     }
+    .pause-inventory-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .pause-container-caption {
+      color: #d5f8ff;
+      font-size: 12px;
+      letter-spacing: 0.6px;
+    }
+    .pause-inventory-inline-actions {
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+    }
     .pause-inventory-category-tabs {
       display: flex;
       gap: 8px;
@@ -1143,6 +1161,13 @@
         <div class="pause-debug-hint">Live tuning applies instantly while paused and after resuming.</div>
       </section>
       <section id="pauseDebugInventoryPanel" class="pause-debug-tab-panel pause-inventory-panel" role="tabpanel" aria-label="Inventory">
+        <div class="pause-inventory-toolbar" hidden aria-hidden="true">
+          <div id="pauseContainerContextLabel" class="pause-container-caption" hidden>Container</div>
+          <div id="pauseContainerActions" class="pause-inventory-inline-actions" hidden>
+            <button id="pauseContainerTakeAllButton" class="pause-inventory-action-button" type="button">Take All</button>
+            <button id="pauseContainerCloseButton" class="pause-inventory-action-button" type="button">Close Container</button>
+          </div>
+        </div>
         <div id="pauseInventoryCategoryTabs" class="pause-inventory-category-tabs" role="tablist" aria-label="Inventory categories"></div>
         <div id="pauseInventoryCardList" class="pause-inventory-card-list" aria-live="off"></div>
         <div id="pauseInventorySummary" class="pause-inventory-summary">Inventory loading...</div>

@@ -151,6 +151,7 @@ interface KnownPoi {
 } // end interface KnownPoi
 
 type PauseDebugTabId = 'runtime' | 'events' | 'tuning' | 'inventory' | 'loadout' | 'controls'
+type PauseOverlayMode = 'pause' | 'container-transfer'
 type HeatState = 'NORMAL' | 'HOT' | 'CRITICAL' | 'DANGER' | 'OVERHEAT'
 
 const EMERGENCY_COOLING_ENGAGE_RATIO = 0.95
@@ -159,6 +160,8 @@ const MELEE_DASH_DURATION_SECONDS = 0.34
 const MELEE_DASH_MIN_SPEED = 2.2
 const MELEE_DASH_DISTANCE_MULTIPLIER = 2
 const MELEE_DASH_SOUND_PATH = 'assets/sounds/dash.ogg'
+const CONTAINER_OPEN_SOUND_PATH = 'assets/sounds/inventory/futuristicChestOpen.ogg'
+const CONTAINER_INTERACT_MAX_DISTANCE_METERS = 3
 
 interface ActiveMeleeDashState {
   remainingSeconds: number
@@ -357,7 +360,7 @@ function startTestMap(): void {
     inventory: cargoInventory,
     itemDatabase: defaultItemDatabase,
     lootGenerator,
-    interactionKeyLabel: 'E'
+    interactionKeyLabel: 'Enter'
   })
   const worldItemPersistence = createWorldItemPersistenceManager({
     pickupSystem,
@@ -418,6 +421,10 @@ function startTestMap(): void {
   const pauseDebugRuntimeContentElement = document.getElementById('pauseDebugRuntimeContent')
   const pauseDebugEventsContentElement = document.getElementById('pauseDebugEventsContent')
   const pauseInventoryCategoryTabsElement = document.getElementById('pauseInventoryCategoryTabs')
+  const pauseContainerContextLabelElement = document.getElementById('pauseContainerContextLabel')
+  const pauseContainerActionsElement = document.getElementById('pauseContainerActions')
+  const pauseContainerTakeAllButtonElement = document.getElementById('pauseContainerTakeAllButton')
+  const pauseContainerCloseButtonElement = document.getElementById('pauseContainerCloseButton')
   const pauseInventoryCardListElement = document.getElementById('pauseInventoryCardList')
   const pauseInventorySummaryElement = document.getElementById('pauseInventorySummary')
   const pauseInventoryActionStatusElement = document.getElementById('pauseInventoryActionStatus')
@@ -721,9 +728,13 @@ function startTestMap(): void {
   let devEnemyCount = 0
   let devProjectileCount = 0
   let isRuntimeDebugOverlayVisible = false
+  let pauseOverlayMode: PauseOverlayMode = 'pause'
   let pauseDebugActiveTab: PauseDebugTabId = 'runtime'
   let pauseInventoryActiveCategory: ItemCategory = 'supplies'
   let pauseInventoryActionStatus = 'Inventory ready.'
+  let pauseContainerInventoryActiveCategory: ItemCategory = 'supplies'
+  let pauseContainerTransferStatus = 'Container ready.'
+  let activeContainerTransferId: string | null = null
   let pauseLoadoutActiveView: LoadoutViewId = 'Head'
   let garageView: GarageViewController | null = null
   let devHeatMultiplier = 1
@@ -1803,6 +1814,115 @@ function startTestMap(): void {
     } // end if speech synthesis available
   } // end function equipWeaponSlot
 
+  const getActiveContainerTransferName = (): string => {
+    if (!activeContainerTransferId) {
+      return 'Container'
+    } // end if no container transfer selection
+    const container = pickupSystem.getContainer(activeContainerTransferId)
+    return container?.name ?? 'Container'
+  } // end function getActiveContainerTransferName
+
+  // IDs of pause panel elements that should be hidden (visually + AT) in container-transfer mode
+  const PAUSE_NON_CONTAINER_IDS = [
+    'pauseMenuTitle',
+    'pauseDebugTabRuntimeButton',
+    'pauseDebugTabEventsButton',
+    'pauseDebugTabTuningButton',
+    'pauseDebugTabInventoryButton',
+    'pauseDebugTabLoadoutButton',
+    'pauseDebugTabControlsButton',
+    'pauseDebugRuntimePanel',
+    'pauseDebugEventsPanel',
+    'pauseDebugTuningPanel',
+    'pauseDebugLoadoutPanel',
+    'pauseDebugControlsPanel',
+    'pauseResumeButton',
+    'pauseExitButton'
+  ] as const
+
+  const updatePauseOverlayContextUi = (): void => {
+    const containerMode = pauseOverlayMode === 'container-transfer'
+    const containerName = getActiveContainerTransferName()
+
+    // Hide the entire toolbar wrapper (and all its children) in pause mode so
+    // screen readers never perceive the container UI while the pause menu is active.
+    const pauseInventoryToolbarElement = pauseContainerContextLabelElement instanceof HTMLElement
+      ? pauseContainerContextLabelElement.closest<HTMLElement>('.pause-inventory-toolbar')
+      : null
+    if (pauseInventoryToolbarElement instanceof HTMLElement) {
+      pauseInventoryToolbarElement.hidden = !containerMode
+      pauseInventoryToolbarElement.setAttribute('aria-hidden', containerMode ? 'false' : 'true')
+    } // end if toolbar wrapper exists
+
+    if (pauseContainerContextLabelElement instanceof HTMLElement) {
+      pauseContainerContextLabelElement.hidden = !containerMode
+      pauseContainerContextLabelElement.textContent = containerMode
+        ? `${containerName} Transfer`
+        : ''
+    }
+
+    if (pauseContainerActionsElement instanceof HTMLElement) {
+      pauseContainerActionsElement.hidden = !containerMode
+    }
+
+    if (pauseContainerCloseButtonElement instanceof HTMLButtonElement) {
+      pauseContainerCloseButtonElement.textContent = `Close ${containerName}`
+    }
+
+    // Hide / show all non-container pause elements both visually and from the AT
+    for (const id of PAUSE_NON_CONTAINER_IDS) {
+      const el = document.getElementById(id)
+      if (!(el instanceof HTMLElement)) {
+        continue
+      } // end if element not found
+      if (containerMode) {
+        el.setAttribute('data-container-hidden', 'true')
+        el.setAttribute('aria-hidden', 'true')
+        el.style.display = 'none'
+      } else {
+        if (el.getAttribute('data-container-hidden') === 'true') {
+          el.removeAttribute('data-container-hidden')
+          el.removeAttribute('aria-hidden')
+          el.style.display = ''
+        }
+      } // end if container mode toggling visibility
+    } // end for each non-container pause element
+
+    // Also hide the tab-button row wrapper so the whole tablist disappears
+    const tabButtonsWrapper = document.querySelector<HTMLElement>('.pause-debug-tab-buttons')
+    if (tabButtonsWrapper instanceof HTMLElement) {
+      if (containerMode) {
+        tabButtonsWrapper.setAttribute('data-container-hidden', 'true')
+        tabButtonsWrapper.setAttribute('aria-hidden', 'true')
+        tabButtonsWrapper.style.display = 'none'
+      } else {
+        if (tabButtonsWrapper.getAttribute('data-container-hidden') === 'true') {
+          tabButtonsWrapper.removeAttribute('data-container-hidden')
+          tabButtonsWrapper.removeAttribute('aria-hidden')
+          tabButtonsWrapper.style.display = ''
+        }
+      } // end if container mode toggling tab buttons wrapper
+    } // end if tab buttons wrapper exists
+
+    // Make sure the inventory panel itself is always visible in container mode
+    if (pauseDebugInventoryPanelElement instanceof HTMLElement) {
+      if (containerMode) {
+        pauseDebugInventoryPanelElement.classList.add('active')
+        pauseDebugInventoryPanelElement.style.display = ''
+        pauseDebugInventoryPanelElement.removeAttribute('aria-hidden')
+      }
+    } // end if inventory panel exists
+
+    // Update the pause panel aria-label so screen readers announce the right context
+    const pausePanelDialog = document.getElementById('pausePanelDialog')
+    if (pausePanelDialog instanceof HTMLElement) {
+      pausePanelDialog.setAttribute('aria-label', containerMode
+        ? `${containerName} Transfer`
+        : 'Pause menu overlay'
+      )
+    } // end if pause panel dialog exists
+  } // end function updatePauseOverlayContextUi
+
   const setPauseOverlayVisible = (visible: boolean): void => {
     if (!(pauseOverlayElement instanceof HTMLDivElement)) {
       return
@@ -1839,7 +1959,11 @@ function startTestMap(): void {
     pauseOverlayElement.setAttribute('aria-hidden', visible ? 'false' : 'true')
     setGameplayAccessibilityMode(!visible)
     if (visible) {
+      updatePauseOverlayContextUi()
       updatePauseDebugTabs()
+      if (pauseDebugActiveTab === 'inventory') {
+        renderPauseInventoryTab()
+      }
       if (pauseDebugActiveTab === 'loadout') {
         renderPauseLoadoutTab()
       }
@@ -2296,37 +2420,101 @@ function startTestMap(): void {
       return
     }
 
+    const containerTransferMode = pauseOverlayMode === 'container-transfer'
     const categories: ItemCategory[] = ['supplies', 'resources', 'parts']
     const categoryLabels: Record<ItemCategory, string> = {
       supplies: 'Supplies',
       resources: 'Resources',
       parts: 'Parts'
     }
+
+    const activeCategory = containerTransferMode
+      ? pauseContainerInventoryActiveCategory
+      : pauseInventoryActiveCategory
+
     pauseInventoryCategoryTabsElement.replaceChildren()
     for (const category of categories) {
       const categoryButton = document.createElement('button')
       categoryButton.type = 'button'
       categoryButton.className = 'pause-inventory-category-button'
       categoryButton.role = 'tab'
-      categoryButton.setAttribute('aria-selected', pauseInventoryActiveCategory === category ? 'true' : 'false')
+      categoryButton.setAttribute('aria-selected', activeCategory === category ? 'true' : 'false')
       categoryButton.textContent = categoryLabels[category]
       categoryButton.addEventListener('click', () => {
-        pauseInventoryActiveCategory = category
+        if (containerTransferMode) {
+          pauseContainerInventoryActiveCategory = category
+        } else {
+          pauseInventoryActiveCategory = category
+        }
         renderPauseInventoryTab()
       })
       pauseInventoryCategoryTabsElement.append(categoryButton)
     } // end for each inventory category
 
-    const stacks = cargoInventory.getItemsByCategory(pauseInventoryActiveCategory)
-      .map((stack) => ({ stack, definition: defaultItemDatabase.getById(stack.itemId) }))
-      .filter((entry): entry is { stack: { itemId: string; quantity: number }; definition: NonNullable<ReturnType<typeof defaultItemDatabase.getById>> } => entry.definition !== null)
-      .sort((left, right) => left.definition.name.localeCompare(right.definition.name))
+    if (containerTransferMode && pauseContainerTakeAllButtonElement instanceof HTMLButtonElement) {
+      pauseContainerTakeAllButtonElement.onclick = () => {
+        if (!activeContainerTransferId) {
+          return
+        }
+        const result = pickupSystem.lootContainerAll(activeContainerTransferId)
+        if (!result) {
+          pauseContainerTransferStatus = 'Container is no longer available.'
+          activeContainerTransferId = null
+          void resumeGame()
+          return
+        }
+        const totalTaken = result.collected.reduce((total, stack) => total + stack.quantity, 0)
+        if (totalTaken <= 0) {
+          pauseContainerTransferStatus = 'Container is already empty.'
+          renderPauseInventoryTab()
+          updatePauseDebugTabs()
+          return
+        }
+
+        pauseContainerTransferStatus = `Took all: ${totalTaken} item${totalTaken === 1 ? '' : 's'}.`
+        nextEventTag(`Container transfer take-all ${result.containerId}: ${totalTaken} item(s)`)
+        announceInventoryInteraction(pauseContainerTransferStatus, {
+          cuePath: result.collected.map((stack) => resolveInventoryItemCuePath(stack.itemId)),
+          speak: true
+        })
+
+        if (result.removed) {
+          activeContainerTransferId = null
+          void resumeGame()
+          return
+        }
+
+        renderPauseInventoryTab()
+        updatePauseDebugTabs()
+      }
+    }
+
+    const stacks = containerTransferMode
+      ? (() => {
+          const container = activeContainerTransferId ? pickupSystem.getContainer(activeContainerTransferId) : null
+          if (!container) {
+            return [] as Array<{ stack: { itemId: string; quantity: number }; definition: NonNullable<ReturnType<typeof defaultItemDatabase.getById>> }>
+          }
+          return container.items
+            .filter((stack) => stack.quantity > 0)
+            .map((stack) => ({ stack, definition: defaultItemDatabase.getById(stack.itemId) }))
+            .filter((entry): entry is { stack: { itemId: string; quantity: number }; definition: NonNullable<ReturnType<typeof defaultItemDatabase.getById>> } => {
+              return entry.definition !== null && entry.definition.category === activeCategory
+            })
+            .sort((left, right) => left.definition.name.localeCompare(right.definition.name))
+        })()
+      : cargoInventory.getItemsByCategory(activeCategory)
+          .map((stack) => ({ stack, definition: defaultItemDatabase.getById(stack.itemId) }))
+          .filter((entry): entry is { stack: { itemId: string; quantity: number }; definition: NonNullable<ReturnType<typeof defaultItemDatabase.getById>> } => entry.definition !== null)
+          .sort((left, right) => left.definition.name.localeCompare(right.definition.name))
 
     pauseInventoryCardListElement.replaceChildren()
     if (stacks.length <= 0) {
       const emptyRow = document.createElement('div')
       emptyRow.className = 'pause-inventory-card'
-      emptyRow.textContent = 'No items in this category.'
+      emptyRow.textContent = containerTransferMode
+        ? 'No container items in this category.'
+        : 'No items in this category.'
       pauseInventoryCardListElement.append(emptyRow)
     } else {
       for (const entry of stacks) {
@@ -2350,7 +2538,11 @@ function startTestMap(): void {
         const actions = document.createElement('div')
         actions.className = 'pause-inventory-card-actions'
 
-        for (const actionLabel of getInventoryCardActionLabels(pauseInventoryActiveCategory)) {
+        const actionLabels = containerTransferMode
+          ? ['Take']
+          : getInventoryCardActionLabels(activeCategory)
+
+        for (const actionLabel of actionLabels) {
           const actionButton = document.createElement('button')
           actionButton.type = 'button'
           actionButton.className = 'pause-inventory-action-button'
@@ -2363,13 +2555,42 @@ function startTestMap(): void {
               itemId: entry.stack.itemId,
               actionLabel
             }
-            if (actionLabel === 'Use') {
+
+            if (containerTransferMode) {
+              if (!activeContainerTransferId) {
+                pauseContainerTransferStatus = 'Container is no longer available.'
+                void resumeGame()
+                return
+              }
+              const result = pickupSystem.lootContainerItem(activeContainerTransferId, entry.stack.itemId, 1)
+              if (!result || result.collected.length <= 0) {
+                pauseContainerTransferStatus = `${entry.definition.name} is no longer in the container.`
+                renderPauseInventoryTab()
+                updatePauseDebugTabs()
+                return
+              }
+
+              const movedQuantity = result.collected.reduce((total, stack) => total + stack.quantity, 0)
+              pauseContainerTransferStatus = `Took ${entry.definition.name} x${movedQuantity}.`
+              nextEventTag(`Container transfer take ${entry.definition.name} x${movedQuantity}`)
+              announceInventoryInteraction(pauseContainerTransferStatus, {
+                cuePath: resolveInventoryItemCuePath(entry.stack.itemId),
+                speak: true
+              })
+
+              if (result.removed) {
+                activeContainerTransferId = null
+                void resumeGame()
+                return
+              }
+            } else if (actionLabel === 'Use') {
               useInventoryItem(entry.stack.itemId)
             } else if (actionLabel === 'Drop') {
               dropInventoryItem(entry.stack.itemId)
             } else if (actionLabel === 'Equip') {
               equipInventoryPart(entry.stack.itemId)
             }
+
             renderPauseInventoryTab()
             updatePauseDebugTabs()
           })
@@ -2394,11 +2615,24 @@ function startTestMap(): void {
     }
 
     if (pauseInventorySummaryElement instanceof HTMLElement) {
-      pauseInventorySummaryElement.textContent = `Category ${pauseInventoryActiveCategory}. ${stacks.length} stacks. Cargo weight ${cargoInventory.getCargoWeight().toFixed(2)} kg.`
+      if (containerTransferMode) {
+        const container = activeContainerTransferId ? pickupSystem.getContainer(activeContainerTransferId) : null
+        const totalStacks = container?.items.length ?? 0
+        pauseInventorySummaryElement.textContent = container
+          ? `${container.name}: ${totalStacks} stacks remaining. Category ${activeCategory}.`
+          : 'Container no longer exists.'
+      } else {
+        pauseInventorySummaryElement.textContent = `Category ${activeCategory}. ${stacks.length} stacks. Cargo weight ${cargoInventory.getCargoWeight().toFixed(2)} kg.`
+      }
     }
+
     if (pauseInventoryActionStatusElement instanceof HTMLElement) {
-      pauseInventoryActionStatusElement.textContent = pauseInventoryActionStatus
+      pauseInventoryActionStatusElement.textContent = containerTransferMode
+        ? pauseContainerTransferStatus
+        : pauseInventoryActionStatus
     }
+
+    updatePauseOverlayContextUi()
   } // end function renderPauseInventoryTab
 
   const updatePauseControlsStatus = (): void => {
@@ -2970,6 +3204,70 @@ function startTestMap(): void {
     } // end if resume button exists
   } // end function closeEnemyEditorModal
 
+  const getNearestEnterInteractContainer = (): ReturnType<typeof pickupSystem.listContainers>[number] | null => {
+    const containers = pickupSystem.listContainers()
+    const facingX = Math.cos(player.angle)
+    const facingY = Math.sin(player.angle)
+    let nearest: ReturnType<typeof pickupSystem.listContainers>[number] | null = null
+    let nearestDistSq = Number.POSITIVE_INFINITY
+
+    for (const container of containers) {
+      if (container.items.length <= 0) {
+        continue
+      } // end if container has no loot
+
+      const dx = container.position.x - player.x
+      const dy = container.position.y - player.y
+      const dz = (container.position.z ?? 0) - (player.z ?? 0)
+      const distSq = (dx * dx) + (dy * dy) + (dz * dz)
+      if (distSq > (CONTAINER_INTERACT_MAX_DISTANCE_METERS * CONTAINER_INTERACT_MAX_DISTANCE_METERS)) {
+        continue
+      } // end if outside interact range
+
+      const dotForward = (dx * facingX) + (dy * facingY)
+      if (dotForward < 0) {
+        continue
+      } // end if outside player's front 180 degrees
+
+      if (distSq < nearestDistSq) {
+        nearest = container
+        nearestDistSq = distSq
+      }
+    } // end for each container in world
+
+    return nearest
+  } // end function getNearestEnterInteractContainer
+
+  const openContainerTransferOverlay = async (containerId: string): Promise<void> => {
+    const container = pickupSystem.getContainer(containerId)
+    if (!container || container.items.length <= 0) {
+      return
+    }
+
+    await audio.ensureAudio()
+    audio.fireGunshot(CONTAINER_OPEN_SOUND_PATH)
+
+    pauseOverlayMode = 'container-transfer'
+    activeContainerTransferId = container.id
+    pauseContainerInventoryActiveCategory = 'supplies'
+    pauseContainerTransferStatus = `${container.name} opened.`
+
+    await enterPausedState(true)
+    setPauseDebugActiveTab('inventory')
+    updatePauseOverlayContextUi()
+    renderPauseInventoryTab()
+    updatePauseDebugTabs()
+  } // end function openContainerTransferOverlay
+
+  const closeContainerTransferOverlay = async (): Promise<void> => {
+    if (pauseOverlayMode !== 'container-transfer') {
+      return
+    }
+    pauseOverlayMode = 'pause'
+    activeContainerTransferId = null
+    await resumeGame()
+  } // end function closeContainerTransferOverlay
+
   const enterPausedState = async (showPauseOverlay: boolean): Promise<void> => {
     if (isNavigationMenuOpen) {
       closeNavigationMenu()
@@ -2991,6 +3289,8 @@ function startTestMap(): void {
   } // end function enterPausedState
 
   const pauseGame = async (): Promise<void> => {
+    pauseOverlayMode = 'pause'
+    activeContainerTransferId = null
     await enterPausedState(true)
   } // end function pauseGame
 
@@ -3007,6 +3307,8 @@ function startTestMap(): void {
     const pendingSpawnConfig = queuedEnemySpawn
     queuedEnemySpawn = null
 
+    pauseOverlayMode = 'pause'
+    activeContainerTransferId = null
     setPauseOverlayVisible(false)
     await audio.resumeAllAudio()
     audio.playPauseCloseChirp()
@@ -3244,6 +3546,32 @@ function startTestMap(): void {
       return
     } // end if typing in editable field
 
+    if (event.repeat || isConsoleOpen || isEditorModalOpen || isWeaponEditorOpen || isNavigationMenuOpen || isWorldMapVisible) {
+      return
+    } // end if another overlay owns Enter input
+
+    if (event.code !== 'Enter' && event.code !== 'NumpadEnter') {
+      return
+    } // end if not container interaction key
+
+    if (isPaused) {
+      return
+    } // end if pause overlay already owns keyboard focus
+
+    const interactableContainer = getNearestEnterInteractContainer()
+    if (!interactableContainer) {
+      return
+    } // end if no container can be opened
+
+    event.preventDefault()
+    void openContainerTransferOverlay(interactableContainer.id)
+  })
+
+  document.addEventListener('keydown', (event) => {
+    if (isTypingContextActive(event)) {
+      return
+    } // end if typing in editable field
+
     if (event.code !== 'Escape' || event.repeat || isWorldMapVisible) {
       return
     } // end if not pause toggle key
@@ -3328,6 +3656,12 @@ function startTestMap(): void {
       void resumeGame()
     })
   } // end if resume button exists
+
+  if (pauseContainerCloseButtonElement instanceof HTMLButtonElement) {
+    pauseContainerCloseButtonElement.addEventListener('click', () => {
+      void closeContainerTransferOverlay()
+    })
+  }
 
   if (exitButtonElement instanceof HTMLButtonElement) {
     exitButtonElement.addEventListener('click', () => {
