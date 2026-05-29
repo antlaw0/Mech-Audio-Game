@@ -5114,7 +5114,50 @@ export function createAudioController(): AudioController {
     playNegativeActionTone,
     playExplosion,
     playCardinalHeadingCueForFacing: (playerAngle: number) => playCardinalHeadingCue(playerAngle),
-    prewarmEnemyAudioAssets
+    prewarmEnemyAudioAssets,
+    /**
+     * Create a 3D positional audio beacon for a world pickup.
+     * The returned handle's `ping()` plays the sound once at the set position.
+     * Call `dispose()` when the pickup is removed from the world.
+     */
+    createPickupBeacon(soundPath: string, minDist: number, maxDist: number): {
+      setPosition(x: number, y: number, z: number): void
+      ping(): void
+      dispose(): void
+    } {
+      const emitter = createWorldEmitter(Math.max(0.5, minDist), Math.max(1, maxDist))
+      const player = new Tone.Player(soundPath)
+      // Route Tone.Player output into the spatial emitter
+      player.connect(emitter.input)
+
+      return {
+        setPosition(x: number, y: number, z: number): void {
+          emitter.setPosition(x, y, z)
+        },
+        ping(): void {
+          if (!audioStarted) {
+            return
+          } // end if audio not yet unlocked
+          try {
+            emitter.play()
+            player.start()
+          } catch {
+            // Ignore errors if audio context is suspended or sound not yet loaded
+          }
+        },
+        dispose(): void {
+          try {
+            player.stop()
+            player.disconnect()
+            player.dispose()
+          } catch {
+            // Ignore teardown errors
+          }
+          emitter.stop()
+          emitter.dispose()
+        }
+      } // end object beacon handle
+    } // end createPickupBeacon
   } // end object audio controller
 } // end function createAudioController
 

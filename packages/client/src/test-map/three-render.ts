@@ -57,6 +57,10 @@ interface ThreeRenderSystem {
     tracerPoolCapacity: number
     impactPoolCapacity: number
   }
+  /** Add a pickup or container mesh to the world scene. The object's position must already be set. */
+  addPickupMesh: (id: string, object: THREE.Object3D) => void
+  /** Remove and dispose the pickup mesh for the given id (no-op if not found). */
+  removePickupMesh: (id: string) => void
   dispose: () => void
 } // end interface ThreeRenderSystem
 
@@ -471,6 +475,11 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
     rock.position.set(sprite.x, Math.max(0.15, sprite.radius * 0.55), sprite.y)
     chunkGroup.add(rock)
   } // end for each sprite
+
+  // Pickup and container world objects — managed externally via addPickupMesh/removePickupMesh
+  const pickupGroup = new THREE.Group()
+  scene.add(pickupGroup)
+  const pickupMeshes = new Map<string, THREE.Object3D>()
 
   const enemyGroup = new THREE.Group()
   scene.add(enemyGroup)
@@ -932,6 +941,28 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
         lockOnWindowWidthPercent,
         lockOnWindowHeightPercent
       )
+    },
+    addPickupMesh(id: string, object: THREE.Object3D): void {
+      if (pickupMeshes.has(id)) {
+        return
+      } // end if already registered
+      pickupMeshes.set(id, object)
+      pickupGroup.add(object)
+    },
+    removePickupMesh(id: string): void {
+      const obj = pickupMeshes.get(id)
+      if (!obj) {
+        return
+      } // end if not found
+      pickupGroup.remove(obj)
+      obj.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose()
+          const mats = Array.isArray(child.material) ? child.material : [child.material]
+          for (const mat of mats) mat.dispose()
+        }
+      })
+      pickupMeshes.delete(id)
     },
     dispose(): void {
       renderer.dispose()

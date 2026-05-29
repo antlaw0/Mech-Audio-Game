@@ -546,4 +546,14 @@ export interface AudioController {
     voicePriorityDrops: number
     materialHitCounts: Record<SurfaceMaterial, number>
   }
+  /** Create a 3D positional audio beacon for a world pickup object. */
+  createPickupBeacon(
+    soundPath: string,
+    minDist: number,
+    maxDist: number
+  ): {
+    setPosition(x: number, y: number, z: number): void
+    ping(): void
+    dispose(): void
+  }
 } // end interface AudioController

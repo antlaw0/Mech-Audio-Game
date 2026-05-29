@@ -86,6 +86,7 @@ import { defaultItemDatabase } from '../systems/inventory/itemDatabase.js'
 import { DEFAULT_LOOT_TABLES } from '../data/lootTables/definitions.js'
 import { createLootGenerator } from '../systems/loot/lootGenerator.js'
 import { createPickupSystem } from '../systems/pickup/pickupSystem.js'
+import { createPickupWorldSystem } from '../systems/pickup/pickupWorldSystem.js'
 import { createWorldItemPersistenceManager } from '../systems/persistence/worldItemPersistence.js'
 import {
   DEFAULT_OVERENCUMBRANCE_THRESHOLDS,
@@ -436,6 +437,7 @@ function startTestMap(): void {
   const pauseTuneMeleeDashSpeedInput = getInput('pauseTuneMeleeDashSpeed')
   const pauseTuneAudioPitchScalingInput = getInput('pauseTuneAudioPitchScaling')
   const pauseTuneAudioVolumeScalingInput = getInput('pauseTuneAudioVolumeScaling')
+  const pauseTunePickupBeaconRangeInput = getInput('pauseTunePickupBeaconRange')
   const resumeButtonElement = document.getElementById('pauseResumeButton')
   const exitButtonElement = document.getElementById('pauseExitButton')
   const devConsoleOverlayElement = document.getElementById('devConsoleOverlay')
@@ -563,6 +565,24 @@ function startTestMap(): void {
   const updateState = createUpdateState()
   const audio = createAudioController()
   audio.prewarmEnemyAudioAssets()
+
+  // Create the pickup world system — manages 3D meshes and audio beacons for
+  // all loose pickups and containers in the world.
+  const pickupWorldSystem = createPickupWorldSystem({
+    addMesh: (id, obj) => threeRenderer.addPickupMesh(id, obj),
+    removeMesh: (id) => threeRenderer.removePickupMesh(id),
+    beaconFactory: (soundPath, minDist, maxDist) =>
+      audio.createPickupBeacon(soundPath, minDist, maxDist),
+    itemDatabase: defaultItemDatabase,
+    audioCuePaths: {
+      metallic: 'assets/sounds/inventory/ammoPickup.ogg',
+      electrical: 'assets/sounds/inventory/energycellpickup.ogg',
+      heavyThunk: 'assets/sounds/inventory/rocketPickup.ogg',
+      rareResonant: 'assets/sounds/inventory/rarePickup.ogg',
+      industrial: 'assets/sounds/inventory/containerPickup.ogg',
+      equip: 'assets/sounds/inventory/partPickup.ogg'
+    }
+  })
 
   let isPaused = false
   let isConsoleOpen = false
@@ -716,6 +736,7 @@ function startTestMap(): void {
   let devMeleeDashSpeedMultiplier = 3
   let devAudioPitchScale = 1
   let devAudioVolumeScale = 1
+  let devPickupBeaconMaxDistance = 50
   let devEnergyStarved = false
   let activeMeleeDash: ActiveMeleeDashState | null = null
   let minigunShotAccumulator = 0
@@ -1343,12 +1364,12 @@ function startTestMap(): void {
   } // end function speakSystemAnnouncement
 
   const INVENTORY_AUDIO_CUE_PATHS = {
-    metallic: 'assets/sounds/weapons/reload/reload.ogg',
-    electrical: 'assets/sounds/energy.ogg',
-    heavyThunk: 'assets/sounds/weapons/equip/rocketEquip.ogg',
-    rareResonant: 'assets/sounds/weapons/equip/plasmaCannonEquip.ogg',
-    industrial: 'assets/sounds/weapons/reload/reloadCannon.ogg',
-    equip: 'assets/sounds/weapons/equip/minigunEquip.ogg'
+    metallic: 'assets/sounds/inventory/ammoPickup.ogg',
+    electrical: 'assets/sounds/inventory/energycellpickup.ogg',
+    heavyThunk: 'assets/sounds/inventory/rocketPickup.ogg',
+    rareResonant: 'assets/sounds/inventory/rarePickup.ogg',
+    industrial: 'assets/sounds/inventory/containerPickup.ogg',
+    equip: 'assets/sounds/inventory/partPickup.ogg'
   } as const
 
   let lastInventoryCueTimeMs = 0
@@ -1400,6 +1421,72 @@ function startTestMap(): void {
       speakSystemAnnouncement(message)
     }
   } // end function announceInventoryInteraction
+
+  /**
+   * Parse a spawn coordinate expression that may include player-relative references.
+   * Supports:
+   *   - Plain numbers:          "50"        → 50
+   *   - player.x / player.y / player.z:     → current player value
+   *   - player.x+5 / player.y-10:           → player value ± offset
+   *
+   * @param expr   Raw string token from command args
+   * @param axis   Which player axis this coord corresponds to ("x"|"y"|"z")
+   * @returns      Resolved numeric coordinate, or NaN if unparseable
+   */
+  const parseSpawnCoord = (expr: string, axis: 'x' | 'y' | 'z'): number => {
+    const trimmed = expr.trim().replace(/,+$/, '') // strip trailing comma
+    // Plain number
+    const plain = Number(trimmed)
+    if (Number.isFinite(plain)) {
+      return plain
+    } // end if plain number
+
+    // player.x / player.y / player.z with optional +/- offset
+    const relativePattern = /^player\.(x|y|z)\s*([+-]\s*[\d.]+)?$/i
+    const match = relativePattern.exec(trimmed)
+    if (!match) {
+      return NaN
+    } // end if unrecognized expression
+
+    const playerAxisKey = match[1]?.toLowerCase() as 'x' | 'y' | 'z'
+    const baseValue: number =
+      playerAxisKey === 'x' ? player.x
+      : playerAxisKey === 'y' ? player.y
+      : (player.z ?? 0)
+    const offsetPart = match[2]
+    if (!offsetPart) {
+      return baseValue
+    } // end if no offset
+    const offset = Number(offsetPart.replace(/\s/g, ''))
+    return Number.isFinite(offset) ? baseValue + offset : baseValue
+  } // end function parseSpawnCoord
+
+  /**
+   * Parse optional trailing coordinate arguments from a spawn command.
+   * Expected format (space or comma-separated, merged): "x, y, z" or "x y z"
+   * Returns null if args are absent/invalid (caller falls back to player position).
+   */
+  const parseSpawnCoords = (
+    rawArgs: string[],
+    startIndex: number
+  ): { x: number; y: number; z: number } | null => {
+    // Join remaining args and split by commas or whitespace to get individual tokens
+    const remaining = rawArgs.slice(startIndex).join(' ')
+    if (!remaining.trim()) {
+      return null
+    } // end if no coordinate args
+    const tokens = remaining.split(/[\s,]+/).filter((t) => t.length > 0)
+    if (tokens.length < 3) {
+      return null
+    } // end if not enough coordinate tokens
+    const x = parseSpawnCoord(tokens[0] ?? '', 'x')
+    const y = parseSpawnCoord(tokens[1] ?? '', 'y')
+    const z = parseSpawnCoord(tokens[2] ?? '', 'z')
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+      return null
+    } // end if any coordinate is invalid
+    return { x, y, z: Math.max(0, z) } // always clamp z to ground or above
+  } // end function parseSpawnCoords
 
   const updateEmergencyCoolingState = (): void => {
     const thermalPart = getDevPartState('ThermalRegulator')
@@ -2433,6 +2520,7 @@ function startTestMap(): void {
     devMeleeDashSpeedMultiplier = Math.max(0.5, Math.min(8, readTuningInput(pauseTuneMeleeDashSpeedInput, devMeleeDashSpeedMultiplier)))
     devAudioPitchScale = Math.max(0.5, Math.min(2, readTuningInput(pauseTuneAudioPitchScalingInput, devAudioPitchScale)))
     devAudioVolumeScale = Math.max(0, Math.min(2, readTuningInput(pauseTuneAudioVolumeScalingInput, devAudioVolumeScale)))
+    devPickupBeaconMaxDistance = Math.max(5, Math.min(500, readTuningInput(pauseTunePickupBeaconRangeInput, devPickupBeaconMaxDistance)))
 
     audio.setDebugPitchScale(devAudioPitchScale)
     applyDebugAudioVolumeScale()
@@ -2990,6 +3078,7 @@ function startTestMap(): void {
     if (pauseTuneMeleeDashSpeedInput) pauseTuneMeleeDashSpeedInput.value = devMeleeDashSpeedMultiplier.toFixed(2)
     if (pauseTuneAudioPitchScalingInput) pauseTuneAudioPitchScalingInput.value = devAudioPitchScale.toFixed(2)
     if (pauseTuneAudioVolumeScalingInput) pauseTuneAudioVolumeScalingInput.value = devAudioVolumeScale.toFixed(2)
+    if (pauseTunePickupBeaconRangeInput) pauseTunePickupBeaconRangeInput.value = devPickupBeaconMaxDistance.toFixed(0)
   } // end function syncPauseTuningInputs
 
   const tuningInputs: Array<HTMLInputElement | null> = [
@@ -3002,7 +3091,8 @@ function startTestMap(): void {
     pauseTuneDriftMultiplierInput,
     pauseTuneMeleeDashSpeedInput,
     pauseTuneAudioPitchScalingInput,
-    pauseTuneAudioVolumeScalingInput
+    pauseTuneAudioVolumeScalingInput,
+    pauseTunePickupBeaconRangeInput
   ]
   for (const inputElement of tuningInputs) {
     if (!(inputElement instanceof HTMLInputElement)) {
@@ -6250,19 +6340,17 @@ function startTestMap(): void {
       const quantity = Math.max(0, Math.floor(parseFiniteNumber(rawArgs[3] ?? '', 'pickup.spawn loose quantity')))
       const mode = (rawArgs[4] ?? 'auto').toLowerCase()
       if (!itemId || quantity <= 0) {
-        throw new Error('Usage: pickup.spawn loose <itemId> <quantity> [auto|manual]')
+        throw new Error('Usage: pickup.spawn loose <itemId> <quantity> [auto|manual] [x, y, z]')
       } // end if pickup.spawn loose args invalid
       if (!defaultItemDatabase.has(itemId)) {
         throw new Error(`Unknown itemId: ${itemId}`)
       } // end if pickup.spawn loose item unknown
 
       const autoPickup = mode !== 'manual'
+      // Coords start at index 5 (after: command itemId quantity mode)
+      const coords = parseSpawnCoords(rawArgs, 5) ?? { x: player.x, y: player.y, z: player.z ?? 0 }
       const pickup = pickupSystem.spawnLoosePickup({
-        position: {
-          x: player.x,
-          y: player.y,
-          z: player.z ?? 0
-        },
+        position: coords,
         itemId,
         quantity,
         autoPickup,
@@ -6286,15 +6374,12 @@ function startTestMap(): void {
       const rawArgs = commandLine.trim().split(/\s+/)
       const tableId = rawArgs[2] ?? ''
       if (!tableId) {
-        throw new Error('Usage: pickup.spawn container <tableId>')
+        throw new Error('Usage: pickup.spawn container <tableId> [x, y, z]')
       } // end if pickup.spawn container table missing
 
+      const coords = parseSpawnCoords(rawArgs, 3) ?? { x: player.x, y: player.y, z: player.z ?? 0 }
       const container = pickupSystem.spawnContainerFromLootTable({
-        position: {
-          x: player.x,
-          y: player.y,
-          z: player.z ?? 0
-        },
+        position: coords,
         tableId,
         type: 'container',
         origin: 'runtime',
@@ -6317,15 +6402,12 @@ function startTestMap(): void {
       const rawArgs = commandLine.trim().split(/\s+/)
       const tableId = rawArgs[2] ?? ''
       if (!tableId) {
-        throw new Error('Usage: pickup.spawn static <tableId>')
+        throw new Error('Usage: pickup.spawn static <tableId> [x, y, z]')
       } // end if pickup.spawn static table missing
 
+      const coords = parseSpawnCoords(rawArgs, 3) ?? { x: player.x, y: player.y, z: player.z ?? 0 }
       const container = pickupSystem.spawnContainerFromLootTable({
-        position: {
-          x: player.x,
-          y: player.y,
-          z: player.z ?? 0
-        },
+        position: coords,
         tableId,
         type: 'container',
         origin: 'static',
@@ -6353,15 +6435,12 @@ function startTestMap(): void {
       const rawArgs = commandLine.trim().split(/\s+/)
       const tableId = rawArgs[2] ?? ''
       if (!tableId) {
-        throw new Error('Usage: pickup.spawn runtime <tableId>')
+        throw new Error('Usage: pickup.spawn runtime <tableId> [x, y, z]')
       } // end if pickup.spawn runtime table missing
 
+      const coords = parseSpawnCoords(rawArgs, 3) ?? { x: player.x, y: player.y, z: player.z ?? 0 }
       const container = pickupSystem.spawnContainerFromLootTable({
-        position: {
-          x: player.x,
-          y: player.y,
-          z: player.z ?? 0
-        },
+        position: coords,
         tableId,
         type: 'container',
         origin: 'runtime',
@@ -6389,15 +6468,12 @@ function startTestMap(): void {
       const rawArgs = commandLine.trim().split(/\s+/)
       const tableId = rawArgs[2] ?? ''
       if (!tableId) {
-        throw new Error('Usage: pickup.spawn wreck <tableId>')
+        throw new Error('Usage: pickup.spawn wreck <tableId> [x, y, z]')
       } // end if pickup.spawn wreck table missing
 
+      const coords = parseSpawnCoords(rawArgs, 3) ?? { x: player.x, y: player.y, z: player.z ?? 0 }
       const wreck = pickupSystem.spawnWreckFromEntityLoot({
-        position: {
-          x: player.x,
-          y: player.y,
-          z: player.z ?? 0
-        },
+        position: coords,
         tableId,
         type: 'wreck',
         origin: 'runtime',
@@ -7866,6 +7942,14 @@ function startTestMap(): void {
         nextEventTag(`World item cleanup removed ${totalRemoved} item source(s)`)
       } // end if periodic cleanup removed any items
     } // end if periodic world item cleanup trigger elapsed
+
+    // Update 3D pickup world objects (meshes + audio beacons)
+    pickupWorldSystem.update(
+      pickupSystem.listLoosePickups(),
+      pickupSystem.listContainers(),
+      deltaSeconds,
+      devPickupBeaconMaxDistance
+    )
 
     const hpBeforeCombat = Math.max(0, player.hp)
 
