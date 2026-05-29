@@ -438,6 +438,7 @@ function startTestMap(): void {
   const pauseTuneAudioPitchScalingInput = getInput('pauseTuneAudioPitchScaling')
   const pauseTuneAudioVolumeScalingInput = getInput('pauseTuneAudioVolumeScaling')
   const pauseTunePickupBeaconRangeInput = getInput('pauseTunePickupBeaconRange')
+  const pauseTunePickupBeaconIntervalInput = getInput('pauseTunePickupBeaconInterval')
   const resumeButtonElement = document.getElementById('pauseResumeButton')
   const exitButtonElement = document.getElementById('pauseExitButton')
   const devConsoleOverlayElement = document.getElementById('devConsoleOverlay')
@@ -737,6 +738,12 @@ function startTestMap(): void {
   let devAudioPitchScale = 1
   let devAudioVolumeScale = 1
   let devPickupBeaconMaxDistance = 50
+  let devPickupBeaconIntervalSeconds = 3
+  let devInfiniteHp = false
+  let devInfiniteEp = false
+  let devInfiniteCooling = false
+  let devWeightlessMode = false
+  let devGhostMode = false
   let devEnergyStarved = false
   let activeMeleeDash: ActiveMeleeDashState | null = null
   let minigunShotAccumulator = 0
@@ -1315,6 +1322,12 @@ function startTestMap(): void {
   } // end function getWeaponHeatPerShot
 
   const applyWeaponHeatGain = (weapon: PlayerWeaponDefinition): number => {
+    if (devInfiniteCooling) {
+      devLastHeatGain = 0
+      devCurrentHeat = 0
+      return 0
+    }
+
     const heatGain = getWeaponHeatPerShot(weapon) * Math.max(0, devHeatMultiplier)
     devLastHeatGain = heatGain
     devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + heatGain)
@@ -1344,10 +1357,31 @@ function startTestMap(): void {
   } // end function getIncomingDamageHeatGain
 
   const applyIncomingDamageHeatGain = (damageAmount: number, damageType: IncomingDamageType): number => {
+    if (devInfiniteCooling) {
+      devCurrentHeat = 0
+      return 0
+    }
+
     const heatGain = getIncomingDamageHeatGain(damageAmount, damageType)
     devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + heatGain)
     return heatGain
   } // end function applyIncomingDamageHeatGain
+
+  const consumePlayerEnergy = (amount: number): number => {
+    const requestedAmount = Math.max(0, amount)
+    if (requestedAmount <= 0) {
+      return 0
+    }
+
+    if (devInfiniteEp) {
+      player.ep = player.maxEp
+      return 0
+    }
+
+    const energyBefore = player.ep
+    player.ep = Math.max(0, player.ep - requestedAmount)
+    return Math.max(0, energyBefore - player.ep)
+  } // end function consumePlayerEnergy
 
   const speakSystemAnnouncement = (message: string): void => {
     if (runtimeDebugSpeechStatusElement instanceof HTMLElement) {
@@ -2521,6 +2555,7 @@ function startTestMap(): void {
     devAudioPitchScale = Math.max(0.5, Math.min(2, readTuningInput(pauseTuneAudioPitchScalingInput, devAudioPitchScale)))
     devAudioVolumeScale = Math.max(0, Math.min(2, readTuningInput(pauseTuneAudioVolumeScalingInput, devAudioVolumeScale)))
     devPickupBeaconMaxDistance = Math.max(5, Math.min(500, readTuningInput(pauseTunePickupBeaconRangeInput, devPickupBeaconMaxDistance)))
+    devPickupBeaconIntervalSeconds = Math.max(0.25, Math.min(30, readTuningInput(pauseTunePickupBeaconIntervalInput, devPickupBeaconIntervalSeconds)))
 
     audio.setDebugPitchScale(devAudioPitchScale)
     applyDebugAudioVolumeScale()
@@ -3079,6 +3114,7 @@ function startTestMap(): void {
     if (pauseTuneAudioPitchScalingInput) pauseTuneAudioPitchScalingInput.value = devAudioPitchScale.toFixed(2)
     if (pauseTuneAudioVolumeScalingInput) pauseTuneAudioVolumeScalingInput.value = devAudioVolumeScale.toFixed(2)
     if (pauseTunePickupBeaconRangeInput) pauseTunePickupBeaconRangeInput.value = devPickupBeaconMaxDistance.toFixed(0)
+    if (pauseTunePickupBeaconIntervalInput) pauseTunePickupBeaconIntervalInput.value = devPickupBeaconIntervalSeconds.toFixed(2)
   } // end function syncPauseTuningInputs
 
   const tuningInputs: Array<HTMLInputElement | null> = [
@@ -3092,7 +3128,8 @@ function startTestMap(): void {
     pauseTuneMeleeDashSpeedInput,
     pauseTuneAudioPitchScalingInput,
     pauseTuneAudioVolumeScalingInput,
-    pauseTunePickupBeaconRangeInput
+    pauseTunePickupBeaconRangeInput,
+    pauseTunePickupBeaconIntervalInput
   ]
   for (const inputElement of tuningInputs) {
     if (!(inputElement instanceof HTMLInputElement)) {
@@ -3757,7 +3794,7 @@ function startTestMap(): void {
     const clampedX = Math.max(PLAYER_RADIUS + 0.01, Math.min(MAP_WIDTH - PLAYER_RADIUS - 0.01, nextX))
     const clampedY = Math.max(PLAYER_RADIUS + 0.01, Math.min(MAP_HEIGHT - PLAYER_RADIUS - 0.01, nextY))
     const clampedZ = Math.max(0, nextZ)
-    if (isPlayerBlocked(collisionWorld, clampedX, clampedY, clampedZ, PLAYER_RADIUS, PLAYER_COLLISION_HEIGHT)) {
+    if (!devGhostMode && isPlayerBlocked(collisionWorld, clampedX, clampedY, clampedZ, PLAYER_RADIUS, PLAYER_COLLISION_HEIGHT)) {
       throw new Error('Requested player position intersects world geometry.')
     } // end if requested position is blocked
 
@@ -3960,12 +3997,16 @@ function startTestMap(): void {
 
   const canUseFlightSubsystem = (): boolean => areDevPartsOperational('Utility2', 'FlightSystem')
 
+  const getEffectiveTotalWeight = (): number => {
+    return devWeightlessMode ? 0 : getDevTotalWeight()
+  } // end function getEffectiveTotalWeight
+
   const canEngageFlightSubsystem = (): boolean => {
     if (!canUseFlightSubsystem()) {
       return false
     }
     const flightRuntimeProfile = getFlightRuntimeProfile()
-    return flightRuntimeProfile.liftCapacity >= getDevTotalWeight()
+    return flightRuntimeProfile.liftCapacity >= getEffectiveTotalWeight()
   } // end function canEngageFlightSubsystem
 
   interface FlightRuntimeProfile {
@@ -3986,7 +4027,7 @@ function startTestMap(): void {
   const getFlightRuntimeProfile = (): FlightRuntimeProfile => {
     const utilityPart = getDevPartState('Utility2')
     const linkedFlightPart = getDevPartState('FlightSystem')
-    const totalWeight = getDevTotalWeight()
+    const totalWeight = getEffectiveTotalWeight()
     const liftCapacity = Math.max(0, utilityPart.liftCapacity ?? linkedFlightPart.liftCapacity ?? 0)
     const flightTypeNormalized = (utilityPart.flightType ?? '').trim().toLowerCase()
     const mode: 'jet' | 'rotor' = flightTypeNormalized === 'rotor' || flightTypeNormalized === 'helicopter' ? 'rotor' : 'jet'
@@ -5581,9 +5622,21 @@ function startTestMap(): void {
     },
     {
       syntax: 'player.set <field> <value>',
-      description: 'Set ticket-focused player values: heat, energy, and aggregate placeholder weight.',
+      description: 'Set ticket-focused player values: heat, energy, aggregate placeholder weight, and debug toggles.',
       helpPath: ['Player', 'Vitals'],
-      examples: ['player.set heat 85', 'player.set energy 600']
+      examples: ['player.set heat 85', 'player.set energy 600', 'player.set infiniteHp on', 'player.set infiniteEp off', 'player.set infiniteCooling on', 'player.set weightless on']
+    },
+    {
+      syntax: 'ghost mode on|off',
+      description: 'Toggle collision bypass for player movement and dashes.',
+      helpPath: ['Player', 'Cheats'],
+      examples: ['ghost mode on', 'ghost mode off']
+    },
+    {
+      syntax: 'god mode on|off',
+      description: 'Toggle all infinite player states (HP, EP, and cooling) together.',
+      helpPath: ['Player', 'Cheats'],
+      examples: ['god mode on', 'god mode off']
     },
     {
       syntax: 'part.set <slot> <action>',
@@ -6079,6 +6132,11 @@ function startTestMap(): void {
         `  physicsDebug: ${devPhysicsDebugEnabled ? 'on' : 'off'}`,
         `  audioDebug: ${devAudioDebugEnabled ? 'on' : 'off'}`,
         `  eventsDebug: ${devEventsDebugEnabled ? 'on' : 'off'}`,
+        `  infiniteHp: ${devInfiniteHp ? 'on' : 'off'}`,
+        `  infiniteEp: ${devInfiniteEp ? 'on' : 'off'}`,
+        `  infiniteCooling: ${devInfiniteCooling ? 'on' : 'off'}`,
+        `  ghostMode: ${devGhostMode ? 'on' : 'off'}`,
+        `  godMode: ${(devInfiniteHp && devInfiniteEp && devInfiniteCooling) ? 'on' : 'off'}`,
         `  timeScale: ${devTimeScale.toFixed(2)}`
       ]
     } // end if list systems command
@@ -6754,15 +6812,24 @@ function startTestMap(): void {
       const field = (rawArgs[1] ?? '').toLowerCase()
       const value = rawArgs.slice(2).join(' ')
       if (value.length <= 0) {
-        throw new Error('Usage: player.set <heat|energy|weight> <value>')
+        throw new Error('Usage: player.set <heat|energy|weight|infiniteHp|infiniteEp|infiniteCooling|weightless> <value>')
       } // end if value missing
       if (field === 'heat') {
+        if (devInfiniteCooling) {
+          devCurrentHeat = 0
+          updateHeatState()
+          return ['player.heat locked at 0 while infiniteCooling is on.']
+        }
         devCurrentHeat = Math.max(0, Math.min(devMaxHeat, parseFiniteNumber(value, 'player.set heat')))
         updateHeatState()
         nextEventTag(`Heat set to ${devCurrentHeat.toFixed(1)}`)
         return [`player.heat = ${devCurrentHeat.toFixed(1)}/${devMaxHeat.toFixed(1)}`]
       } // end if setting heat
       if (field === 'energy') {
+        if (devInfiniteEp) {
+          player.ep = player.maxEp
+          return ['player.ep locked at max while infiniteEp is on.']
+        }
         player.ep = Math.max(0, Math.min(player.maxEp, parseFiniteNumber(value, 'player.set energy')))
         nextEventTag(`Energy set to ${player.ep.toFixed(1)}`)
         return [`player.ep = ${player.ep.toFixed(1)}/${player.maxEp.toFixed(1)}`]
@@ -6774,8 +6841,62 @@ function startTestMap(): void {
         nextEventTag(`Weight set to ${requestedWeight.toFixed(1)}`)
         return [`player.weight = ${getDevTotalWeight().toFixed(1)}`]
       } // end if setting weight
-      throw new Error('Usage: player.set <heat|energy|weight> <value>')
+      if (field === 'infinitehp') {
+        devInfiniteHp = parseBooleanValue(value)
+        if (devInfiniteHp) {
+          player.hp = player.maxHp
+        }
+        return [`player.infiniteHp = ${devInfiniteHp ? 'on' : 'off'}`]
+      } // end if setting infinite HP
+      if (field === 'infiniteep') {
+        devInfiniteEp = parseBooleanValue(value)
+        if (devInfiniteEp) {
+          player.ep = player.maxEp
+        }
+        return [`player.infiniteEp = ${devInfiniteEp ? 'on' : 'off'}`]
+      } // end if setting infinite EP
+      if (field === 'infinitecooling') {
+        devInfiniteCooling = parseBooleanValue(value)
+        if (devInfiniteCooling) {
+          devCurrentHeat = 0
+          updateHeatState()
+        }
+        return [`player.infiniteCooling = ${devInfiniteCooling ? 'on' : 'off'}`]
+      } // end if setting infinite cooling
+      if (field === 'weightless') {
+        devWeightlessMode = parseBooleanValue(value)
+        return [`player.weightless = ${devWeightlessMode ? 'on' : 'off'}`]
+      } // end if setting weightless mode
+      throw new Error('Usage: player.set <heat|energy|weight|infiniteHp|infiniteEp|infiniteCooling|weightless> <value>')
     } // end if player.set command
+
+    if (normalizedCommand === 'ghost mode on') {
+      devGhostMode = true
+      return ['ghost mode = on']
+    } // end if enabling ghost mode
+
+    if (normalizedCommand === 'ghost mode off') {
+      devGhostMode = false
+      return ['ghost mode = off']
+    } // end if disabling ghost mode
+
+    if (normalizedCommand === 'god mode on') {
+      devInfiniteHp = true
+      devInfiniteEp = true
+      devInfiniteCooling = true
+      player.hp = player.maxHp
+      player.ep = player.maxEp
+      devCurrentHeat = 0
+      updateHeatState()
+      return ['god mode = on (infiniteHp, infiniteEp, infiniteCooling enabled)']
+    } // end if enabling god mode
+
+    if (normalizedCommand === 'god mode off') {
+      devInfiniteHp = false
+      devInfiniteEp = false
+      devInfiniteCooling = false
+      return ['god mode = off (infiniteHp, infiniteEp, infiniteCooling disabled)']
+    } // end if disabling god mode
 
     if (normalizedCommand.startsWith('part.set ')) {
       const rawArgs = commandLine.trim().split(/\s+/)
@@ -6897,7 +7018,9 @@ function startTestMap(): void {
       const rawArgs = commandLine.trim().split(/\s+/)
       const amount = Math.max(0, parseFiniteNumber(rawArgs[1] ?? '', 'player.damage amount'))
       const damageType = normalizeIncomingDamageType(rawArgs[2] ?? 'physical')
-      player.hp = Math.max(0, player.hp - amount)
+      if (!devInfiniteHp) {
+        player.hp = Math.max(0, player.hp - amount)
+      }
       devLastDamageAmount = amount
       devLastDamageType = damageType
       devLastHitLocation = 'center mass'
@@ -6913,8 +7036,8 @@ function startTestMap(): void {
     } // end if player.stagger command
 
     if (normalizedCommand === 'player.overheat') {
-      devLastHeatGain = Math.max(0, devMaxHeat - devCurrentHeat)
-      devCurrentHeat = devMaxHeat
+      devLastHeatGain = devInfiniteCooling ? 0 : Math.max(0, devMaxHeat - devCurrentHeat)
+      devCurrentHeat = devInfiniteCooling ? 0 : devMaxHeat
       updateHeatState()
       nextEventTag('Player overheat triggered')
       return [`player.heat = ${devCurrentHeat.toFixed(1)}/${devMaxHeat.toFixed(1)}`]
@@ -7352,6 +7475,21 @@ function startTestMap(): void {
         .filter((entry) => entry.startsWith(`weapon ${suffix}`.trim()))
     } // end if completing weapon command
 
+    if (currentCommand === 'player.set') {
+      const field = hasTrailingWhitespace ? '' : ((tokens[1] ?? '').toLowerCase())
+      return ['heat', 'energy', 'weight', 'infiniteHp', 'infiniteEp', 'infiniteCooling', 'weightless']
+        .filter((entry) => entry.toLowerCase().startsWith(field))
+        .map((entry) => `player.set ${entry} `)
+    } // end if completing player.set command
+
+    if (currentCommand === 'ghost') {
+      return ['ghost mode on', 'ghost mode off']
+    } // end if completing ghost mode command
+
+    if (currentCommand === 'god') {
+      return ['god mode on', 'god mode off']
+    } // end if completing god mode command
+
     if (currentCommand === 'inventory.get') {
       const views = [
         'all',
@@ -7675,10 +7813,20 @@ function startTestMap(): void {
       / Math.max(0.1, devDriftMultiplier)
     const movementProfile = getCurrentMovementArchetypeProfile()
     const currentTotalWeight = getDevMechStatsSnapshot().totalWeight
-    const movementWeightFactor = calculateWeightFactor(currentTotalWeight, movementProfile.ratedLoad).weightFactor
+    const effectiveTotalWeight = devWeightlessMode ? 0 : currentTotalWeight
+    if (devInfiniteHp) {
+      player.hp = player.maxHp
+    }
+    if (devInfiniteEp) {
+      player.ep = player.maxEp
+    }
+    if (devInfiniteCooling) {
+      devCurrentHeat = 0
+    }
+    const movementWeightFactor = calculateWeightFactor(effectiveTotalWeight, movementProfile.ratedLoad).weightFactor
     const flightRuntimeProfile = getFlightRuntimeProfile()
     const overheatShutdownActive = isOverheatShutdownActive()
-    const canEngageFlight = !overheatShutdownActive && canUseFlightSubsystem() && flightRuntimeProfile.liftCapacity >= currentTotalWeight
+    const canEngageFlight = !overheatShutdownActive && canUseFlightSubsystem() && flightRuntimeProfile.liftCapacity >= effectiveTotalWeight
     const minFlightEngageEnergy = Math.max(1, flightRuntimeProfile.energyUsePerSecond * 0.5)
     const minBoostEnergy = Math.max(1, (flightRuntimeProfile.energyUsePerSecond + BOOST_EP_DRAIN_PER_SECOND) * 0.25)
 
@@ -7699,7 +7847,7 @@ function startTestMap(): void {
         input.flightTogglePending = false
         audio.playNegativeActionTone()
         announceBlockedAction('flight-offline', 'Cannot fly. Flight subsystem offline.')
-      } else if (flightRuntimeProfile.liftCapacity < currentTotalWeight) {
+      } else if (flightRuntimeProfile.liftCapacity < effectiveTotalWeight) {
         input.flightTogglePending = false
         audio.playNegativeActionTone()
         announceBlockedAction('flight-overweight', 'Cannot fly. Mech weight exceeds lift capacity.')
@@ -7814,6 +7962,7 @@ function startTestMap(): void {
           targetElevationOffset: pitchAssistTargetElevationOffset
         },
         collisionWorld,
+        ignorePlayerCollision: devGhostMode,
         movementProfile
       },
       movementDeltaSeconds
@@ -7858,11 +8007,11 @@ function startTestMap(): void {
       const xWithinMap = Math.max(0.06, Math.min(MAP_WIDTH - 0.06, nextX))
       const yWithinMap = Math.max(0.06, Math.min(MAP_HEIGHT - 0.06, nextY))
 
-      const canMoveX = !isPlayerBlocked(collisionWorld, xWithinMap, player.y, dashFeet, PLAYER_RADIUS, PLAYER_COLLISION_HEIGHT)
+      const canMoveX = devGhostMode || !isPlayerBlocked(collisionWorld, xWithinMap, player.y, dashFeet, PLAYER_RADIUS, PLAYER_COLLISION_HEIGHT)
       if (canMoveX) {
         player.x = xWithinMap
       }
-      const canMoveY = !isPlayerBlocked(collisionWorld, player.x, yWithinMap, dashFeet, PLAYER_RADIUS, PLAYER_COLLISION_HEIGHT)
+      const canMoveY = devGhostMode || !isPlayerBlocked(collisionWorld, player.x, yWithinMap, dashFeet, PLAYER_RADIUS, PLAYER_COLLISION_HEIGHT)
       if (canMoveY) {
         player.y = yWithinMap
       }
@@ -7948,16 +8097,18 @@ function startTestMap(): void {
       pickupSystem.listLoosePickups(),
       pickupSystem.listContainers(),
       deltaSeconds,
-      devPickupBeaconMaxDistance
+      devPickupBeaconMaxDistance,
+      devPickupBeaconIntervalSeconds
     )
 
     const hpBeforeCombat = Math.max(0, player.hp)
 
-    const baseEnergyRegenPerSecond = getCurrentEnergyRegenPerSecond(currentTotalWeight, movementProfile.ratedLoad)
+    const baseEnergyRegenPerSecond = getCurrentEnergyRegenPerSecond(effectiveTotalWeight, movementProfile.ratedLoad)
     const passiveEnergyDrainPerSecond = getPassiveEnergyDrainPerSecond()
     const flightEnergyDrainPerSecond = player.isFlying ? flightRuntimeProfile.energyUsePerSecond : 0
-    const activeEnergyDrainPerSecond = flightEnergyDrainPerSecond
-      + ((player.isBoosting ?? false) ? BOOST_EP_DRAIN_PER_SECOND : 0)
+    const activeEnergyDrainPerSecond = devInfiniteEp
+      ? 0
+      : flightEnergyDrainPerSecond + ((player.isBoosting ?? false) ? BOOST_EP_DRAIN_PER_SECOND : 0)
     if (activeEnergyDrainPerSecond > 0) {
       devLastActiveEnergyUseTimeMs = timestampMs
     }
@@ -7969,12 +8120,16 @@ function startTestMap(): void {
     const energyDrainPerSecond = activeEnergyDrainPerSecond
     devLastEnergyDrain = Math.max(0, trackedEnergyDrainPerSecond)
     const epDelta = (energyRegenPerSecond - energyDrainPerSecond) * deltaSeconds
-    player.ep = Math.max(0, Math.min(player.maxEp, player.ep + epDelta))
-    const flightHeatGain = player.isFlying ? (flightRuntimeProfile.heatGenerationPerSecond * deltaSeconds) : 0
-    devCurrentHeat = Math.min(devMaxHeat, devCurrentHeat + flightHeatGain)
+    if (devInfiniteEp) {
+      player.ep = player.maxEp
+    } else {
+      player.ep = Math.max(0, Math.min(player.maxEp, player.ep + epDelta))
+    }
+    const flightHeatGain = (player.isFlying && !devInfiniteCooling) ? (flightRuntimeProfile.heatGenerationPerSecond * deltaSeconds) : 0
+    devCurrentHeat = devInfiniteCooling ? 0 : Math.min(devMaxHeat, devCurrentHeat + flightHeatGain)
     updateEmergencyCoolingState()
     const passiveCoolingPerSecond = getPassiveCoolingRatePerSecond()
-    devCurrentHeat = Math.max(0, devCurrentHeat - (passiveCoolingPerSecond * deltaSeconds))
+    devCurrentHeat = devInfiniteCooling ? 0 : Math.max(0, devCurrentHeat - (passiveCoolingPerSecond * deltaSeconds))
     updateHeatState()
     applyOverheatShutdown()
     applyEnergyStarvationShutdown()
@@ -8098,6 +8253,10 @@ function startTestMap(): void {
         }
       })
     }
+    if (devInfiniteHp && player.hp < hpBeforeCombat) {
+      player.hp = hpBeforeCombat
+    } // end if restoring HP while infinite HP is active
+
     if (player.hp < hpBeforeCombat) {
       const rawIncomingDamage = hpBeforeCombat - player.hp
       if (
@@ -8755,7 +8914,7 @@ function startTestMap(): void {
                   playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - ammoPerShot)
                 }
                 if (weaponUsesEnergy) {
-                  player.ep = Math.max(0, player.ep - shotEnergyCost)
+                  consumePlayerEnergy(shotEnergyCost)
                 }
                 processedShots += 1
               }
@@ -8813,7 +8972,7 @@ function startTestMap(): void {
               )
             } // end for each missile in shot
             if (shotEnergyCost > 0) {
-              player.ep = Math.max(0, player.ep - shotEnergyCost)
+              consumePlayerEnergy(shotEnergyCost)
             }
             if (weaponUsesAmmo) {
               playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)
@@ -8863,7 +9022,7 @@ function startTestMap(): void {
             )
           } // end if locked target for accuracy cone
           if (shotEnergyCost > 0) {
-            player.ep = Math.max(0, player.ep - shotEnergyCost)
+            consumePlayerEnergy(shotEnergyCost)
           }
           if (weaponUsesAmmo) {
             playerWeapon.ammoInClip = Math.max(0, playerWeapon.ammoInClip - 1)

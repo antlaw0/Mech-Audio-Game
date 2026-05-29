@@ -77,6 +77,7 @@ export interface UpdateEnvironment {
   flightConfig: FlightRuntimeConfig
   pitchAssistContext?: PitchAssistContext
   collisionWorld: WorldCollisionWorld
+  ignorePlayerCollision?: boolean
   movementProfile: MovementArchetypeProfile
 } // end interface UpdateEnvironment
 
@@ -156,6 +157,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   } // end if strafe velocity is uninitialized
 
   const movementProfile = environment.movementProfile
+  const ignorePlayerCollision = environment.ignorePlayerCollision ?? false
   const weightFactor = clamp(environment.weightFactor, 0, 1)
   const flightConfig = environment.flightConfig
   const { input, player, audio, state } = environment
@@ -552,7 +554,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     const xWithinMap = Math.max(0.06, Math.min(MAP_WIDTH - 0.06, nextX))
     const yWithinMap = Math.max(0.06, Math.min(MAP_HEIGHT - 0.06, nextY))
 
-    const canMoveX = !isPlayerBlocked(environment.collisionWorld, xWithinMap, player.y, collisionFeet, PLAYER_RADIUS)
+    const canMoveX = ignorePlayerCollision || !isPlayerBlocked(environment.collisionWorld, xWithinMap, player.y, collisionFeet, PLAYER_RADIUS)
     if (canMoveX) {
       player.x = xWithinMap
       moved = true
@@ -564,7 +566,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
       collisionDirection = normalizeAngle(Math.atan2(0, directionX) - player.angle)
     } // end if canMoveX
 
-    const canMoveY = !isPlayerBlocked(environment.collisionWorld, player.x, yWithinMap, collisionFeet, PLAYER_RADIUS)
+    const canMoveY = ignorePlayerCollision || !isPlayerBlocked(environment.collisionWorld, player.x, yWithinMap, collisionFeet, PLAYER_RADIUS)
     if (canMoveY) {
       player.y = yWithinMap
       moved = true
@@ -598,8 +600,8 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     const xWithinMap = Math.max(0.06, Math.min(MAP_WIDTH - 0.06, nextX))
     const yWithinMap = Math.max(0.06, Math.min(MAP_HEIGHT - 0.06, nextY))
 
-    const canMoveX = !isPlayerBlocked(environment.collisionWorld, xWithinMap, player.y, collisionFeet, PLAYER_RADIUS)
-    const canMoveY = !isPlayerBlocked(environment.collisionWorld, player.x, yWithinMap, collisionFeet, PLAYER_RADIUS)
+    const canMoveX = ignorePlayerCollision || !isPlayerBlocked(environment.collisionWorld, xWithinMap, player.y, collisionFeet, PLAYER_RADIUS)
+    const canMoveY = ignorePlayerCollision || !isPlayerBlocked(environment.collisionWorld, player.x, yWithinMap, collisionFeet, PLAYER_RADIUS)
 
     if (canMoveX) {
       player.x = xWithinMap

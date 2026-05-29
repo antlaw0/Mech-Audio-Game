@@ -1,3 +1,5 @@
+import { loadDevConsoleHistory, saveDevConsoleHistory } from './dev-console-history.js'
+
 export interface DeveloperConsoleElements {
   overlay: HTMLDivElement
   output: HTMLDivElement
@@ -45,8 +47,8 @@ function longestCommonPrefix(values: string[]): string {
 
 export function createDeveloperConsole(options: DeveloperConsoleOptions): DeveloperConsoleController {
   const { overlay, output, input, status } = options.elements
-  const history: string[] = []
-  let historyIndex = -1
+  const history: string[] = loadDevConsoleHistory()
+  let historyIndex = history.length
   let open = false
 
   const focusInput = (): void => {
@@ -103,6 +105,10 @@ export function createDeveloperConsole(options: DeveloperConsoleOptions): Develo
       } // end if command line is empty
 
       history.push(commandLine)
+      while (history.length > 20) {
+        history.shift()
+      } // end while history exceeds retention limit
+      saveDevConsoleHistory(history)
       historyIndex = history.length
       print(`> ${commandLine}`, 'input')
       input.value = ''

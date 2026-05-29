@@ -42,7 +42,8 @@ export interface PickupWorldSystem {
     loosePickups: LoosePickup[],
     containers: LootContainerPickup[],
     deltaSeconds: number,
-    beaconMaxDistance: number
+    beaconMaxDistance: number,
+    beaconIntervalSeconds: number
   ): void
   dispose(): void
 } // end interface PickupWorldSystem
@@ -214,8 +215,8 @@ interface WorldRecord {
   beaconTimerSeconds: number
 } // end interface WorldRecord
 
-const BEACON_INTERVAL_SECONDS = 5
 const BEACON_MIN_DISTANCE = 1
+const DEFAULT_BEACON_INTERVAL_SECONDS = 3
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -248,8 +249,7 @@ export function createPickupWorldSystem(
     // Audio emitter uses game coords (audio system handles internal transform)
     beacon.setPosition(gameX, gameY, floorY)
 
-    records.set(id, { beacon, beaconTimerSeconds: BEACON_INTERVAL_SECONDS })
-    // Timer starts at interval so first ping fires at 5s (not immediately on spawn)
+    records.set(id, { beacon, beaconTimerSeconds: 0 })
   } // end function addRecord
 
   const removeRecord = (id: string): void => {
@@ -266,9 +266,11 @@ export function createPickupWorldSystem(
     loosePickups: LoosePickup[],
     containers: LootContainerPickup[],
     deltaSeconds: number,
-    beaconMaxDistance: number
+    beaconMaxDistance: number,
+    beaconIntervalSeconds: number
   ): void => {
     const dt = Math.max(0, deltaSeconds)
+    const intervalSeconds = Math.max(0.25, beaconIntervalSeconds || DEFAULT_BEACON_INTERVAL_SECONDS)
 
     // Build current-ID set for diffing
     const currentIds = new Set<string>()
@@ -301,6 +303,14 @@ export function createPickupWorldSystem(
       )
     } // end for each loose pickup
 
+    for (const loose of loosePickups) {
+      const rec = records.get(loose.id)
+      if (!rec) {
+        continue
+      }
+      rec.beacon.setPosition(loose.position.x, loose.position.y, Math.max(0, loose.position.z))
+    } // end for each tracked loose pickup
+
     // Add new containers
     for (const container of containers) {
       if (records.has(container.id)) {
@@ -318,10 +328,18 @@ export function createPickupWorldSystem(
       )
     } // end for each container
 
+    for (const container of containers) {
+      const rec = records.get(container.id)
+      if (!rec) {
+        continue
+      }
+      rec.beacon.setPosition(container.position.x, container.position.y, Math.max(0, container.position.z))
+    } // end for each tracked container
+
     // Tick beacon timers — ping when interval elapsed
     for (const rec of records.values()) {
       rec.beaconTimerSeconds += dt
-      if (rec.beaconTimerSeconds >= BEACON_INTERVAL_SECONDS) {
+      if (rec.beaconTimerSeconds >= intervalSeconds) {
         rec.beaconTimerSeconds = 0
         rec.beacon.ping()
       }
