@@ -47,12 +47,122 @@ const focusElement = (element: HTMLElement): boolean => {
   return document.activeElement === element
 }
 
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'area[href]',
+  'button',
+  'input',
+  'select',
+  'textarea',
+  'details summary',
+  'iframe',
+  'object',
+  'embed',
+  '[contenteditable="true"]',
+  '[tabindex]'
+].join(', ')
+
+const getFocusableElements = (container: HTMLElement): HTMLElement[] => {
+  const candidates = Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+  return candidates.filter((element) => {
+    if (!isElementVisible(element) || isDisabledElement(element)) {
+      return false
+    }
+
+    const tabIndex = element.getAttribute('tabindex')
+    if (tabIndex !== null && Number(tabIndex) < 0) {
+      return false
+    }
+
+    return true
+  })
+}
+
 class AccessibilityModeManager {
   private gameRoot: HTMLElement | null = null
   private gameplayInputToggleHandler: GameplayInputToggleHandler | null = null
   private readonly menus = new Map<string, AccessibilityMenuRegistration>()
   private readonly menuStack: string[] = []
   private readonly focusStack: Array<HTMLElement | null> = []
+  private readonly handleDocumentKeydownCapture = (event: KeyboardEvent): void => {
+    if (event.key !== 'Tab') {
+      return
+    }
+
+    const activeMenu = this.getActiveMenuRegistration()
+    if (!activeMenu) {
+      return
+    }
+
+    const container = activeMenu.menuElement
+    const focusables = getFocusableElements(container)
+    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+
+    if (focusables.length <= 0) {
+      event.preventDefault()
+      focusElement(activeMenu.focusAnchor)
+      return
+    }
+
+    const first = focusables[0] ?? null
+    const last = focusables[focusables.length - 1] ?? null
+    const isFocusInsideMenu = !!activeElement && container.contains(activeElement)
+
+    if (!isFocusInsideMenu) {
+      event.preventDefault()
+      if (event.shiftKey) {
+        if (last) {
+          focusElement(last)
+        }
+      } else if (first) {
+        focusElement(first)
+      }
+      return
+    }
+
+    if (!event.shiftKey && activeElement === last) {
+      event.preventDefault()
+      if (first) {
+        focusElement(first)
+      }
+      return
+    }
+
+    if (event.shiftKey && activeElement === first) {
+      event.preventDefault()
+      if (last) {
+        focusElement(last)
+      }
+    }
+  }
+  private readonly handleDocumentFocusinCapture = (event: FocusEvent): void => {
+    const activeMenu = this.getActiveMenuRegistration()
+    if (!activeMenu) {
+      return
+    }
+
+    const target = event.target
+    if (!(target instanceof HTMLElement)) {
+      return
+    }
+
+    if (activeMenu.menuElement.contains(target)) {
+      return
+    }
+
+    const focusables = getFocusableElements(activeMenu.menuElement)
+    if (focusables.length > 0) {
+      focusElement(focusables[0]!)
+      return
+    }
+
+    focusElement(activeMenu.focusAnchor)
+  }
+
+  constructor() {
+    document.addEventListener('keydown', this.handleDocumentKeydownCapture, true)
+    document.addEventListener('focusin', this.handleDocumentFocusinCapture, true)
+  }
 
   configure(config: AccessibilityModeManagerConfig): void {
     this.gameRoot = config.gameRoot
@@ -104,7 +214,7 @@ class AccessibilityModeManager {
       this.menuStack.push(menuId)
     }
 
-    this.setMenuActive(menuId, true)
+    this.syncMenuAccessibilityState()
     this.enterUiMode(menu.focusAnchor)
     return true
   }
@@ -116,7 +226,7 @@ class AccessibilityModeManager {
     }
 
     const wasOpen = this.removeMenuFromStack(menuId)
-    this.setMenuActive(menuId, false)
+    this.syncMenuAccessibilityState()
 
     if (wasOpen) {
       this.popFocus()
@@ -152,10 +262,7 @@ class AccessibilityModeManager {
     this.gameRoot.removeAttribute('inert')
     this.gameRoot.setAttribute('role', 'application')
     this.setGameplayInputEnabled(true)
-
-    for (const [menuId] of this.menus) {
-      this.setMenuActive(menuId, false)
-    }
+    this.syncMenuAccessibilityState()
 
     this.focusGameRoot()
   }
@@ -213,17 +320,28 @@ class AccessibilityModeManager {
   }
 
   private getActiveMenuAnchor(): HTMLElement | null {
+    const activeMenu = this.getActiveMenuRegistration()
+    if (!activeMenu) {
+      return null
+    }
+
+    return activeMenu.focusAnchor
+  }
+
+  private getActiveMenuRegistration(): AccessibilityMenuRegistration | null {
     const topMenuId = this.menuStack[this.menuStack.length - 1]
     if (!topMenuId) {
       return null
     }
 
-    const topMenu = this.menus.get(topMenuId)
-    if (!topMenu) {
-      return null
-    }
+    return this.menus.get(topMenuId) ?? null
+  }
 
-    return topMenu.focusAnchor
+  private syncMenuAccessibilityState(): void {
+    const activeMenuId = this.menuStack[this.menuStack.length - 1] ?? null
+    for (const [menuId] of this.menus) {
+      this.setMenuActive(menuId, menuId === activeMenuId)
+    }
   }
 
   private setMenuActive(menuId: string, active: boolean): void {
@@ -234,6 +352,11 @@ class AccessibilityModeManager {
 
     menu.menuElement.setAttribute('data-menu-active', active ? 'true' : 'false')
     menu.menuElement.setAttribute('aria-hidden', active ? 'false' : 'true')
+    if (active) {
+      menu.menuElement.removeAttribute('inert')
+    } else {
+      menu.menuElement.setAttribute('inert', '')
+    }
   }
 }
 

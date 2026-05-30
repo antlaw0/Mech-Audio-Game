@@ -1785,6 +1785,58 @@ function startTestMap(): void {
     return weaponLoadout.find((w) => w.id === partState.partId) ?? null
   } // end function resolveWeaponFromSlot
 
+  const resolveMeleeWeaponFromSlot = (slot: WeaponMountSlot): PlayerMeleeWeaponDefinition | null => {
+    const partState = devParts.get(slot)
+    if (!partState?.partId) {
+      return null
+    }
+    return meleeLoadout.find((weapon) => weapon.id === partState.partId) ?? null
+  } // end function resolveMeleeWeaponFromSlot
+
+  const hasEquippedActiveRangedWeapon = (): boolean => {
+    const equippedWeapon = resolveWeaponFromSlot(activeRangedSlot)
+    return !!equippedWeapon && equippedWeapon.id === playerWeapon.id
+  } // end function hasEquippedActiveRangedWeapon
+
+  const syncActiveCombatLoadout = (): void => {
+    equippedMeleeWeapon = resolveMeleeWeaponFromSlot('LeftHand')
+
+    let nextRangedSlot: WeaponMountSlot = activeRangedSlot
+    let nextRangedWeapon = resolveWeaponFromSlot(nextRangedSlot)
+    if (!nextRangedWeapon) {
+      const fallbackSlots: readonly WeaponMountSlot[] = ['RightHand', 'LeftHand', 'ShoulderLeft', 'ShoulderRight']
+      for (const slot of fallbackSlots) {
+        const weapon = resolveWeaponFromSlot(slot)
+        if (weapon) {
+          nextRangedSlot = slot
+          nextRangedWeapon = weapon
+          break
+        }
+      }
+    }
+
+    if (!nextRangedWeapon) {
+      isReloading = false
+      return
+    }
+
+    const weaponChanged = playerWeapon.id !== nextRangedWeapon.id || activeRangedSlot !== nextRangedSlot
+    activeRangedSlot = nextRangedSlot
+    playerWeapon = nextRangedWeapon
+
+    if (weaponChanged) {
+      playerFireCooldownSeconds = 0
+      hasPlayedEmptyClipForCurrentTriggerPull = false
+      isReloading = false
+      resetTargetLockState()
+      missileLockProgressMs = 0
+      missileLockTargetId = null
+      missileLockConfirmed = false
+      missileLockToneTimerSeconds = 0
+      audio.playLockLostChirp()
+    }
+  } // end function syncActiveCombatLoadout
+
   const getWeaponSlotSpeechLabel = (slot: WeaponMountSlot): string => {
     if (slot === 'RightHand') {
       return 'right hand'
@@ -4616,7 +4668,22 @@ function startTestMap(): void {
     }
   } // end function getFlightRuntimeProfile
 
-  const canUseRangedSubsystem = (): boolean => areDevPartsOperational('RightArm', 'RightHand')
+  const canUseRangedSubsystem = (): boolean => {
+    if (!hasEquippedActiveRangedWeapon()) {
+      return false
+    }
+
+    if (activeRangedSlot === 'RightHand') {
+      return areDevPartsOperational('RightArm', 'RightHand')
+    }
+    if (activeRangedSlot === 'LeftHand') {
+      return areDevPartsOperational('LeftArm', 'LeftHand')
+    }
+    if (activeRangedSlot === 'ShoulderLeft') {
+      return isDevPartOperational('ShoulderLeft')
+    }
+    return isDevPartOperational('ShoulderRight')
+  }
 
   const canUseMeleeSubsystem = (): boolean => areDevPartsOperational('LeftArm', 'LeftHand')
 
@@ -5078,6 +5145,8 @@ function startTestMap(): void {
         activeAbilities: [...(weaponDefinition.activeAbilities ?? [])]
       }))
     }
+
+    syncActiveCombatLoadout()
   } // end function syncGarageLoadoutToDevParts
 
   const getGarageEquipValidation = (category: PartCategory, instanceId: string, preview: GarageSnapshot) => {
@@ -5152,6 +5221,8 @@ function startTestMap(): void {
 
     garageStore.subscribe(() => {
       syncGarageLoadoutToDevParts()
+      applySubsystemIntegrityState()
+      syncAuthoritativeMechStats()
       if (garageView) {
         garageView.render()
       }
