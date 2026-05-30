@@ -24,8 +24,8 @@ interface ThreeRenderFrameArgs {
   player: Player
   muzzleFlashAlpha: number
   lockedTankId: number | null
-  lockOnWindowWidthPercent: number
-  lockOnWindowHeightPercent: number
+  horizontalLockAngle: number
+  verticalLockAngle: number
   deltaSeconds: number
 } // end interface ThreeRenderFrameArgs
 
@@ -338,8 +338,8 @@ function drawHudOverlay(
   camera: THREE.PerspectiveCamera,
   tanks: CombatEnemyRender[],
   lockedTankId: number | null,
-  lockOnWindowWidthPercent: number,
-  lockOnWindowHeightPercent: number
+  horizontalLockAngleDegrees: number,
+  verticalLockAngleDegrees: number
 ): void {
   ctx.clearRect(0, 0, width, height)
 
@@ -356,9 +356,20 @@ function drawHudOverlay(
   ctx.lineTo(centerX, centerY + 8)
   ctx.stroke()
 
-  // Lockbox defined by current lock-on window percentages.
-  const lockWidth = Math.max(4, width * Math.max(0, Math.min(100, lockOnWindowWidthPercent)) / 100)
-  const lockHeight = Math.max(4, height * Math.max(0, Math.min(100, lockOnWindowHeightPercent)) / 100)
+  // Lockbox is a HUD projection of world-space lock half-angles.
+  const verticalFovRadians = THREE.MathUtils.degToRad(camera.fov)
+  const verticalHalfFovRadians = verticalFovRadians * 0.5
+  const horizontalHalfFovRadians = Math.atan(Math.tan(verticalHalfFovRadians) * camera.aspect)
+  const horizontalHalfLockRadians = THREE.MathUtils.degToRad(Math.max(0, Math.min(89, horizontalLockAngleDegrees)))
+  const verticalHalfLockRadians = THREE.MathUtils.degToRad(Math.max(0, Math.min(89, verticalLockAngleDegrees)))
+  const horizontalCoverage = horizontalHalfFovRadians <= 0
+    ? 0
+    : Math.max(0, Math.min(1, Math.tan(horizontalHalfLockRadians) / Math.tan(horizontalHalfFovRadians)))
+  const verticalCoverage = verticalHalfFovRadians <= 0
+    ? 0
+    : Math.max(0, Math.min(1, Math.tan(verticalHalfLockRadians) / Math.tan(verticalHalfFovRadians)))
+  const lockWidth = Math.max(4, width * horizontalCoverage)
+  const lockHeight = Math.max(4, height * verticalCoverage)
   const lockLeft = centerX - lockWidth * 0.5
   const lockTop = centerY - lockHeight * 0.5
   const lockRight = centerX + lockWidth * 0.5
@@ -805,8 +816,8 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
         player,
         muzzleFlashAlpha,
         lockedTankId,
-        lockOnWindowWidthPercent,
-        lockOnWindowHeightPercent,
+        horizontalLockAngle,
+        verticalLockAngle,
         deltaSeconds
       } = args
 
@@ -1002,8 +1013,8 @@ export function createThreeRenderSystem(createArgs: ThreeRendererCreateArgs): Th
         camera,
         tanks,
         lockedTankId,
-        lockOnWindowWidthPercent,
-        lockOnWindowHeightPercent
+        horizontalLockAngle,
+        verticalLockAngle
       )
     },
     addPickupMesh(id: string, object: THREE.Object3D): void {

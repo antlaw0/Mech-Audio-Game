@@ -304,15 +304,8 @@ declare global {
 } // end declare global
 
 const TARGET_VIEWPORT_ASPECT_RATIO = 3440 / 1440
-const CAMERA_VERTICAL_FOV_RADIANS = (70 * Math.PI) / 180
 const TARGET_ANNOUNCEMENT_STABILITY_MS = 300
 const TARGET_ANNOUNCEMENT_COOLDOWN_MS = 5000
-
-function getHalfHorizontalFovRadians(aspectRatio: number): number {
-  const safeAspectRatio = Math.max(0.1, aspectRatio)
-  const verticalHalfFov = CAMERA_VERTICAL_FOV_RADIANS * 0.5
-  return Math.atan(Math.tan(verticalHalfFov) * safeAspectRatio)
-} // end function getHalfHorizontalFovRadians
 
 function getCanvasDimensions(): { width: number; height: number } {
   const maxWidth = Math.max(1, Math.min(window.innerWidth, CANVAS_WIDTH_LIMIT))
@@ -498,8 +491,8 @@ function startTestMap(): void {
   const weaponHeatPerShotInput = getInput('weaponHeatPerShot')
   const weaponEnergyCostPerShotInput = getInput('weaponEnergyCostPerShot')
   const weaponLockOnRangeInput = getInput('weaponLockOnRange')
-  const weaponLockOnWindowWidthInput = getInput('weaponLockOnWindowWidth')
-  const weaponLockOnWindowHeightInput = getInput('weaponLockOnWindowHeight')
+  const weaponHorizontalLockAngleInput = getInput('weaponHorizontalLockAngle')
+  const weaponVerticalLockAngleInput = getInput('weaponVerticalLockAngle')
   const weaponLockOnTimeMsInput = getInput('weaponLockOnTimeMs')
   const weaponTrackingRatingInput = getInput('weaponTrackingRating')
   const weaponExplosionRadiusInput = getInput('weaponExplosionRadius')
@@ -3091,8 +3084,8 @@ function startTestMap(): void {
     if (weaponHeatPerShotInput) weaponHeatPerShotInput.value = stats.heatPerShot === undefined ? '' : String(stats.heatPerShot)
     if (weaponEnergyCostPerShotInput) weaponEnergyCostPerShotInput.value = stats.energyCostPerShot === undefined ? '' : String(stats.energyCostPerShot)
     if (weaponLockOnRangeInput) weaponLockOnRangeInput.value = String(stats.lockOnRange)
-    if (weaponLockOnWindowWidthInput) weaponLockOnWindowWidthInput.value = String(stats.lockOnWindowWidthPercent)
-    if (weaponLockOnWindowHeightInput) weaponLockOnWindowHeightInput.value = String(stats.lockOnWindowHeightPercent)
+    if (weaponHorizontalLockAngleInput) weaponHorizontalLockAngleInput.value = String(stats.horizontalLockAngle)
+    if (weaponVerticalLockAngleInput) weaponVerticalLockAngleInput.value = String(stats.verticalLockAngle)
     if (weaponLockOnTimeMsInput) weaponLockOnTimeMsInput.value = String(stats.lockOnTimeMs)
     if (weaponTrackingRatingInput) weaponTrackingRatingInput.value = String(stats.trackingRating)
     if (weaponExplosionRadiusInput) weaponExplosionRadiusInput.value = String(stats.explosionRadius)
@@ -3133,8 +3126,8 @@ function startTestMap(): void {
       fireRateCooldownSeconds: Math.max(0, parseNum(weaponFireRateInput, playerWeapon.fireRateCooldownSeconds * 1000) / 1000),
       projectileSize: Math.max(0.03, parseNum(weaponProjectileSizeInput, playerWeapon.projectileSize)),
       lockOnRange: Math.max(1, parseNum(weaponLockOnRangeInput, playerWeapon.lockOnRange)),
-      lockOnWindowWidthPercent: Math.max(0, Math.min(100, Math.round(parseNum(weaponLockOnWindowWidthInput, playerWeapon.lockOnWindowWidthPercent)))),
-      lockOnWindowHeightPercent: Math.max(0, Math.min(100, Math.round(parseNum(weaponLockOnWindowHeightInput, playerWeapon.lockOnWindowHeightPercent)))),
+      horizontalLockAngle: Math.max(0, Math.min(89, parseNum(weaponHorizontalLockAngleInput, playerWeapon.horizontalLockAngle))),
+      verticalLockAngle: Math.max(0, Math.min(89, parseNum(weaponVerticalLockAngleInput, playerWeapon.verticalLockAngle))),
       lockOnTimeMs: Math.max(0, Math.round(parseNum(weaponLockOnTimeMsInput, playerWeapon.lockOnTimeMs))),
       trackingRating: Math.max(0, Math.min(1, parseNum(weaponTrackingRatingInput, playerWeapon.trackingRating))),
       explosionRadius: Math.max(0, parseNum(weaponExplosionRadiusInput, playerWeapon.explosionRadius)),
@@ -3806,6 +3799,16 @@ function startTestMap(): void {
   } // end function getDashTargetById
 
   const findMeleeDashTarget = (): TargetableEnemyRender | null => {
+    if (!equippedMeleeWeapon) {
+      return null
+    } // end if melee weapon is unavailable
+
+    const dashAcquisitionRange = Math.max(
+      equippedMeleeWeapon.reach * 1.5,
+      MELEE_DASH_MIN_SPEED * MELEE_DASH_DURATION_SECONDS * MELEE_DASH_DISTANCE_MULTIPLIER * Math.max(0.5, devMeleeDashSpeedMultiplier)
+    )
+    const dashFrontHalfAngleRadians = Math.PI * 0.5
+
     let selectedTarget: TargetableEnemyRender | null = null
     let selectedDistance = Number.POSITIVE_INFINITY
 
@@ -3823,6 +3826,16 @@ function startTestMap(): void {
       const deltaY = candidate.y - player.y
       const centerDistance = Math.hypot(deltaX, deltaY)
       const edgeDistance = Math.max(0, centerDistance - Math.max(0, candidate.radius))
+
+      if (edgeDistance > dashAcquisitionRange) {
+        continue
+      } // end if candidate exceeds dash acquisition range
+
+      const candidateBearing = Math.atan2(deltaY, deltaX)
+      const candidateAngleDelta = normalizeAngleDelta(candidateBearing - player.angle)
+      if (Math.abs(candidateAngleDelta) > dashFrontHalfAngleRadians) {
+        continue
+      } // end if candidate is outside front 180-degree dash hemisphere
 
       if (edgeDistance < selectedDistance) {
         selectedDistance = edgeDistance
@@ -5752,22 +5765,42 @@ function startTestMap(): void {
         return playerWeapon.lockOnRange
       }
     },
-    'weapon.lockOnWindowWidthPercent': {
-      description: 'Horizontal lock window percentage.',
+    'weapon.horizontalLockAngle': {
+      description: 'Horizontal lock half-angle in degrees.',
       helpPath: ['Weapon', 'Lock-On'],
-      get: () => playerWeapon.lockOnWindowWidthPercent,
+      get: () => playerWeapon.horizontalLockAngle,
       set: (rawValue) => {
-        playerWeapon.lockOnWindowWidthPercent = Math.max(0, Math.min(100, Math.round(parseFiniteNumber(rawValue, 'weapon.lockOnWindowWidthPercent'))))
-        return playerWeapon.lockOnWindowWidthPercent
+        playerWeapon.horizontalLockAngle = Math.max(0, Math.min(89, parseFiniteNumber(rawValue, 'weapon.horizontalLockAngle')))
+        return playerWeapon.horizontalLockAngle
+      }
+    },
+    'weapon.verticalLockAngle': {
+      description: 'Vertical lock half-angle in degrees.',
+      helpPath: ['Weapon', 'Lock-On'],
+      get: () => playerWeapon.verticalLockAngle,
+      set: (rawValue) => {
+        playerWeapon.verticalLockAngle = Math.max(0, Math.min(89, parseFiniteNumber(rawValue, 'weapon.verticalLockAngle')))
+        return playerWeapon.verticalLockAngle
+      }
+    },
+    'weapon.lockOnWindowWidthPercent': {
+      description: 'Deprecated alias for weapon.horizontalLockAngle.',
+      helpPath: ['Weapon', 'Lock-On'],
+      get: () => playerWeapon.horizontalLockAngle,
+      set: (rawValue) => {
+        console.warn('weapon.lockOnWindowWidthPercent is deprecated. Use weapon.horizontalLockAngle instead.')
+        playerWeapon.horizontalLockAngle = Math.max(0, Math.min(89, parseFiniteNumber(rawValue, 'weapon.horizontalLockAngle')))
+        return playerWeapon.horizontalLockAngle
       }
     },
     'weapon.lockOnWindowHeightPercent': {
-      description: 'Vertical lock window percentage.',
+      description: 'Deprecated alias for weapon.verticalLockAngle.',
       helpPath: ['Weapon', 'Lock-On'],
-      get: () => playerWeapon.lockOnWindowHeightPercent,
+      get: () => playerWeapon.verticalLockAngle,
       set: (rawValue) => {
-        playerWeapon.lockOnWindowHeightPercent = Math.max(0, Math.min(100, Math.round(parseFiniteNumber(rawValue, 'weapon.lockOnWindowHeightPercent'))))
-        return playerWeapon.lockOnWindowHeightPercent
+        console.warn('weapon.lockOnWindowHeightPercent is deprecated. Use weapon.verticalLockAngle instead.')
+        playerWeapon.verticalLockAngle = Math.max(0, Math.min(89, parseFiniteNumber(rawValue, 'weapon.verticalLockAngle')))
+        return playerWeapon.verticalLockAngle
       }
     },
     'weapon.lockOnTimeMs': {
@@ -6669,6 +6702,10 @@ function startTestMap(): void {
         : commandToken
     const args = tokens.slice(1)
     const bindings = getConsoleBindings()
+    const deprecatedBindingWarnings: Record<string, string> = {
+      'weapon.lockOnWindowWidthPercent': 'weapon.lockOnWindowWidthPercent is deprecated. Use weapon.horizontalLockAngle instead.',
+      'weapon.lockOnWindowHeightPercent': 'weapon.lockOnWindowHeightPercent is deprecated. Use weapon.verticalLockAngle instead.'
+    }
     const normalizedCommand = commandLine.trim().replace(/\s+/g, ' ').toLowerCase()
 
     const getTargetLayoutExpressionMatch = commandLine.trim().match(/^getTargetLayout\s*\(\s*\{\s*layoutId\s*:\s*['\"]([A-Za-z-]+)['\"]\s*}\s*\)\s*$/)
@@ -7962,7 +7999,12 @@ function startTestMap(): void {
       if (!binding) {
         throw new Error(`Unknown path: ${path}`)
       } // end if binding missing
-      return [`${path} = ${formatConsoleValue(binding.get())}`]
+      const lines = [`${path} = ${formatConsoleValue(binding.get())}`]
+      const warning = deprecatedBindingWarnings[path]
+      if (warning) {
+        lines.push(`Warning: ${warning}`)
+      }
+      return lines
     } // end if get command
 
     if (command === 'set') {
@@ -7976,7 +8018,12 @@ function startTestMap(): void {
         throw new Error(`Path is not writable: ${path}`)
       } // end if binding is not writable
       const nextValue = await binding.set(rawValue)
-      return [`${path} = ${formatConsoleValue(nextValue)}`]
+      const lines = [`${path} = ${formatConsoleValue(nextValue)}`]
+      const warning = deprecatedBindingWarnings[path]
+      if (warning) {
+        lines.push(`Warning: ${warning}`)
+      }
+      return lines
     } // end if set command
 
     if (command === 'toggle') {
@@ -7993,7 +8040,12 @@ function startTestMap(): void {
         throw new Error(`Path is not boolean: ${path}`)
       } // end if binding value is not boolean
       const nextValue = await binding.set(currentValue ? 'false' : 'true')
-      return [`${path} = ${formatConsoleValue(nextValue)}`]
+      const lines = [`${path} = ${formatConsoleValue(nextValue)}`]
+      const warning = deprecatedBindingWarnings[path]
+      if (warning) {
+        lines.push(`Warning: ${warning}`)
+      }
+      return lines
     } // end if toggle command
 
     if (command === 'spawn') {
@@ -8537,9 +8589,6 @@ function startTestMap(): void {
 
     const flightSpeedLimit = PLAYER_FLIGHT_SPEED * flightRuntimeProfile.speedMultiplier
     const dashActive = activeMeleeDash !== null
-    const dashTurnInput = dashActive
-      ? ((input.turnRight ? 1 : 0) - (input.turnLeft ? 1 : 0))
-      : 0
     const cachedTurnLeft = input.turnLeft
     const cachedTurnRight = input.turnRight
     const cachedLookUp = input.lookUp
@@ -8560,6 +8609,8 @@ function startTestMap(): void {
       input.snapWestPending = false
       input.snapLeftPending = false
       input.snapRightPending = false
+      input.turnLeft = false
+      input.turnRight = false
       input.spawnTankPending = false
       input.spawnStrikerPending = false
       input.spawnBrutePending = false
@@ -8675,21 +8726,21 @@ function startTestMap(): void {
         activeMeleeDash.targetEnemyId = null
       } // end if tracked dash target is no longer valid
 
-      const maxTurnStep = movementProfile.turnRate * Math.max(0.2, movementWeightFactor) * movementDeltaSeconds
-      const manualTurnDelta = dashTurnInput * maxTurnStep
-      let homingTurnDelta = 0
-      if (dashTarget) {
-        const desiredAngle = Math.atan2(dashTarget.y - player.y, dashTarget.x - player.x)
-        const desiredDelta = normalizeAngleDelta(desiredAngle - player.angle)
-        const boundedDelta = Math.max(-maxTurnStep, Math.min(maxTurnStep, desiredDelta))
-        homingTurnDelta = boundedDelta * 0.85
-      } // end if dash has a homing target this frame
-
-      player.angle += homingTurnDelta + manualTurnDelta
-
       const dashDistance = dashSpeed * movementDeltaSeconds * MELEE_DASH_DISTANCE_MULTIPLIER
-      const nextX = player.x + Math.cos(player.angle) * dashDistance
-      const nextY = player.y + Math.sin(player.angle) * dashDistance
+      let dashDirectionX = Math.cos(player.angle)
+      let dashDirectionY = Math.sin(player.angle)
+      if (dashTarget) {
+        const targetDeltaX = dashTarget.x - player.x
+        const targetDeltaY = dashTarget.y - player.y
+        const targetDistance = Math.hypot(targetDeltaX, targetDeltaY)
+        if (targetDistance > 0.0001) {
+          dashDirectionX = targetDeltaX / targetDistance
+          dashDirectionY = targetDeltaY / targetDistance
+        }
+      } // end if dash has an eligible homing target
+
+      const nextX = player.x + dashDirectionX * dashDistance
+      const nextY = player.y + dashDirectionY * dashDistance
       const dashFeet = player.z ?? 0
       const xWithinMap = Math.max(0.06, Math.min(MAP_WIDTH - 0.06, nextX))
       const yWithinMap = Math.max(0.06, Math.min(MAP_HEIGHT - 0.06, nextY))
@@ -8703,8 +8754,18 @@ function startTestMap(): void {
         player.y = yWithinMap
       }
 
+      let reachedDashStrikeRange = false
+      if (equippedMeleeWeapon && activeMeleeDash.targetEnemyId !== null) {
+        const trackedTarget = getDashTargetById(activeMeleeDash.targetEnemyId)
+        if (trackedTarget) {
+          const distanceToTargetCenter = Math.hypot(trackedTarget.x - player.x, trackedTarget.y - player.y)
+          const distanceToTargetEdge = Math.max(0, distanceToTargetCenter - Math.max(0, trackedTarget.radius))
+          reachedDashStrikeRange = distanceToTargetEdge <= equippedMeleeWeapon.reach
+        }
+      }
+
       activeMeleeDash.remainingSeconds = Math.max(0, activeMeleeDash.remainingSeconds - deltaSeconds)
-      if (activeMeleeDash.remainingSeconds <= 0) {
+      if (reachedDashStrikeRange || activeMeleeDash.remainingSeconds <= 0) {
         const finishedDashHeatRatio = Math.max(0, Math.min(1, devCurrentHeat / Math.max(1, devMaxHeat)))
         const speedRatio = Math.max(0, Math.min(1.5, effectiveTopSpeed / Math.max(0.1, movementProfile.maxForwardSpeed)))
         const recoverySeconds = Math.max(
@@ -9081,9 +9142,8 @@ function startTestMap(): void {
           lockCandidateSlice.slice,
           collisionWorld,
           playerWeapon.lockOnRange,
-          playerWeapon.lockOnWindowWidthPercent,
-          playerWeapon.lockOnWindowHeightPercent,
-          getHalfHorizontalFovRadians(currentCanvasWidth / Math.max(1, currentCanvasHeight)),
+          playerWeapon.horizontalLockAngle,
+          playerWeapon.verticalLockAngle,
           lockModifiers
         )
       }
@@ -9899,8 +9959,8 @@ function startTestMap(): void {
         player,
         muzzleFlashAlpha,
         lockedTankId: targetLockState.currentTargetId,
-        lockOnWindowWidthPercent: playerWeapon.lockOnWindowWidthPercent,
-        lockOnWindowHeightPercent: playerWeapon.lockOnWindowHeightPercent
+        horizontalLockAngle: playerWeapon.horizontalLockAngle,
+        verticalLockAngle: playerWeapon.verticalLockAngle
       })
       const rendererDiagnostics = threeRenderer.getDiagnostics()
       worldStreaming.recordDrawCalls(rendererDiagnostics.drawCalls)

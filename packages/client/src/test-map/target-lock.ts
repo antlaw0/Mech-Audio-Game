@@ -1,4 +1,4 @@
-import { HALF_FOV, MAX_LOOK_PITCH, PLAYER_HEIGHT } from './constants.js'
+import { PLAYER_HEIGHT } from './constants.js'
 import { hasWorldLineOfSight3D, type WorldCollisionWorld } from './world-collision.js'
 import type { Player, TargetLockState, TargetableEnemyRender } from './types.js'
 
@@ -100,9 +100,8 @@ function computeTargetScore(
   player: Player,
   target: LockableTarget,
   lockOnRange: number,
-  lockOnWindowWidthPercent: number,
-  lockOnWindowHeightPercent: number,
-  halfHorizontalFovRadians: number
+  horizontalLockAngleDegrees: number,
+  verticalLockAngleDegrees: number
 ): {
   score: number
   horizontalAlignment: number
@@ -127,11 +126,11 @@ function computeTargetScore(
     angleDelta += 2 * Math.PI
   } // end while normalize negative overshoot
 
-  const maxHorizontalAngle = halfHorizontalFovRadians * (lockOnWindowWidthPercent / 100)
+  const maxHorizontalAngle = (Math.max(0, Math.min(89, horizontalLockAngleDegrees)) * Math.PI) / 180
   const horizontalAlignment = maxHorizontalAngle <= 0 ? 0 : clamp01(1 - (Math.abs(angleDelta) / maxHorizontalAngle))
 
   const desiredPitch = Math.atan2(playerEyeZ - targetCenterZ, Math.max(dist, 0.0001))
-  const maxVerticalPitch = MAX_LOOK_PITCH * (lockOnWindowHeightPercent / 100)
+  const maxVerticalPitch = (Math.max(0, Math.min(89, verticalLockAngleDegrees)) * Math.PI) / 180
   const pitchDelta = desiredPitch - player.pitch
   const verticalAlignment = maxVerticalPitch <= 0 ? 0 : clamp01(1 - (Math.abs(pitchDelta) / maxVerticalPitch))
 
@@ -218,9 +217,8 @@ export function updateTargetLock(
   targets: LockableTarget[],
   collisionWorld: WorldCollisionWorld,
   lockOnRange: number,
-  lockOnWindowWidthPercent = 100,
-  lockOnWindowHeightPercent = 100,
-  halfHorizontalFovRadians = HALF_FOV,
+  horizontalLockAngleDegrees = 30,
+  verticalLockAngleDegrees = 40,
   modifiers?: Partial<TargetLockModifiers>
 ): TargetLockUpdate {
   const resolvedModifiers = getResolvedModifiers(modifiers)
@@ -269,14 +267,14 @@ export function updateTargetLock(
     while (angleDelta < -Math.PI) {
       angleDelta += 2 * Math.PI
     } // end while normalize negative overshoot
-    const maxHorizontalAngle = halfHorizontalFovRadians * (lockOnWindowWidthPercent / 100)
+    const maxHorizontalAngle = (Math.max(0, Math.min(89, horizontalLockAngleDegrees)) * Math.PI) / 180
     if (Math.abs(angleDelta) > maxHorizontalAngle) {
       continue
     } // end if target not within horizontal lock-on window
 
     // Vertical lock-on window check based on the target elevation relative to the current aim.
     const desiredPitch = Math.atan2(playerEyeZ - targetCenterZ, Math.max(dist, 0.0001))
-    const maxVerticalPitch = MAX_LOOK_PITCH * (lockOnWindowHeightPercent / 100)
+    const maxVerticalPitch = (Math.max(0, Math.min(89, verticalLockAngleDegrees)) * Math.PI) / 180
     const pitchDelta = desiredPitch - player.pitch
     if (Math.abs(pitchDelta) > maxVerticalPitch) {
       continue
@@ -295,9 +293,8 @@ export function updateTargetLock(
       player,
       target,
       lockOnRange,
-      lockOnWindowWidthPercent,
-      lockOnWindowHeightPercent,
-      halfHorizontalFovRadians
+      horizontalLockAngleDegrees,
+      verticalLockAngleDegrees
     )
 
     const movementPenalty = getTargetMovementPenalty(target)

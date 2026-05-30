@@ -67,12 +67,13 @@ export type PartDefinition = {
   spreadDegrees?: number
   bulletSpeed?: number
   clipSize?: number
+  weaponReach?: number
   fireSound?: string
   reloadSound?: string
   damageType?: string
   firingMode?: 'fullauto' | 'semiauto'
-  lockboxWidth?: number
-  lockboxHeight?: number
+  horizontalLockAngle?: number
+  verticalLockAngle?: number
   effectiveRange?: number
   ammoConsumedPerShot?: number
   energyPerShot?: number
@@ -160,8 +161,9 @@ export const PART_DEFINITION_NUMERIC_KEYS = [
   'spreadDegrees',
   'bulletSpeed',
   'clipSize',
-  'lockboxWidth',
-  'lockboxHeight',
+  'weaponReach',
+  'horizontalLockAngle',
+  'verticalLockAngle',
   'effectiveRange',
   'ammoConsumedPerShot',
   'energyPerShot'

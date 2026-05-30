@@ -1,6 +1,8 @@
 import {
   BULLET_MAX_DIST,
   BULLET_SPEED,
+  HALF_FOV,
+  MAX_LOOK_PITCH,
   MISSILE_DEFAULT_EXPLOSION_DAMAGE,
   MISSILE_DEFAULT_EXPLOSION_RADIUS,
   MISSILE_DEFAULT_LOCK_ON_TIME_MS,
@@ -193,8 +195,8 @@ const resolveIsFullAuto = (definition: PartDefinition): boolean => {
   return (definition.passiveBonuses ?? []).some((bonus) => bonus.toLowerCase().includes('full auto'))
 }
 
-const clampPercent = (value: number): number => {
-  return Math.max(0, Math.min(100, value))
+const clampLockAngleDegrees = (value: number): number => {
+  return Math.max(0, Math.min(89, value))
 }
 
 const buildWeaponDefinition = (definition: PartDefinition, index: number): PlayerWeaponDefinition => {
@@ -231,8 +233,8 @@ const buildWeaponDefinition = (definition: PartDefinition, index: number): Playe
     isFullAuto: resolveIsFullAuto(definition),
     fireRateCooldownSeconds: Math.max(0, definition.fireRateCooldownSeconds ?? 0.2),
     projectileSize: projectileType === 'rocket' || projectileType === 'missile' ? 0.38 : (projectileType === 'laserBeam' ? 0.35 : 0.22),
-    lockOnWindowWidthPercent: clampPercent(definition.lockboxWidth ?? 100),
-    lockOnWindowHeightPercent: clampPercent(definition.lockboxHeight ?? 100),
+    horizontalLockAngle: clampLockAngleDegrees(definition.horizontalLockAngle ?? ((HALF_FOV * 180) / Math.PI)),
+    verticalLockAngle: clampLockAngleDegrees(definition.verticalLockAngle ?? ((MAX_LOOK_PITCH * 180) / Math.PI)),
     lockOnTimeMs,
     trackingRating,
     explosionRadius,
@@ -261,7 +263,7 @@ const buildMeleeDefinition = (definition: PartDefinition): PlayerMeleeWeaponDefi
     swingSoundPaths: [swingPath],
     damagePerSwing: Math.max(1, Math.round(definition.meleeDamage ?? definition.damagePerShot ?? 1)),
     meleeCooldownSeconds: Math.max(0, definition.fireRateCooldownSeconds ?? 0.8),
-    reach: 2.5,
+    reach: Math.max(0.5, definition.weaponReach ?? 2.5),
     coneAngleDegrees: 78
   }
 }

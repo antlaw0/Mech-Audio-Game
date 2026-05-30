@@ -244,10 +244,10 @@ export interface WeaponStats {
   fireRateCooldownSeconds: number
   /** Projectile collision radius in world units. */
   projectileSize: number
-  /** Horizontal lock-on window as percent of full FOV (0–100, default 100). */
-  lockOnWindowWidthPercent: number
-  /** Vertical lock-on window as percent of full pitch range (0–100, default 100). */
-  lockOnWindowHeightPercent: number
+  /** Horizontal targeting half-angle in degrees (target must be within +/- this value). */
+  horizontalLockAngle: number
+  /** Vertical targeting half-angle in degrees (target must be within +/- this value). */
+  verticalLockAngle: number
   /** Time in milliseconds a target must stay locked before missile fire is allowed. */
   lockOnTimeMs: number
   /** Missile guidance strength (0–1). */
