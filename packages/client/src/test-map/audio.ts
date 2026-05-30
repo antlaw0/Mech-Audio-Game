@@ -114,6 +114,9 @@ const SUPPRESSION_LOOP_BY_MATERIAL: Readonly<Partial<Record<SurfaceMaterial, str
 }
 
 const IMPACT_VOICE_POOL_SIZE = 6
+const WEAPON_FIRE_BASE_VOICE_POOL_SIZE = 8
+const WEAPON_FIRE_MAX_VOICE_POOL_SIZE = 20
+const WEAPON_FIRE_OVERLAP_WINDOW_SECONDS = 0.95
 const PROJECTILE_IMPACT_GLOBAL_GAIN = 2.2
 const PROJECTILE_IMPACT_GAIN_COMPENSATION_MIN_DISTANCE = 6
 const PROJECTILE_IMPACT_GAIN_COMPENSATION_MAX_DISTANCE = 72
@@ -1369,6 +1372,8 @@ export function createAudioController(): AudioController {
   const playerFireSoundVoicePools = new Map<string, Tone.Player[]>()
   const playerFireSoundVoiceCursors = new Map<string, number>()
   const playerFireSoundPendingLoads = new Set<string>()
+  const playerFireSoundLastShotMs = new Map<string, number>()
+  const playerFireSoundFastestIntervalMs = new Map<string, number>()
   const minigunLoopGain = new Tone.Gain(0.001).toDestination()
   const minigunSpinUpPlayer = new Tone.Player(minigunSpinUpPath).connect(minigunLoopGain)
   const minigunLoopPlayer = new Tone.Player(minigunLoopPath).connect(minigunLoopGain)
@@ -2056,7 +2061,7 @@ export function createAudioController(): AudioController {
     mobilityPlaceholderSourcesStarted = true
   } // end function ensureMobilityPlaceholderSourcesStarted
 
-  const playFromVoicePool = (voices: Tone.Player[], cursor: number): number => {
+  const playFromVoicePool = (voices: Tone.Player[], cursor: number, allowVoiceSteal = false): number => {
     if (voices.length === 0) {
       return cursor
     } // end if no voices in pool
@@ -2071,6 +2076,19 @@ export function createAudioController(): AudioController {
       voice.start()
       return (index + 1) % voices.length
     } // end for each pooled voice
+
+    if (allowVoiceSteal) {
+      for (let offset = 0; offset < voices.length; offset += 1) {
+        const index = (cursor + offset) % voices.length
+        const voice = voices[index]
+        if (!voice || !voice.loaded) {
+          continue
+        } // end if voice is not loaded and cannot be stolen
+
+        retriggerLoadedPlayer(voice)
+        return (index + 1) % voices.length
+      } // end for each pooled voice candidate for steal
+    } // end if voice stealing is allowed
 
     return cursor
   } // end function playFromVoicePool
@@ -3571,10 +3589,60 @@ export function createAudioController(): AudioController {
       return
     } // end if audio not started
 
+    const nowMs = performance.now()
+    const previousShotMs = playerFireSoundLastShotMs.get(soundPath)
+    if (previousShotMs !== undefined) {
+      const intervalMs = Math.max(1, nowMs - previousShotMs)
+      const previousFastestMs = playerFireSoundFastestIntervalMs.get(soundPath)
+      if (previousFastestMs === undefined) {
+        playerFireSoundFastestIntervalMs.set(soundPath, intervalMs)
+      } else {
+        const blendedFastestMs = Math.max(1, Math.min(previousFastestMs * 1.015, intervalMs))
+        playerFireSoundFastestIntervalMs.set(soundPath, blendedFastestMs)
+      }
+    }
+    playerFireSoundLastShotMs.set(soundPath, nowMs)
+
+    const fastestIntervalMs = playerFireSoundFastestIntervalMs.get(soundPath)
+    const shotsPerSecondEstimate = fastestIntervalMs === undefined
+      ? 0
+      : Math.max(1, 1000 / fastestIntervalMs)
+    const desiredPoolSize = Math.min(
+      WEAPON_FIRE_MAX_VOICE_POOL_SIZE,
+      Math.max(
+        WEAPON_FIRE_BASE_VOICE_POOL_SIZE,
+        Math.ceil(shotsPerSecondEstimate * WEAPON_FIRE_OVERLAP_WINDOW_SECONDS)
+      )
+    )
+
     const cachedPool = playerFireSoundVoicePools.get(soundPath)
     if (cachedPool) {
+      if (cachedPool.length < desiredPoolSize && !playerFireSoundPendingLoads.has(soundPath)) {
+        const voicesToAdd = desiredPoolSize - cachedPool.length
+        const additionalVoices = Array.from({ length: voicesToAdd }, () => new Tone.Player(soundPath).toDestination())
+        cachedPool.push(...additionalVoices)
+        playerFireSoundPendingLoads.add(soundPath)
+
+        void Promise.all(additionalVoices.map((voice) => voice.load(soundPath)))
+          .catch((error) => {
+            audioDebugWarn('Failed to grow player fire sound voice pool.', { soundPath, error })
+            for (const voice of additionalVoices) {
+              const index = cachedPool.indexOf(voice)
+              if (index >= 0) {
+                cachedPool.splice(index, 1)
+              }
+              voice.dispose()
+            } // end for each failed voice while expanding pool
+            const clampedCursor = Math.min(playerFireSoundVoiceCursors.get(soundPath) ?? 0, Math.max(0, cachedPool.length - 1))
+            playerFireSoundVoiceCursors.set(soundPath, clampedCursor)
+          })
+          .finally(() => {
+            playerFireSoundPendingLoads.delete(soundPath)
+          })
+      } // end if pool should expand for rapid cadence
+
       const currentCursor = playerFireSoundVoiceCursors.get(soundPath) ?? 0
-      const nextCursor = playFromVoicePool(cachedPool, currentCursor)
+      const nextCursor = playFromVoicePool(cachedPool, currentCursor, true)
       playerFireSoundVoiceCursors.set(soundPath, nextCursor)
       return
     } // end if cached fire sound voice pool exists
@@ -3584,7 +3652,7 @@ export function createAudioController(): AudioController {
     } // end if this sound path is still loading
 
     playerFireSoundPendingLoads.add(soundPath)
-    const poolSize = 8
+    const poolSize = desiredPoolSize
     const voicePool = Array.from({ length: poolSize }, () => new Tone.Player(soundPath).toDestination())
     playerFireSoundVoicePools.set(soundPath, voicePool)
     playerFireSoundVoiceCursors.set(soundPath, 0)
@@ -3592,7 +3660,7 @@ export function createAudioController(): AudioController {
     void Promise.all(voicePool.map((voice) => voice.load(soundPath)))
       .then(() => {
         const currentCursor = playerFireSoundVoiceCursors.get(soundPath) ?? 0
-        const nextCursor = playFromVoicePool(voicePool, currentCursor)
+        const nextCursor = playFromVoicePool(voicePool, currentCursor, true)
         playerFireSoundVoiceCursors.set(soundPath, nextCursor)
       })
       .catch((error) => {
