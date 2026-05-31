@@ -68,7 +68,9 @@ export type PartDefinition = {
   bulletSpeed?: number
   clipSize?: number
   weaponReach?: number
+  meleeContactTimeMs?: number
   fireSound?: string
+  meleeHitSound?: string
   reloadSound?: string
   damageType?: string
   firingMode?: 'fullauto' | 'semiauto'
@@ -162,6 +164,7 @@ export const PART_DEFINITION_NUMERIC_KEYS = [
   'bulletSpeed',
   'clipSize',
   'weaponReach',
+  'meleeContactTimeMs',
   'horizontalLockAngle',
   'verticalLockAngle',
   'effectiveRange',

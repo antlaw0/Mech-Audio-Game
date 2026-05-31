@@ -26,6 +26,7 @@ export interface PlayerMeleeWeaponDefinition extends MeleeWeaponStats {
   id: string
   name: string
   swingSoundPaths: string[]
+  meleeHitSoundPath: string
 } // end interface PlayerMeleeWeaponDefinition
 
 function createPistolReloadDefinition(): WeaponReloadDefinition {
@@ -111,6 +112,11 @@ const toWeaponSoundPath = (filename: string | undefined, fallbackFilename: strin
   const cleaned = (filename ?? '').trim()
   const resolved = cleaned.length > 0 ? cleaned : fallbackFilename
   return `assets/sounds/weapons/${resolved}`
+}
+
+const toOptionalWeaponSoundPath = (filename: string | undefined): string => {
+  const cleaned = (filename ?? '').trim()
+  return cleaned.length > 0 ? `assets/sounds/weapons/${cleaned}` : ''
 }
 
 const toReloadSoundPath = (filename: string): string => {
@@ -261,6 +267,8 @@ const buildMeleeDefinition = (definition: PartDefinition): PlayerMeleeWeaponDefi
     id: definition.id,
     name: definition.name,
     swingSoundPaths: [swingPath],
+    meleeHitSoundPath: toOptionalWeaponSoundPath(definition.meleeHitSound),
+    meleeContactTimeMs: Math.max(0, Math.round(definition.meleeContactTimeMs ?? 220)),
     damagePerSwing: Math.max(1, Math.round(definition.meleeDamage ?? definition.damagePerShot ?? 1)),
     meleeCooldownSeconds: Math.max(0, definition.fireRateCooldownSeconds ?? 0.8),
     reach: Math.max(0.5, definition.weaponReach ?? 2.5),

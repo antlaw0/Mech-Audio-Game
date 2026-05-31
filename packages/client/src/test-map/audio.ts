@@ -3678,6 +3678,24 @@ export function createAudioController(): AudioController {
 
   } // end function fireGunshot
 
+  const playMeleeHitSoundAfterSwing = (hitSoundPath: string, meleeContactTimeMs: number): void => {
+    const resolvedHitPath = hitSoundPath.trim()
+    if (resolvedHitPath.length <= 0) {
+      return
+    } // end if no melee hit sound is configured
+
+    const delayMs = Math.max(0, Math.round(meleeContactTimeMs))
+    void getOrCreateWeaponSoundPlayer(resolvedHitPath)
+      .then(() => {
+        window.setTimeout(() => {
+          fireGunshot(resolvedHitPath)
+        }, delayMs)
+      })
+      .catch(() => {
+        // Ignore sequencing failures and avoid playing a mistimed hit cue.
+      })
+  } // end function playMeleeHitSoundAfterSwing
+
   const updateMinigunLoopGain = (): void => {
     const targetGain = clamp(masterVolume * objectsVolume * 0.7, 0, 1.3)
     minigunLoopGain.gain.rampTo(targetGain, 0.03)
@@ -5076,6 +5094,7 @@ export function createAudioController(): AudioController {
     playCollisionThud,
     playPitchCenterConfirm,
     fireGunshot,
+    playMeleeHitSoundAfterSwing,
     startMinigunFiringLoop,
     stopMinigunFiringLoop,
     isMinigunLoopActive,

@@ -8850,15 +8850,15 @@ function startTestMap(): void {
 
         activeMeleeDash = null
         if (equippedMeleeWeapon) {
-          const soundPath = equippedMeleeWeapon.swingSoundPaths[Math.floor(Math.random() * equippedMeleeWeapon.swingSoundPaths.length)]
+          const swingSoundPath = equippedMeleeWeapon.swingSoundPaths[Math.floor(Math.random() * equippedMeleeWeapon.swingSoundPaths.length)]
             ?? equippedMeleeWeapon.swingSoundPaths[0]
-          if (soundPath) {
-            audio.fireGunshot(soundPath)
+          if (swingSoundPath) {
+            audio.fireGunshot(swingSoundPath)
           } // end if melee swing sound available
 
           const dashStrikeRange = equippedMeleeWeapon.reach
           const dashStrikeConeAngle = 180
-          performPlayerMeleeAttack(
+          const meleeHitCount = performPlayerMeleeAttack(
             combatWorld,
             audio,
             player,
@@ -8866,6 +8866,12 @@ function startTestMap(): void {
             dashStrikeRange,
             dashStrikeConeAngle
           )
+          if (meleeHitCount > 0) {
+            audio.playMeleeHitSoundAfterSwing(
+              equippedMeleeWeapon.meleeHitSoundPath,
+              equippedMeleeWeapon.meleeContactTimeMs
+            )
+          } // end if melee strike connected and can queue follow-up hit sound
           playerMeleeCooldownSeconds = Math.max(playerMeleeCooldownSeconds, equippedMeleeWeapon.meleeCooldownSeconds, recoverySeconds)
         } // end if melee weapon exists to resolve end-of-dash strike
       } // end if dash finished this frame

@@ -134,6 +134,9 @@ const normalizeCatalogDefinition = (entry: unknown, index: number): PartDefiniti
   if (typeof source.flightType === 'string') {
     normalized.flightType = source.flightType
   }
+  if (typeof source.meleeHitSound === 'string') {
+    normalized.meleeHitSound = source.meleeHitSound
+  }
 
   if (source.twoHanded === true) {
     normalized.twoHanded = true

@@ -273,6 +273,8 @@ export interface WeaponStats {
 } // end interface WeaponStats
 
 export interface MeleeWeaponStats {
+  meleeHitSoundPath: string
+  meleeContactTimeMs: number
   damagePerSwing: number
   meleeCooldownSeconds: number
   reach: number
@@ -425,6 +427,7 @@ export interface AudioController {
   playBump: () => void
   playPitchCenterConfirm: () => void
   fireGunshot: (soundPath?: string) => void
+  playMeleeHitSoundAfterSwing: (hitSoundPath: string, meleeContactTimeMs: number) => void
   startMinigunFiringLoop: () => void
   stopMinigunFiringLoop: () => void
   isMinigunLoopActive: () => boolean
