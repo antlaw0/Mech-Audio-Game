@@ -1,4 +1,11 @@
-import { CATEGORY_LABELS, type PartCategory, type PartDefinition, type PartInstance, type ResolvedPartStats } from '../../data/parts/types.js'
+import {
+  CATEGORY_LABELS,
+  type PartCategory,
+  type PartDefinition,
+  type PartInstance,
+  type ResolvedInstalledChip,
+  type ResolvedPartStats
+} from '../../data/parts/types.js'
 
 export type PartCardAction = {
   label: string
@@ -16,6 +23,22 @@ export type PartCardViewModel = {
   statusText?: string
   warnings?: string[]
   actions?: PartCardAction[]
+  chipSection?: PartCardChipSectionViewModel
+}
+
+export type PartCardChipSlotViewModel = {
+  slotIndex: number
+  chip: ResolvedInstalledChip | null
+  onToggleActive?: () => void
+  onRemoveChip?: () => void
+  onInsertChip?: () => void
+}
+
+export type PartCardChipSectionViewModel = {
+  slotCount: number
+  computeUsed: number
+  computeCapacity: number
+  slots: PartCardChipSlotViewModel[]
 }
 
 const PART_STAT_LABELS: Record<string, string> = {
@@ -39,6 +62,9 @@ const PART_STAT_LABELS: Record<string, string> = {
   energyUse: 'Energy Use',
   range: 'Range',
   lockOn: 'Lock On',
+  computeBandWidth: 'Compute Bandwidth (CU)',
+  chipSlots: 'Chip Slots',
+  chipMemoryCost: 'Memory Cost (CU)',
   stability: 'Stability',
   meleeDamage: 'Melee Damage',
   accuracy: 'Accuracy',
@@ -69,7 +95,7 @@ const getCategoryStats = (category: PartCategory): string[] => {
     case 'Head':
       return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'range']
     case 'Computer':
-      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'lockOn']
+      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'lockOn', 'computeBandWidth', 'chipSlots']
     case 'Core':
       return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'stability']
     case 'Generator':
@@ -138,6 +164,8 @@ const getCategoryStats = (category: PartCategory): string[] => {
         'twoHanded',
         'isMelee'
       ]
+    case 'Chip':
+      return ['chipMemoryCost']
     default:
       return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain']
   }
@@ -214,6 +242,97 @@ export const createPartCard = (model: PartCardViewModel): HTMLElement => {
     extrasBlock.className = 'garage-part-card-extras'
     extrasBlock.textContent = extras.join(' | ')
     card.appendChild(extrasBlock)
+  }
+
+  if (model.chipSection && model.chipSection.slotCount > 0) {
+    const chipSection = document.createElement('div')
+    chipSection.className = 'garage-chip-section'
+
+    const chipHeader = document.createElement('h3')
+    chipHeader.className = 'garage-chip-section-header'
+    chipHeader.textContent = `Chip Slots: ${model.chipSection.slotCount} | Compute: ${model.chipSection.computeUsed}/${model.chipSection.computeCapacity} CU`
+    chipSection.appendChild(chipHeader)
+
+    const slotList = document.createElement('div')
+    slotList.className = 'garage-chip-slot-list'
+
+    model.chipSection.slots.forEach((slot) => {
+      const slotCard = document.createElement('div')
+      slotCard.className = 'garage-chip-slot-card'
+
+      const slotTitle = document.createElement('h4')
+      slotTitle.className = 'garage-chip-slot-title'
+      slotTitle.textContent = `Slot ${slot.slotIndex + 1}`
+      slotCard.appendChild(slotTitle)
+
+      if (!slot.chip) {
+        const emptyText = document.createElement('div')
+        emptyText.className = 'garage-chip-slot-empty'
+        emptyText.textContent = 'Chip slot is empty.'
+        slotCard.appendChild(emptyText)
+      } else {
+        const chipTitle = document.createElement('div')
+        chipTitle.className = 'garage-chip-slot-chip-name'
+        chipTitle.textContent = slot.chip.chipName
+        slotCard.appendChild(chipTitle)
+
+        const chipMeta = document.createElement('div')
+        chipMeta.className = 'garage-chip-slot-meta'
+        const stateLabel = slot.chip.active ? (slot.chip.supportedByCompute ? 'Active' : 'Active (Unsupported)') : 'Deactivated'
+        chipMeta.textContent = `Memory: ${slot.chip.memoryCost} CU | State: ${stateLabel}`
+        slotCard.appendChild(chipMeta)
+
+        const modifierList = document.createElement('ul')
+        modifierList.className = 'garage-chip-slot-modifiers'
+        if (slot.chip.modifiers.length > 0) {
+          slot.chip.modifiers.forEach((modifier) => {
+            const item = document.createElement('li')
+            item.textContent = modifier
+            modifierList.appendChild(item)
+          })
+        } else {
+          const item = document.createElement('li')
+          item.textContent = 'No modifiers listed.'
+          modifierList.appendChild(item)
+        }
+        slotCard.appendChild(modifierList)
+      }
+
+      const actionRow = document.createElement('div')
+      actionRow.className = 'garage-chip-slot-actions'
+      if (slot.chip && slot.onToggleActive) {
+        const toggleButton = document.createElement('button')
+        toggleButton.type = 'button'
+        toggleButton.className = 'garage-action-button neutral'
+        toggleButton.textContent = slot.chip.active ? 'Deactivate Chip' : 'Activate Chip'
+        toggleButton.addEventListener('click', () => slot.onToggleActive?.())
+        actionRow.appendChild(toggleButton)
+      }
+      if (slot.chip && slot.onRemoveChip) {
+        const removeButton = document.createElement('button')
+        removeButton.type = 'button'
+        removeButton.className = 'garage-action-button neutral'
+        removeButton.textContent = 'Remove Chip'
+        removeButton.addEventListener('click', () => slot.onRemoveChip?.())
+        actionRow.appendChild(removeButton)
+      }
+      if (!slot.chip && slot.onInsertChip) {
+        const insertButton = document.createElement('button')
+        insertButton.type = 'button'
+        insertButton.className = 'garage-action-button primary'
+        insertButton.textContent = 'Insert Chip'
+        insertButton.addEventListener('click', () => slot.onInsertChip?.())
+        actionRow.appendChild(insertButton)
+      }
+      if (actionRow.childElementCount > 0) {
+        slotCard.appendChild(actionRow)
+      }
+
+      slotList.appendChild(slotCard)
+    })
+
+    chipSection.appendChild(slotList)
+    card.appendChild(chipSection)
   }
 
   if (model.warnings && model.warnings.length > 0) {

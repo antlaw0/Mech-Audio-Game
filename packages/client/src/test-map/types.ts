@@ -30,6 +30,7 @@ export interface InputState {
   turnRight: boolean
   lookUp: boolean
   lookDown: boolean
+  jumpPending: boolean
   subsystemSelectModifier: boolean
   pitchResetPending: boolean
   fireHeld: boolean
@@ -437,6 +438,7 @@ export interface AudioController {
   updateFlightLoopAudio: (params: FlightLoopUpdateParams) => void
   startBoostAudio: () => void
   stopBoostAudio: () => void
+  playJump: () => void
   playHardLanding: () => void
   playCollisionThud: (direction: number) => void
   playCardinalOrientationCue: (newFacing: number) => void

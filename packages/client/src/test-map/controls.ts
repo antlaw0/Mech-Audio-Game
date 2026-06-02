@@ -9,6 +9,7 @@ export type ControlActionId =
   | 'lookUp'
   | 'lookDown'
   | 'recenterPitch'
+  | 'jump'
   | 'fire'
   | 'reload'
   | 'melee'
@@ -51,6 +52,7 @@ const CONTROL_BINDING_DEFINITIONS: readonly ControlBindingDefinition[] = [
   { id: 'lookUp', label: 'Look up', description: 'Pitch the camera upward.', section: 'Movement', defaultCode: 'Numpad8' },
   { id: 'lookDown', label: 'Look down', description: 'Pitch the camera downward.', section: 'Movement', defaultCode: 'Numpad2' },
   { id: 'recenterPitch', label: 'Recenter pitch', description: 'Quickly recenter pitch toward horizon.', section: 'Movement', defaultCode: 'Numpad5' },
+  { id: 'jump', label: 'Jump', description: 'Leap toward flight altitude, then fall back to support.', section: 'Movement', defaultCode: 'Space' },
   { id: 'fire', label: 'Fire weapon', description: 'Fire the active weapon.', section: 'Combat', defaultCode: 'Numpad0' },
   { id: 'reload', label: 'Reload', description: 'Reload the active ranged weapon.', section: 'Combat', defaultCode: 'Tab' },
   { id: 'melee', label: 'Melee attack', description: 'Use the melee weapon.', section: 'Combat', defaultCode: 'KeyR' },

@@ -1474,6 +1474,8 @@ export function createAudioController(): AudioController {
 
   const boostEngageGain = new Tone.Gain(0.9).toDestination()
   const boostEngageSound = new Tone.Player('assets/sounds/boostEngage.ogg').connect(boostEngageGain)
+  const jumpGain = new Tone.Gain(0.86).toDestination()
+  const jumpSound = new Tone.Player('assets/sounds/mechJump1.ogg').connect(jumpGain)
   const hardLandingGain = new Tone.Gain(0.92).toDestination()
   const hardLandingSound = new Tone.Player('assets/sounds/hardLanding.ogg').connect(hardLandingGain)
 
@@ -2832,6 +2834,16 @@ export function createAudioController(): AudioController {
     flightBoostDistortion.wet.rampTo(0, 1.5)
     flightBoostGain.gain.rampTo(1.0, 1.5)
   } // end function stopBoostAudio
+
+  const playJump = (): void => {
+    if (!audioStarted || audioPaused || !isAudioContextRunning() || !jumpSound.loaded) {
+      return
+    } // end if jump cue unavailable
+    if (jumpSound.state === 'started') {
+      jumpSound.stop()
+    } // end if jump cue is already active
+    jumpSound.start()
+  } // end function playJump
 
   const playHardLanding = (): void => {
     if (!audioStarted || audioPaused || !isAudioContextRunning() || !hardLandingSound.loaded) {
@@ -5090,6 +5102,7 @@ export function createAudioController(): AudioController {
     updateFlightLoopAudio,
     startBoostAudio,
     stopBoostAudio,
+    playJump,
     playHardLanding,
     playCollisionThud,
     playPitchCenterConfirm,

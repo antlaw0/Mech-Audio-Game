@@ -146,6 +146,10 @@ export function bindInput(
         input.pitchResetPending = true
       } // end if recenterPitch
 
+      if (matchesBoundControl(event, 'jump')) {
+        input.jumpPending = true
+      } // end if jump
+
       if (matchesBoundControl(event, 'fire')) {
         input.fireHeld = true
         input.firePending = true
@@ -297,6 +301,10 @@ export function bindInput(
     if (matchesBoundControl(event, 'lookDown')) {
       input.lookDown = false
     } // end if lookDown
+
+    if (matchesBoundControl(event, 'jump')) {
+      input.jumpPending = false
+    } // end if jump
 
     if (matchesBoundControl(event, 'fire')) {
       input.fireHeld = false

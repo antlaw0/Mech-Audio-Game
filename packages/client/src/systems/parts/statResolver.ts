@@ -1,4 +1,10 @@
-import { PART_DEFINITION_NUMERIC_KEYS, type PartDefinition, type PartInstance, type ResolvedPartStats } from '../../data/parts/types.js'
+import {
+  PART_DEFINITION_NUMERIC_KEYS,
+  type PartDefinition,
+  type PartInstance,
+  type ResolvedInstalledChip,
+  type ResolvedPartStats
+} from '../../data/parts/types.js'
 
 let definitionLookup: (definitionId: string) => PartDefinition | null = () => null
 let instanceLookup: (instanceId: string) => PartInstance | null = () => null
@@ -56,6 +62,36 @@ export const getFinalPartStats = (instanceId: string): ResolvedPartStats => {
   const currentIntegrity = clamp(instance.currentIntegrity, 0, definition.integrity)
   const integrityRatio = clamp(currentIntegrity / Math.max(1, definition.integrity), 0, 1)
   const damagePenaltyMultiplier = getDamagePenaltyMultiplier(currentIntegrity, definition.integrity)
+  const chipComputeCapacity = Math.max(0, Math.floor(definition.computeBandWidth ?? 0))
+  let chipComputeUsed = 0
+  const resolvedInstalledChips: ResolvedInstalledChip[] = []
+  for (const installedChip of instance.installedChips) {
+    const chipInstance = instanceLookup(installedChip.chipInstanceId)
+    if (!chipInstance) {
+      continue
+    }
+    const chipDefinition = definitionLookup(chipInstance.definitionId)
+    if (!chipDefinition || chipDefinition.category !== 'Chip') {
+      continue
+    }
+    const memoryCost = Math.max(0, Math.floor(chipDefinition.chipMemoryCost ?? 0))
+    const canSupport = installedChip.active
+      ? (chipComputeUsed + memoryCost) <= chipComputeCapacity
+      : false
+    if (canSupport) {
+      chipComputeUsed += memoryCost
+    }
+    resolvedInstalledChips.push({
+      chipInstanceId: chipInstance.instanceId,
+      chipDefinitionId: chipDefinition.id,
+      chipName: chipDefinition.name,
+      memoryCost,
+      modifiers: [...(chipDefinition.chipModifiers ?? [])],
+      active: installedChip.active,
+      supportedByCompute: canSupport
+    })
+  }
+
   const stats: ResolvedPartStats = {
     ...definition,
     instanceId,
@@ -63,7 +99,11 @@ export const getFinalPartStats = (instanceId: string): ResolvedPartStats => {
     integrityRatio,
     damagePenaltyMultiplier,
     modifierSummary: [],
-    installedChips: [...instance.installedChips]
+    installedChips: resolvedInstalledChips.map((entry) => entry.chipName),
+    installedChipStates: resolvedInstalledChips,
+    chipSlotCount: Math.max(0, Math.floor(definition.chipSlots ?? 0)),
+    chipComputeUsed,
+    chipComputeCapacity
   }
 
   instance.modifiers.forEach((modifier) => {

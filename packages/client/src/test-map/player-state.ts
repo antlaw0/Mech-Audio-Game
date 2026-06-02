@@ -29,6 +29,7 @@ export function createInputState(): InputState {
     turnRight: false,
     lookUp: false,
     lookDown: false,
+    jumpPending: false,
     subsystemSelectModifier: false,
     pitchResetPending: false,
     fireHeld: false,

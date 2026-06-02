@@ -601,6 +601,14 @@ function startTestMap(): void {
   let isEditorModalOpen = false
   let editorCurrentEnemyId: EnemyId = 'tank'
   let isWeaponEditorOpen = false
+  type ActiveEditorModalState = {
+    modal: HTMLDivElement
+    returnFocusTo: HTMLElement | null
+    restoreBackgroundAriaHidden: () => void
+    keydownHandler: (event: KeyboardEvent) => void
+    focusInHandler: (event: FocusEvent) => void
+  }
+  let activeEditorModalState: ActiveEditorModalState | null = null
   let playerFireCooldownSeconds = 0
   let playerMeleeCooldownSeconds = 0
   let isReloading = false
@@ -3100,6 +3108,158 @@ function startTestMap(): void {
     openNavigationMenu()
   } // end function toggleNavigationMenu
 
+  const getModalFocusableElements = (container: HTMLElement): HTMLElement[] => {
+    const selector = [
+      'button:not([disabled])',
+      '[href]',
+      'input:not([disabled])',
+      'select:not([disabled])',
+      'textarea:not([disabled])',
+      '[tabindex]:not([tabindex="-1"])'
+    ].join(',')
+
+    return Array.from(container.querySelectorAll<HTMLElement>(selector)).filter((element) => {
+      if (element.hasAttribute('disabled') || element.getAttribute('aria-hidden') === 'true') {
+        return false
+      }
+      if (element.closest('[hidden], [aria-hidden="true"]')) {
+        return false
+      }
+      const style = window.getComputedStyle(element)
+      if (style.display === 'none' || style.visibility === 'hidden') {
+        return false
+      }
+      const tabIndex = element.getAttribute('tabindex')
+      if (tabIndex !== null && Number(tabIndex) < 0) {
+        return false
+      }
+      return true
+    })
+  } // end function getModalFocusableElements
+
+  const setEditorModalBackgroundAriaHidden = (modalElement: HTMLElement): (() => void) => {
+    const bodyChildren = Array.from(document.body.children)
+    const previousStates: Array<{ element: Element; hadAttribute: boolean; previousValue: string | null }> = []
+
+    bodyChildren.forEach((element) => {
+      if (element === modalElement || element.contains(modalElement)) {
+        return
+      }
+      const hadAttribute = element.hasAttribute('aria-hidden')
+      const previousValue = element.getAttribute('aria-hidden')
+      element.setAttribute('aria-hidden', 'true')
+      previousStates.push({ element, hadAttribute, previousValue })
+    })
+
+    return () => {
+      previousStates.forEach(({ element, hadAttribute, previousValue }) => {
+        if (!hadAttribute) {
+          element.removeAttribute('aria-hidden')
+          return
+        }
+        if (previousValue === null) {
+          element.removeAttribute('aria-hidden')
+          return
+        }
+        element.setAttribute('aria-hidden', previousValue)
+      })
+    }
+  } // end function setEditorModalBackgroundAriaHidden
+
+  const deactivateEditorModalAccessibility = (modalElement?: HTMLDivElement): void => {
+    const state = activeEditorModalState
+    if (!state) {
+      return
+    }
+    if (modalElement && state.modal !== modalElement) {
+      return
+    }
+
+    document.removeEventListener('keydown', state.keydownHandler, true)
+    document.removeEventListener('focusin', state.focusInHandler, true)
+    state.restoreBackgroundAriaHidden()
+    const returnFocusTo = state.returnFocusTo
+    activeEditorModalState = null
+
+    if (returnFocusTo instanceof HTMLElement && returnFocusTo.isConnected) {
+      window.requestAnimationFrame(() => {
+        returnFocusTo.focus({ preventScroll: true })
+      })
+    }
+  } // end function deactivateEditorModalAccessibility
+
+  const activateEditorModalAccessibility = (modalElement: HTMLDivElement, initialFocusTarget?: HTMLElement | null): void => {
+    deactivateEditorModalAccessibility()
+
+    const returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const restoreBackgroundAriaHidden = setEditorModalBackgroundAriaHidden(modalElement)
+    modalElement.tabIndex = -1
+
+    const resolveInitialFocus = (): HTMLElement => {
+      if (initialFocusTarget instanceof HTMLElement) {
+        return initialFocusTarget
+      }
+      return getModalFocusableElements(modalElement)[0] ?? modalElement
+    }
+
+    const keydownHandler = (event: KeyboardEvent): void => {
+      if (event.code !== 'Tab') {
+        return
+      }
+
+      const focusable = getModalFocusableElements(modalElement)
+      if (focusable.length <= 0) {
+        event.preventDefault()
+        modalElement.focus({ preventScroll: true })
+        return
+      }
+
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      const activeInsideModal = !!activeElement && modalElement.contains(activeElement)
+
+      if (event.shiftKey) {
+        if (!activeInsideModal || activeElement === first) {
+          event.preventDefault()
+          last?.focus({ preventScroll: true })
+        }
+        return
+      }
+
+      if (!activeInsideModal || activeElement === last) {
+        event.preventDefault()
+        first?.focus({ preventScroll: true })
+      }
+    }
+
+    const focusInHandler = (event: FocusEvent): void => {
+      const target = event.target
+      if (!(target instanceof HTMLElement)) {
+        return
+      }
+      if (modalElement.contains(target)) {
+        return
+      }
+      resolveInitialFocus().focus({ preventScroll: true })
+    }
+
+    document.addEventListener('keydown', keydownHandler, true)
+    document.addEventListener('focusin', focusInHandler, true)
+
+    activeEditorModalState = {
+      modal: modalElement,
+      returnFocusTo,
+      restoreBackgroundAriaHidden,
+      keydownHandler,
+      focusInHandler
+    }
+
+    window.requestAnimationFrame(() => {
+      resolveInitialFocus().focus({ preventScroll: true })
+    })
+  } // end function activateEditorModalAccessibility
+
   const setEditorModalVisible = (visible: boolean): void => {
     if (!(enemyEditorModalElement instanceof HTMLDivElement)) {
       return
@@ -3200,14 +3360,19 @@ function startTestMap(): void {
 
   const openWeaponEditor = (): void => {
     populateWeaponEditorForm(playerWeapon)
-    setWeaponEditorModalVisible(true)
+    if (weaponEditorModalElement instanceof HTMLDivElement) {
+      setWeaponEditorModalVisible(true)
+      activateEditorModalAccessibility(weaponEditorModalElement, weaponTypeSelect)
+    }
     isWeaponEditorOpen = true
     accessibilityModeManager.openMenu('weaponEditorModal')
-    weaponTypeSelect?.focus()
   } // end function openWeaponEditor
 
   const closeWeaponEditor = (): void => {
     setWeaponEditorModalVisible(false)
+    if (weaponEditorModalElement instanceof HTMLDivElement) {
+      deactivateEditorModalAccessibility(weaponEditorModalElement)
+    }
     isWeaponEditorOpen = false
     accessibilityModeManager.closeMenu('weaponEditorModal')
   } // end function closeWeaponEditor
@@ -3282,14 +3447,19 @@ function startTestMap(): void {
       enemyEditorTitleElement.textContent = `Edit Enemy: ${def.name}`
     } // end if title element exists
     populateEditorForm(def)
-    setEditorModalVisible(true)
+    if (enemyEditorModalElement instanceof HTMLDivElement) {
+      setEditorModalVisible(true)
+      activateEditorModalAccessibility(enemyEditorModalElement, editorNameInput)
+    }
     isEditorModalOpen = true
     accessibilityModeManager.openMenu('enemyEditorModal')
-    editorNameInput?.focus()
   } // end function openEnemyEditorModal
 
   const closeEnemyEditorModal = (): void => {
     setEditorModalVisible(false)
+    if (enemyEditorModalElement instanceof HTMLDivElement) {
+      deactivateEditorModalAccessibility(enemyEditorModalElement)
+    }
     isEditorModalOpen = false
     accessibilityModeManager.closeMenu('enemyEditorModal')
   } // end function closeEnemyEditorModal
@@ -6693,7 +6863,10 @@ function startTestMap(): void {
 
   let devConsole: ReturnType<typeof createDeveloperConsole> | null = null
 
-  const closeDeveloperConsole = async (resumeGameplay: boolean = consoleResumeOnClose): Promise<void> => {
+  const closeDeveloperConsole = async (
+    resumeGameplay: boolean = consoleResumeOnClose,
+    options?: { showPauseOverlayOnClose?: boolean }
+  ): Promise<void> => {
     if (!isConsoleOpen) {
       return
     } // end if console already closed
@@ -6702,16 +6875,19 @@ function startTestMap(): void {
     devConsole?.close()
     accessibilityModeManager.closeMenu('devConsoleOverlay')
     const shouldResume = resumeGameplay
+    const showPauseOverlayOnClose = options?.showPauseOverlayOnClose !== false
     consoleResumeOnClose = false
     if (shouldResume) {
       await resumeGame()
       return
     } // end if gameplay should resume after closing console
 
-    setPauseOverlayVisible(true)
-    if (resumeButtonElement instanceof HTMLButtonElement) {
-      resumeButtonElement.focus()
-    } // end if pause menu should regain focus
+    if (showPauseOverlayOnClose) {
+      setPauseOverlayVisible(true)
+      if (resumeButtonElement instanceof HTMLButtonElement) {
+        resumeButtonElement.focus()
+      } // end if pause menu should regain focus
+    }
   } // end function closeDeveloperConsole
 
   const openDeveloperConsole = async (): Promise<void> => {
@@ -7784,7 +7960,7 @@ function startTestMap(): void {
     if (normalizedCommand.startsWith('spawn enemy ')) {
       const rawEnemyArg = (commandLine.trim().split(/\s+/)[2] ?? '').toLowerCase()
       if (rawEnemyArg === 'dummy' || rawEnemyArg === 'test-dummy' || rawEnemyArg === 'testdummy') {
-        await closeDeveloperConsole(false)
+        await closeDeveloperConsole(false, { showPauseOverlayOnClose: false })
         openEnemyEditorModal('test-dummy')
         return ['Opened spawn modal for test-dummy.']
       } // end if spawn enemy dummy should open modal
@@ -7799,7 +7975,7 @@ function startTestMap(): void {
     } // end if spawn enemy command
 
     if (normalizedCommand === 'weapon edit on') {
-      await closeDeveloperConsole(false)
+      await closeDeveloperConsole(false, { showPauseOverlayOnClose: false })
       openWeaponEditor()
       return ['Opened weapon edit modal.']
     } // end if weapon edit on command
@@ -8122,7 +8298,7 @@ function startTestMap(): void {
     if (command === 'spawn') {
       const rawEnemyArg = (args[0] ?? '').toLowerCase()
       if (rawEnemyArg === 'dummy' || rawEnemyArg === 'test-dummy' || rawEnemyArg === 'testdummy') {
-        await closeDeveloperConsole(false)
+        await closeDeveloperConsole(false, { showPauseOverlayOnClose: false })
         openEnemyEditorModal('test-dummy')
         return ['Opened spawn modal for test-dummy.']
       } // end if spawn dummy should open modal
@@ -8762,7 +8938,8 @@ function startTestMap(): void {
           mode: flightRuntimeProfile.mode,
           rotorCount: flightRuntimeProfile.rotorCount,
           spinUpSeconds: flightRuntimeProfile.takeoffDurationSeconds,
-          maxHorizontalSpeed: flightSpeedLimit
+          maxHorizontalSpeed: flightSpeedLimit,
+          stability: flightRuntimeProfile.stability
         },
         pitchAssistContext: {
           hasTargetLock: pitchAssistHasTargetLock,

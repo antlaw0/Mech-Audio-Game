@@ -8,6 +8,7 @@ export const PART_CATEGORIES = [
   'RightArm',
   'Utility1',
   'Utility2',
+  'Chip',
   'HandWeapon',
   'ShoulderWeapon'
 ] as const
@@ -79,6 +80,15 @@ export type PartDefinition = {
   effectiveRange?: number
   ammoConsumedPerShot?: number
   energyPerShot?: number
+  chipSlots?: number
+  computeBandWidth?: number
+  chipMemoryCost?: number
+  chipModifiers?: string[]
+}
+
+export type InstalledChipState = {
+  chipInstanceId: string
+  active: boolean
 }
 
 export type PartInstance = {
@@ -86,8 +96,18 @@ export type PartInstance = {
   definitionId: string
   currentIntegrity: number
   modifiers: PartModifier[]
-  installedChips: string[]
+  installedChips: InstalledChipState[]
   rngSeed: number
+}
+
+export type ResolvedInstalledChip = {
+  chipInstanceId: string
+  chipDefinitionId: string
+  chipName: string
+  memoryCost: number
+  modifiers: string[]
+  active: boolean
+  supportedByCompute: boolean
 }
 
 export type MechLoadout = {
@@ -124,6 +144,10 @@ export type ResolvedPartStats = PartDefinition & {
   damagePenaltyMultiplier: number
   modifierSummary: string[]
   installedChips: string[]
+  installedChipStates: ResolvedInstalledChip[]
+  chipSlotCount: number
+  chipComputeUsed: number
+  chipComputeCapacity: number
 }
 
 export type GarageSnapshot = {
@@ -169,7 +193,10 @@ export const PART_DEFINITION_NUMERIC_KEYS = [
   'verticalLockAngle',
   'effectiveRange',
   'ammoConsumedPerShot',
-  'energyPerShot'
+  'energyPerShot',
+  'chipSlots',
+  'computeBandWidth',
+  'chipMemoryCost'
 ] as const
 
 export type PartNumericKey = typeof PART_DEFINITION_NUMERIC_KEYS[number]
@@ -184,6 +211,7 @@ export const CATEGORY_LABELS: Record<PartCategory, string> = {
   RightArm: 'Right Arm',
   Utility1: 'Utility 1',
   Utility2: 'Utility 2',
+  Chip: 'Chips',
   HandWeapon: 'Hand Weapon',
   ShoulderWeapon: 'Shoulder Weapon'
 }

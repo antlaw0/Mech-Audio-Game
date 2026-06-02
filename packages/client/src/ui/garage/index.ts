@@ -9,7 +9,11 @@ const createDefinitionPreviewStats = (definition: PartDefinition) => ({
   integrityRatio: 1,
   damagePenaltyMultiplier: 1,
   modifierSummary: [],
-  installedChips: []
+  installedChips: [],
+  installedChipStates: [],
+  chipSlotCount: Math.max(0, Math.floor(definition.chipSlots ?? 0)),
+  chipComputeUsed: 0,
+  chipComputeCapacity: Math.max(0, Math.floor(definition.computeBandWidth ?? 0))
 })
 
 const buildCatalogExportFileName = (): string => {
@@ -78,6 +82,35 @@ const getFocusableElements = (container: HTMLElement): HTMLElement[] => {
   })
 }
 
+const setBackgroundAriaHidden = (overlay: HTMLElement): (() => void) => {
+  const bodyChildren = Array.from(document.body.children)
+  const hiddenEntries: Array<{ element: Element; hadAttribute: boolean; previousValue: string | null }> = []
+
+  bodyChildren.forEach((element) => {
+    if (element === overlay || element.contains(overlay)) {
+      return
+    }
+    const hadAttribute = element.hasAttribute('aria-hidden')
+    const previousValue = element.getAttribute('aria-hidden')
+    element.setAttribute('aria-hidden', 'true')
+    hiddenEntries.push({ element, hadAttribute, previousValue })
+  })
+
+  return () => {
+    hiddenEntries.forEach(({ element, hadAttribute, previousValue }) => {
+      if (!hadAttribute) {
+        element.removeAttribute('aria-hidden')
+        return
+      }
+      if (previousValue === null) {
+        element.removeAttribute('aria-hidden')
+        return
+      }
+      element.setAttribute('aria-hidden', previousValue)
+    })
+  }
+}
+
 const renderModal = (modalContent: HTMLElement, focusOptions: ModalFocusOptions = {}): Promise<boolean> => {
   return new Promise((resolve) => {
     const overlay = document.createElement('div')
@@ -87,6 +120,7 @@ const renderModal = (modalContent: HTMLElement, focusOptions: ModalFocusOptions 
     modal.className = 'garage-modal'
     modal.setAttribute('role', 'dialog')
     modal.setAttribute('aria-modal', 'true')
+    modal.tabIndex = -1
     modal.appendChild(modalContent)
     overlay.appendChild(modal)
 
@@ -99,20 +133,31 @@ const renderModal = (modalContent: HTMLElement, focusOptions: ModalFocusOptions 
       modal.setAttribute('aria-labelledby', headingElement.id)
     }
 
+    const bodyElement = modal.querySelector('.garage-modal-body') as HTMLElement | null
+    if (bodyElement) {
+      if (bodyElement.id.length === 0) {
+        bodyElement.id = `garageModalBody-${Math.random().toString(36).slice(2, 10)}`
+      }
+      modal.setAttribute('aria-describedby', bodyElement.id)
+    }
+
     const getInitialFocusTarget = (): HTMLElement | null => {
       if (headingElement) {
         return headingElement
       }
-      return getFocusableElements(modal)[0] ?? null
+      return getFocusableElements(modal)[0] ?? modal
     }
 
     let closed = false
+    let restoreBackgroundAriaHidden: (() => void) | null = null
 
     const close = (result: boolean): void => {
       if (closed) {
         return
       }
       closed = true
+      restoreBackgroundAriaHidden?.()
+      restoreBackgroundAriaHidden = null
       overlay.remove()
       resolve(result)
 
@@ -216,8 +261,9 @@ const renderModal = (modalContent: HTMLElement, focusOptions: ModalFocusOptions 
     })
 
     document.body.appendChild(overlay)
+    restoreBackgroundAriaHidden = setBackgroundAriaHidden(overlay)
     window.requestAnimationFrame(() => {
-      getInitialFocusTarget()?.focus()
+      getInitialFocusTarget()?.focus({ preventScroll: true })
     })
   })
 }
@@ -397,6 +443,34 @@ const createDeleteModalContent = (definition: PartDefinition): HTMLElement => {
   return wrapper
 }
 
+const createInfoModalContent = (titleText: string, bodyText: string): HTMLElement => {
+  const wrapper = document.createElement('div')
+  wrapper.className = 'garage-modal-content'
+
+  const title = document.createElement('h2')
+  title.className = 'garage-modal-title'
+  title.textContent = titleText
+  wrapper.appendChild(title)
+
+  const body = document.createElement('p')
+  body.className = 'garage-modal-body'
+  body.textContent = bodyText
+  wrapper.appendChild(body)
+
+  const actions = document.createElement('div')
+  actions.className = 'garage-modal-actions'
+
+  const okButton = document.createElement('button')
+  okButton.type = 'button'
+  okButton.className = 'garage-action-button primary'
+  okButton.dataset.garageModalCancel = 'true'
+  okButton.textContent = 'OK'
+  actions.appendChild(okButton)
+
+  wrapper.appendChild(actions)
+  return wrapper
+}
+
 const buildDefinitionDraft = (definition?: PartDefinition, forcedCategory?: PartCategory): PartDefinition => {
   return cloneDefinition(definition ?? {
     id: '',
@@ -414,12 +488,12 @@ const buildDefinitionDraft = (definition?: PartDefinition, forcedCategory?: Part
 }
 
 const getEditableKeys = (category: PartCategory): string[] => {
-  const shared = ['id', 'name', 'integrity', 'weight', 'PDEF', 'EDEF', 'energyDrain']
+  const shared = ['id', 'name', 'integrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'chipSlots']
   switch (category) {
     case 'Head':
       return [...shared, 'range']
     case 'Computer':
-      return [...shared, 'lockOn']
+      return [...shared, 'lockOn', 'computeBandWidth']
     case 'Core':
       return [...shared, 'stability']
     case 'Generator':
@@ -438,6 +512,8 @@ const getEditableKeys = (category: PartCategory): string[] => {
       return [...shared, 'damagePerShot', 'fireRateCooldownSeconds', 'projectileCount', 'spreadDegrees', 'bulletSpeed', 'clipSize', 'weaponReach', 'meleeContactTimeMs', 'accuracy', 'effectiveRange', 'stability', 'meleeDamage', 'meleeHitSound', 'twoHanded', 'isMelee', 'isPassive']
     case 'ShoulderWeapon':
       return [...shared, 'damagePerShot', 'fireRateCooldownSeconds', 'projectileCount', 'spreadDegrees', 'bulletSpeed', 'clipSize', 'weaponReach', 'meleeContactTimeMs', 'accuracy', 'effectiveRange', 'stability', 'meleeDamage', 'meleeHitSound', 'twoHanded', 'isPassive']
+    case 'Chip':
+      return [...shared, 'chipMemoryCost']
     default:
       return shared
   }
@@ -601,6 +677,233 @@ export const createGarageView = (options: GarageViewOptions): GarageViewControll
     return shoulderEntries.find((entry) => entry.occupiedSlots.includes(slot)) ?? null
   }
 
+  const getUninstalledChipInstances = (): PartInstance[] => {
+    const chips = options.store.getGarageInstancesByCategory('Chip')
+    return chips.filter((chipInstance) => options.store.findChipHostInstance(chipInstance.instanceId) === null)
+  }
+
+  const buildChipSectionForHost = (hostInstance: PartInstance, hostDefinition: PartDefinition) => {
+    const slotCount = Math.max(0, Math.floor(hostDefinition.chipSlots ?? 0))
+    if (slotCount <= 0) {
+      return undefined
+    }
+
+    const resolved = getFinalPartStats(hostInstance.instanceId)
+    const resolvedByChipId = new Map(resolved.installedChipStates.map((chip) => [chip.chipInstanceId, chip] as const))
+    const uninstalledChips = getUninstalledChipInstances()
+    const canInsertIntoHost = hostDefinition.category === 'Computer'
+
+    const slots = Array.from({ length: slotCount }, (_, slotIndex) => {
+      const installedState = hostInstance.installedChips[slotIndex]
+      const chip = installedState ? (resolvedByChipId.get(installedState.chipInstanceId) ?? null) : null
+
+      return {
+        slotIndex,
+        chip,
+        onToggleActive: chip ? async () => {
+          const result = options.store.setChipActive(hostInstance.instanceId, chip.chipInstanceId, !chip.active)
+          if (!result.success && result.reason === 'not_enough_compute') {
+            const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+            await renderModal(
+              createInfoModalContent(
+                'Not Enough Memory Bandwidth',
+                result.message ?? 'Not enough memory bandwidth. Deactivate other chips in order to make room for this chip.'
+              ),
+              {
+                returnFocusTo: opener,
+                fallbackFocusTarget: options.elements.title,
+                focusScope: options.elements.root
+              }
+            )
+          }
+        } : undefined,
+        onRemoveChip: chip
+          ? () => {
+            options.store.removeChipFromPart(hostInstance.instanceId, chip.chipInstanceId)
+          }
+          : undefined,
+        onInsertChip: (!chip && canInsertIntoHost && uninstalledChips.length > 0)
+          ? async () => {
+            const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+            let selectedChipInstanceId: string | null = null
+            const modalContent = document.createElement('div')
+            modalContent.className = 'garage-modal-content'
+
+            const title = document.createElement('h2')
+            title.className = 'garage-modal-title'
+            title.textContent = `Insert Chip Into ${hostDefinition.name}`
+            modalContent.appendChild(title)
+
+            const body = document.createElement('p')
+            body.className = 'garage-modal-body'
+            body.textContent = 'Select a chip from garage storage to insert into this slot.'
+            modalContent.appendChild(body)
+
+            const list = document.createElement('div')
+            list.className = 'garage-modal-compare'
+            uninstalledChips.forEach((chipInstance) => {
+              const chipDefinition = options.store.getDefinition(chipInstance.definitionId)
+              if (!chipDefinition) {
+                return
+              }
+              list.appendChild(createPartCard({
+                category: 'Chip',
+                title: chipDefinition.name,
+                subtitle: `Chip ${chipInstance.instanceId.slice(0, 8)}`,
+                definition: chipDefinition,
+                instance: chipInstance,
+                stats: getFinalPartStats(chipInstance.instanceId),
+                statusText: `Memory ${Math.max(0, Math.floor(chipDefinition.chipMemoryCost ?? 0))} CU`,
+                actions: [
+                  {
+                    label: 'Insert Into Slot',
+                    tone: 'primary',
+                    onClick: () => {
+                      selectedChipInstanceId = chipInstance.instanceId
+                      list.dispatchEvent(new CustomEvent<boolean>('garage:close', { bubbles: true, detail: true }))
+                    }
+                  }
+                ]
+              }))
+            })
+            modalContent.appendChild(list)
+            modalContent.appendChild(buildConfirmationButtons())
+
+            const confirmed = await renderModal(modalContent, {
+              returnFocusTo: opener,
+              fallbackFocusTarget: options.elements.title,
+              focusScope: options.elements.root
+            })
+            if (!confirmed || !selectedChipInstanceId) {
+              return
+            }
+            options.store.installChipIntoPart(hostInstance.instanceId, selectedChipInstanceId, slotIndex)
+          }
+          : undefined
+      }
+    })
+
+    return {
+      slotCount,
+      computeUsed: resolved.chipComputeUsed,
+      computeCapacity: resolved.chipComputeCapacity,
+      slots
+    }
+  }
+
+  const renderChipInventoryMode = (): void => {
+    const content = options.elements.content
+    content.innerHTML = ''
+
+    const snapshot = options.store.getSnapshot()
+    const installedContainer = document.createElement('div')
+    installedContainer.className = 'garage-part-list'
+    const installedTitle = document.createElement('div')
+    installedTitle.className = 'garage-pane-header'
+    installedTitle.textContent = 'Installed Chips'
+    content.appendChild(installedTitle)
+
+    let installedCount = 0
+    snapshot.inventory.forEach((hostInstance) => {
+      if (hostInstance.installedChips.length <= 0) {
+        return
+      }
+      const hostDefinition = options.store.getDefinition(hostInstance.definitionId)
+      if (!hostDefinition) {
+        return
+      }
+      hostInstance.installedChips.forEach((installedChip) => {
+        const chipInstance = options.store.getInstance(installedChip.chipInstanceId)
+        const chipDefinition = chipInstance ? options.store.getDefinition(chipInstance.definitionId) : null
+        if (!chipInstance || !chipDefinition || chipDefinition.category !== 'Chip') {
+          return
+        }
+        installedCount += 1
+        installedContainer.appendChild(createPartCard({
+          category: 'Chip',
+          title: chipDefinition.name,
+          subtitle: `Installed on ${hostDefinition.name}`,
+          definition: chipDefinition,
+          instance: chipInstance,
+          stats: getFinalPartStats(chipInstance.instanceId),
+          statusText: installedChip.active ? 'Chip is active' : 'Chip is deactivated',
+          actions: [
+            {
+              label: installedChip.active ? 'Deactivate Chip' : 'Activate Chip',
+              tone: 'primary',
+              onClick: async () => {
+                const result = options.store.setChipActive(hostInstance.instanceId, chipInstance.instanceId, !installedChip.active)
+                if (!result.success && result.reason === 'not_enough_compute') {
+                  const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+                  await renderModal(
+                    createInfoModalContent(
+                      'Not Enough Memory Bandwidth',
+                      result.message ?? 'Not enough memory bandwidth. Deactivate other chips in order to make room for this chip.'
+                    ),
+                    {
+                      returnFocusTo: opener,
+                      fallbackFocusTarget: options.elements.title,
+                      focusScope: options.elements.root
+                    }
+                  )
+                }
+              }
+            },
+            {
+              label: 'Remove Chip',
+              tone: 'neutral',
+              onClick: () => {
+                options.store.removeChipFromPart(hostInstance.instanceId, chipInstance.instanceId)
+              }
+            }
+          ]
+        }))
+      })
+    })
+
+    if (installedCount <= 0) {
+      const empty = document.createElement('div')
+      empty.className = 'garage-empty-state'
+      empty.textContent = 'No installed chips.'
+      content.appendChild(empty)
+    } else {
+      content.appendChild(installedContainer)
+    }
+
+    const storedTitle = document.createElement('div')
+    storedTitle.className = 'garage-pane-header'
+    storedTitle.textContent = 'Stored Chips In Garage'
+    content.appendChild(storedTitle)
+
+    const uninstalled = getUninstalledChipInstances()
+    if (uninstalled.length <= 0) {
+      const empty = document.createElement('div')
+      empty.className = 'garage-empty-state'
+      empty.textContent = 'No chips currently stored in garage.'
+      content.appendChild(empty)
+      return
+    }
+
+    const storedContainer = document.createElement('div')
+    storedContainer.className = 'garage-part-list'
+    uninstalled.forEach((chipInstance) => {
+      const chipDefinition = options.store.getDefinition(chipInstance.definitionId)
+      if (!chipDefinition) {
+        return
+      }
+      storedContainer.appendChild(createPartCard({
+        category: 'Chip',
+        title: chipDefinition.name,
+        subtitle: `Stored chip ${chipInstance.instanceId.slice(0, 8)}`,
+        definition: chipDefinition,
+        instance: chipInstance,
+        stats: getFinalPartStats(chipInstance.instanceId),
+        statusText: `Memory ${Math.max(0, Math.floor(chipDefinition.chipMemoryCost ?? 0))} CU`
+      }))
+    })
+    content.appendChild(storedContainer)
+  }
+
   const activateCategory = (category: PartCategory | WeaponMountSlot): void => {
     if (activeSlotId === category) {
       return
@@ -661,6 +964,14 @@ export const createGarageView = (options: GarageViewOptions): GarageViewControll
   }
 
   const renderSummary = (snapshot: GarageSnapshot): void => {
+    if (activeSlotId === 'Chip') {
+      const installedCount = snapshot.inventory.reduce((count, instance) => count + instance.installedChips.length, 0)
+      const storedCount = getUninstalledChipInstances().length
+      const modeLabel = snapshot.devModeEnabled ? 'Developer catalog mode' : 'Garage inventory mode'
+      options.elements.summary.textContent = `${modeLabel}. Installed chips: ${installedCount}. Stored chips: ${storedCount}.`
+      return
+    }
+
     let equippedDefinition: PartDefinition | null = null
     if (isWeaponSlot(activeSlotId)) {
       const equipped = options.store.getEquippedInWeaponSlot(activeSlotId)
@@ -756,6 +1067,11 @@ export const createGarageView = (options: GarageViewOptions): GarageViewControll
       return
     }
 
+    if (slotId === 'Chip') {
+      renderChipInventoryMode()
+      return
+    }
+
     const category = slotId
     const equippedInstance = options.store.getEquippedInstance(category)
     const equippedDefinition = equippedInstance ? options.store.getDefinition(equippedInstance.definitionId) : null
@@ -775,6 +1091,7 @@ export const createGarageView = (options: GarageViewOptions): GarageViewControll
         instance: equippedInstance,
         stats: getFinalPartStats(equippedInstance.instanceId),
         statusText: `Integrity ${equippedInstance.currentIntegrity}/${equippedDefinition.integrity}`,
+        chipSection: category === 'Computer' ? buildChipSectionForHost(equippedInstance, equippedDefinition) : undefined,
         actions: [
           {
             label: 'Unequip Part',
@@ -811,6 +1128,7 @@ export const createGarageView = (options: GarageViewOptions): GarageViewControll
         instance,
         stats: getFinalPartStats(instance.instanceId),
         statusText: `Integrity ${instance.currentIntegrity}/${definition.integrity}`,
+        chipSection: category === 'Computer' ? buildChipSectionForHost(instance, definition) : undefined,
         warnings: preview.warnings,
         actions: [
           {

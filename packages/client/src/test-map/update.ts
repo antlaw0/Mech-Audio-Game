@@ -16,9 +16,14 @@ import { normalizeAngle } from './audio-utils.js'
 import { getTopSurfaceHeight, isPlayerBlocked, type WorldCollisionWorld, WORLD_WALL_HEIGHT } from './world-collision.js'
 import type { AudioController, InputState, Player } from './types.js'
 
-const PLAYER_FALL_GRAVITY = 18
-const PLAYER_MAX_FALL_SPEED = 14
+const PLAYER_FALL_GRAVITY = 13.5
+const PLAYER_MAX_FALL_SPEED = 11.5
 const LANDING_EPSILON = 0.001
+const JUMP_ASCENT_SPEED_MIN = 5.8
+const JUMP_ASCENT_SPEED_MAX = 11.4
+const JUMP_APEX_TRANSITION_SECONDS = 0.62
+const AIRBORNE_HOLD_SPRING = 7.5
+const AIRBORNE_HOLD_DAMPING = 3.2
 
 export interface UpdateState {
   footstepTimerSeconds: number
@@ -27,6 +32,9 @@ export interface UpdateState {
   verticalVelocityZ: number
   groundForwardVelocity: number
   groundStrafeVelocity: number
+  jumpActive: boolean
+  jumpReachedApex: boolean
+  jumpApexHangRemainingSeconds: number
   rotorSpinupElapsedSeconds: number
   rotorSpinNormalized: number
   currentPitch: number
@@ -49,6 +57,7 @@ export interface FlightRuntimeConfig {
   rotorCount: number
   spinUpSeconds: number
   maxHorizontalSpeed: number
+  stability: number
 } // end interface FlightRuntimeConfig
 
 export type MobilityType = 'Wheels' | 'Treads' | 'Hover' | 'Walker' | 'Flight' | 'Placeholder'
@@ -90,6 +99,9 @@ export function createUpdateState(): UpdateState {
     verticalVelocityZ: 0,
     groundForwardVelocity: 0,
     groundStrafeVelocity: 0,
+    jumpActive: false,
+    jumpReachedApex: false,
+    jumpApexHangRemainingSeconds: 0,
     rotorSpinupElapsedSeconds: 0,
     rotorSpinNormalized: 0,
     currentPitch: 0,
@@ -156,6 +168,15 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   if (!Number.isFinite(environment.state.groundStrafeVelocity)) {
     environment.state.groundStrafeVelocity = 0
   } // end if strafe velocity is uninitialized
+  if (typeof environment.state.jumpActive !== 'boolean') {
+    environment.state.jumpActive = false
+  } // end if jump active state is uninitialized
+  if (typeof environment.state.jumpReachedApex !== 'boolean') {
+    environment.state.jumpReachedApex = false
+  } // end if jump apex state is uninitialized
+  if (!Number.isFinite(environment.state.jumpApexHangRemainingSeconds)) {
+    environment.state.jumpApexHangRemainingSeconds = 0
+  } // end if jump apex hang timer is uninitialized
 
   const movementProfile = environment.movementProfile
   const ignorePlayerCollision = environment.ignorePlayerCollision ?? false
@@ -234,6 +255,9 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
     input.flightTogglePending = false
     if (player.flightState === 'grounded') {
       if (environment.canEngageFlight) {
+        state.jumpActive = false
+        state.jumpReachedApex = false
+        state.jumpApexHangRemainingSeconds = 0
         state.rotorSpinupElapsedSeconds = 0
         state.rotorSpinNormalized = 0
         player.flightState = 'ascending'
@@ -259,6 +283,9 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
           audio.stopBoostAudio()
         } // end if stopping boost audio on flight exit
       } // end if was boosting
+      state.jumpActive = false
+      state.jumpReachedApex = false
+      state.jumpApexHangRemainingSeconds = 0
       player.flightState = 'descending'
       player.isFlying = true
       if (audio.isAudioStarted()) {
@@ -289,97 +316,208 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
 
   const minimumCruiseAltitude = WORLD_WALL_HEIGHT + 0.05
   const targetFlightAltitude = Math.max(0, environment.flightAltitude, minimumCruiseAltitude)
-  const verticalStep = PLAYER_FLIGHT_VERTICAL_SPEED * deltaSeconds
   let playerAltitude = player.z ?? 0
   const supportHeight = getTopSurfaceHeight(environment.collisionWorld, player.x, player.y, PLAYER_RADIUS)
   let justLanded = false
+  const jumpRequested = input.jumpPending
+  input.jumpPending = false
+
+  if (
+    jumpRequested
+    && !fpsModeEnabled
+    && player.flightState === 'grounded'
+    && !player.isFlying
+    && !state.jumpActive
+    && playerAltitude <= supportHeight + LANDING_EPSILON
+  ) {
+    const initialJumpAscentSpeed = JUMP_ASCENT_SPEED_MIN + ((JUMP_ASCENT_SPEED_MAX - JUMP_ASCENT_SPEED_MIN) * weightFactor)
+    state.jumpActive = true
+    state.jumpReachedApex = false
+    state.jumpApexHangRemainingSeconds = 0
+    state.verticalVelocityZ = initialJumpAscentSpeed
+    if (audio.isAudioStarted()) {
+      audio.playJump()
+    } // end if jump cue should play
+  } // end if jump started
 
   if (fpsModeEnabled) {
     // FPS flycam altitude is controlled externally (wheel) and must not trigger flight/fall landing transitions.
     playerAltitude = Math.max(0, playerAltitude)
     state.verticalVelocityZ = 0
+    state.jumpActive = false
+    state.jumpReachedApex = false
+    state.jumpApexHangRemainingSeconds = 0
     player.flightState = 'grounded'
     player.isFlying = false
     state.rotorSpinupElapsedSeconds = 0
     state.rotorSpinNormalized = 0
   } else if (player.flightState === 'ascending') {
+    const thrustWeightScale = clamp(0.8 + (weightFactor * 0.9), 0.65, 1.7)
+    const rotorStabilityScale = clamp(0.8 + (Math.max(0.6, flightConfig.stability) * 0.35), 0.8, 1.9)
+    let thrustAcceleration = 0
+
     if (flightConfig.mode === 'rotor') {
       const clampedSpinUpSeconds = Math.max(0.4, flightConfig.spinUpSeconds)
       state.rotorSpinupElapsedSeconds = Math.min(clampedSpinUpSeconds, state.rotorSpinupElapsedSeconds + deltaSeconds)
       const takeoffProgress = clamp(state.rotorSpinupElapsedSeconds / clampedSpinUpSeconds, 0, 1)
-      const spinupPhase = 0.72
-      const spinProgress = clamp(takeoffProgress / spinupPhase, 0, 1)
-      state.rotorSpinNormalized = spinProgress
-
-      const liftProgress = clamp((takeoffProgress - spinupPhase) / (1 - spinupPhase), 0, 1)
-      if (liftProgress <= 0) {
-        playerAltitude = supportHeight
-      } else {
-        playerAltitude = supportHeight + ((targetFlightAltitude - supportHeight) * liftProgress)
+      state.rotorSpinNormalized = takeoffProgress
+      const spinupComplete = takeoffProgress >= 1 - LANDING_EPSILON
+      if (spinupComplete) {
+        thrustAcceleration = 29 * thrustWeightScale * rotorStabilityScale * (1 + ((flightConfig.rotorCount - 1) * 0.12))
       }
-
-      state.verticalVelocityZ = 0
-      player.isFlying = true
-      if (takeoffProgress >= 1 - LANDING_EPSILON) {
-        playerAltitude = targetFlightAltitude
-        player.flightState = 'airborne'
-        player.isFlying = true
-        state.rotorSpinNormalized = 1
-      } // end if rotor reached flight altitude
     } else {
-      if (playerAltitude >= targetFlightAltitude - LANDING_EPSILON) {
-        player.flightState = 'airborne'
-        player.isFlying = true
-        state.verticalVelocityZ = 0
-      } else {
-        playerAltitude = Math.min(targetFlightAltitude, playerAltitude + verticalStep)
-        state.verticalVelocityZ = 0
-        if (playerAltitude >= targetFlightAltitude - LANDING_EPSILON) {
-          playerAltitude = targetFlightAltitude
-          player.flightState = 'airborne'
-          player.isFlying = true
-        } // end if reached flight altitude
-      } // end if reached flight altitude
-      state.rotorSpinNormalized = player.flightState === 'airborne' ? 1 : state.rotorSpinNormalized
+      state.rotorSpinNormalized = 1
+      thrustAcceleration = 34 * thrustWeightScale
+    }
+
+    state.verticalVelocityZ = Math.max(
+      -PLAYER_MAX_FALL_SPEED,
+      Math.min(
+        PLAYER_FLIGHT_VERTICAL_SPEED * 2,
+        state.verticalVelocityZ + ((thrustAcceleration - PLAYER_FALL_GRAVITY) * deltaSeconds)
+      )
+    )
+    playerAltitude += state.verticalVelocityZ * deltaSeconds
+
+    if (playerAltitude <= supportHeight + LANDING_EPSILON && state.verticalVelocityZ <= 0) {
+      playerAltitude = supportHeight
+      state.verticalVelocityZ = 0
+    } // end if thrust has not overcome gravity yet
+
+    if (playerAltitude >= targetFlightAltitude - LANDING_EPSILON) {
+      player.flightState = 'airborne'
+      player.isFlying = true
+      if (playerAltitude < targetFlightAltitude) {
+        playerAltitude = targetFlightAltitude
+      }
+      state.verticalVelocityZ = Math.max(0, state.verticalVelocityZ)
+      state.rotorSpinNormalized = 1
+    } else {
+      player.isFlying = true
     }
   } else if (player.flightState === 'airborne') {
-    playerAltitude = Math.max(playerAltitude, targetFlightAltitude)
-    state.verticalVelocityZ = 0
+    const altitudeError = targetFlightAltitude - playerAltitude
+    const holdWeightScale = clamp(0.72 + (weightFactor * 0.82), 0.55, 1.55)
+    const holdStabilityScale = flightConfig.mode === 'rotor'
+      ? clamp(0.78 + (Math.max(0.6, flightConfig.stability) * 0.22), 0.72, 1.5)
+      : 1
+    const holdAcceleration = ((altitudeError * AIRBORNE_HOLD_SPRING) - (state.verticalVelocityZ * AIRBORNE_HOLD_DAMPING))
+      * holdWeightScale
+      * holdStabilityScale
+
+    state.verticalVelocityZ = Math.max(
+      -PLAYER_MAX_FALL_SPEED,
+      Math.min(PLAYER_FLIGHT_VERTICAL_SPEED * 1.8, state.verticalVelocityZ + (holdAcceleration * deltaSeconds))
+    )
+    playerAltitude += state.verticalVelocityZ * deltaSeconds
+
+    if (Math.abs(altitudeError) <= 0.03 && Math.abs(state.verticalVelocityZ) <= 0.08) {
+      playerAltitude = targetFlightAltitude
+      state.verticalVelocityZ = 0
+    } // end if altitude converged to shared flight height
+
     player.isFlying = true
     state.rotorSpinNormalized = 1
   } else {
     const wasDescendingFromFlight = player.flightState === 'descending'
-    const shouldFall = wasDescendingFromFlight || playerAltitude > supportHeight + LANDING_EPSILON
+    const jumpAscendingByMomentum = !state.jumpReachedApex
+      && playerAltitude > supportHeight + LANDING_EPSILON
+      && state.verticalVelocityZ > 0.05
+    const jumping = (state.jumpActive || jumpAscendingByMomentum) && !wasDescendingFromFlight
 
-    if (shouldFall) {
-      state.verticalVelocityZ = Math.max(-PLAYER_MAX_FALL_SPEED, state.verticalVelocityZ - PLAYER_FALL_GRAVITY * deltaSeconds)
-      playerAltitude = Math.max(supportHeight, playerAltitude + state.verticalVelocityZ * deltaSeconds)
+    if (jumping && !state.jumpActive) {
+      state.jumpActive = true
+    }
 
-      if (playerAltitude <= supportHeight + LANDING_EPSILON) {
-        playerAltitude = supportHeight
+    if (jumping && !state.jumpReachedApex && playerAltitude >= targetFlightAltitude - LANDING_EPSILON) {
+      playerAltitude = targetFlightAltitude
+      state.jumpReachedApex = true
+      if (state.jumpApexHangRemainingSeconds <= 0) {
+        state.jumpApexHangRemainingSeconds = JUMP_APEX_TRANSITION_SECONDS
+      }
+      state.verticalVelocityZ = 0
+      player.isFlying = false
+      player.flightState = 'grounded'
+      state.rotorSpinNormalized = 0
+    } else if (jumping && !state.jumpReachedApex && playerAltitude < targetFlightAltitude - LANDING_EPSILON) {
+      const jumpAscentSpeed = JUMP_ASCENT_SPEED_MIN + ((JUMP_ASCENT_SPEED_MAX - JUMP_ASCENT_SPEED_MIN) * weightFactor)
+      state.verticalVelocityZ = Math.max(state.verticalVelocityZ, jumpAscentSpeed)
+      playerAltitude = Math.min(targetFlightAltitude, playerAltitude + (state.verticalVelocityZ * deltaSeconds))
+
+      if (playerAltitude >= targetFlightAltitude - LANDING_EPSILON) {
+        playerAltitude = targetFlightAltitude
+        state.jumpReachedApex = true
+        state.jumpApexHangRemainingSeconds = JUMP_APEX_TRANSITION_SECONDS
         state.verticalVelocityZ = 0
+      } // end if jump reached apex
+
+      player.isFlying = false
+      player.flightState = 'grounded'
+      state.rotorSpinNormalized = 0
+    } else {
+      const isJumpApexTransitionActive = !wasDescendingFromFlight
+        && state.jumpActive
+        && state.jumpReachedApex
+        && state.jumpApexHangRemainingSeconds > 0
+
+      if (isJumpApexTransitionActive) {
+        state.jumpApexHangRemainingSeconds = Math.max(0, state.jumpApexHangRemainingSeconds - deltaSeconds)
+        const transitionProgress = clamp(
+          1 - (state.jumpApexHangRemainingSeconds / JUMP_APEX_TRANSITION_SECONDS),
+          0,
+          1
+        )
+        const easedGravityScale = 0.1 + (0.9 * transitionProgress * transitionProgress)
+        state.verticalVelocityZ = Math.max(
+          -PLAYER_MAX_FALL_SPEED,
+          state.verticalVelocityZ - (PLAYER_FALL_GRAVITY * easedGravityScale * deltaSeconds)
+        )
+        playerAltitude = Math.max(supportHeight, playerAltitude + (state.verticalVelocityZ * deltaSeconds))
+      }
+
+      const shouldFall = !isJumpApexTransitionActive
+        && (wasDescendingFromFlight || state.jumpActive || playerAltitude > supportHeight + LANDING_EPSILON)
+
+      if (shouldFall) {
+        state.verticalVelocityZ = Math.max(-PLAYER_MAX_FALL_SPEED, state.verticalVelocityZ - PLAYER_FALL_GRAVITY * deltaSeconds)
+        playerAltitude = Math.max(supportHeight, playerAltitude + state.verticalVelocityZ * deltaSeconds)
+
+        if (playerAltitude <= supportHeight + LANDING_EPSILON) {
+          playerAltitude = supportHeight
+          state.verticalVelocityZ = 0
+          player.flightState = 'grounded'
+          player.isFlying = false
+          justLanded = wasDescendingFromFlight || state.jumpActive
+          state.jumpActive = false
+          state.jumpReachedApex = false
+          state.jumpApexHangRemainingSeconds = 0
+
+          // Ensure boost state is cleared on landing (jet is stopping so no audio fade needed)
+          if (player.isBoosting) {
+            player.isBoosting = false
+          } // end if resetting boost on landing
+          state.rotorSpinupElapsedSeconds = 0
+          state.rotorSpinNormalized = 0
+        } else {
+          player.isFlying = wasDescendingFromFlight
+          state.rotorSpinNormalized = clamp(state.rotorSpinNormalized - (deltaSeconds * 2.6), 0, 1)
+        } // end if landed this frame
+      } else if (isJumpApexTransitionActive) {
         player.flightState = 'grounded'
         player.isFlying = false
-        justLanded = true
-
-        // Ensure boost state is cleared on landing (jet is stopping so no audio fade needed)
-        if (player.isBoosting) {
-          player.isBoosting = false
-        } // end if resetting boost on landing
-        state.rotorSpinupElapsedSeconds = 0
         state.rotorSpinNormalized = 0
       } else {
-        player.isFlying = wasDescendingFromFlight
-        state.rotorSpinNormalized = clamp(state.rotorSpinNormalized - (deltaSeconds * 2.6), 0, 1)
-      } // end if landed this frame
-    } else {
-      playerAltitude = supportHeight
-      state.verticalVelocityZ = 0
-      player.flightState = 'grounded'
-      player.isFlying = false
-      state.rotorSpinupElapsedSeconds = 0
-      state.rotorSpinNormalized = 0
-    } // end if player should fall toward support
+        playerAltitude = supportHeight
+        state.verticalVelocityZ = 0
+        state.jumpActive = false
+        state.jumpReachedApex = false
+        state.jumpApexHangRemainingSeconds = 0
+        player.flightState = 'grounded'
+        player.isFlying = false
+        state.rotorSpinupElapsedSeconds = 0
+        state.rotorSpinNormalized = 0
+      } // end if player should fall toward support
+    }
   } // end if flight state update
   player.z = playerAltitude
 
@@ -656,6 +794,10 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   const normalizedFlightSpeed = player.flightState === 'grounded'
     ? 0
     : clamp(Math.max(flightInputAxisMagnitude, normalizedGroundSpeed), 0, 1)
+  const movementAudioSupportHeight = getTopSurfaceHeight(environment.collisionWorld, player.x, player.y, PLAYER_RADIUS)
+  const isOnGroundForMovementAudio = player.flightState === 'grounded'
+    && !state.jumpActive
+    && (player.z ?? 0) <= movementAudioSupportHeight + LANDING_EPSILON
 
   if (audio.isAudioStarted()) {
     audio.updateFlightLoopAudio({
@@ -675,7 +817,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
       normalizedGroundSpeed,
       normalizedForward,
       accelerating,
-      player.flightState === 'grounded'
+      isOnGroundForMovementAudio
     )
   } // end if mobility placeholder audio should update
 
@@ -683,7 +825,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   const shouldPlayFootsteps = shouldUseWalkerFootsteps
     && isMoving
     && !movementBlockedByObstacle
-    && player.flightState === 'grounded'
+    && isOnGroundForMovementAudio
     && groundedHorizontalSpeed > 0.22
 
   if (shouldPlayFootsteps && audio.isAudioStarted()) {

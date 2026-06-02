@@ -33,6 +33,12 @@ export type CatalogImportResult = {
   clearedLoadoutSlots: PartCategory[]
 }
 
+export type ChipActivationResult = {
+  success: boolean
+  reason?: 'not_enough_compute' | 'invalid_target'
+  message?: string
+}
+
 export type GarageStore = {
   subscribe: (listener: () => void) => () => void
   getSnapshot: () => GarageSnapshot
@@ -51,6 +57,10 @@ export type GarageStore = {
   updateDefinition: (definitionId: string, nextDefinition: PartDefinition) => void
   deleteDefinition: (definitionId: string) => { deprecated: boolean }
   createInstanceFromDefinition: (definitionId: string) => PartInstance
+  installChipIntoPart: (hostInstanceId: string, chipInstanceId: string, slotIndex: number) => ChipActivationResult
+  removeChipFromPart: (hostInstanceId: string, chipInstanceId: string) => ChipActivationResult
+  setChipActive: (hostInstanceId: string, chipInstanceId: string, active: boolean) => ChipActivationResult
+  findChipHostInstance: (chipInstanceId: string) => PartInstance | null
   validateEquip: (category: PartCategory, instanceId: string, callback?: (snapshot: GarageSnapshot) => EquipValidation) => EquipValidation
   validateEquipToWeaponSlot: (slot: WeaponMountSlot, instanceId: string, callback?: (snapshot: GarageSnapshot) => EquipValidation) => EquipValidation
   getCategoryLabel: (category: PartCategory) => string
@@ -137,6 +147,9 @@ const normalizeCatalogDefinition = (entry: unknown, index: number): PartDefiniti
   if (typeof source.meleeHitSound === 'string') {
     normalized.meleeHitSound = source.meleeHitSound
   }
+  if (Array.isArray(source.chipModifiers)) {
+    normalized.chipModifiers = source.chipModifiers.filter((entry): entry is string => typeof entry === 'string')
+  }
 
   if (source.twoHanded === true) {
     normalized.twoHanded = true
@@ -146,6 +159,16 @@ const normalizeCatalogDefinition = (entry: unknown, index: number): PartDefiniti
   }
   if (source.isPassive === true) {
     normalized.isPassive = true
+  }
+
+  if (source.chipSlots !== undefined) {
+    normalized.chipSlots = Math.max(0, Math.floor(parseFiniteNumber(source.chipSlots, `${id}.chipSlots`)))
+  }
+  if (source.computeBandWidth !== undefined) {
+    normalized.computeBandWidth = Math.max(0, Math.floor(parseFiniteNumber(source.computeBandWidth, `${id}.computeBandWidth`)))
+  }
+  if (source.chipMemoryCost !== undefined) {
+    normalized.chipMemoryCost = Math.max(0, Math.floor(parseFiniteNumber(source.chipMemoryCost, `${id}.chipMemoryCost`)))
   }
 
   return normalized
@@ -189,7 +212,7 @@ export const createGarageStore = (): GarageStore => {
     inventory: inventory.map((entry) => ({
       ...entry,
       modifiers: [...entry.modifiers],
-      installedChips: [...entry.installedChips]
+      installedChips: entry.installedChips.map((chip) => ({ ...chip }))
     })),
     loadout: cloneLoadout(loadout),
     devModeEnabled
@@ -225,6 +248,53 @@ export const createGarageStore = (): GarageStore => {
     return getInstance(instanceId)
   }
 
+  const getComputeCapacityForEquippedComputer = (): number => {
+    const equippedComputerId = loadout.Computer
+    if (!equippedComputerId) {
+      return 0
+    }
+    const equippedComputerInstance = getInstance(equippedComputerId)
+    const equippedComputerDefinition = equippedComputerInstance
+      ? getDefinition(equippedComputerInstance.definitionId)
+      : null
+    return Math.max(0, Math.floor(equippedComputerDefinition?.computeBandWidth ?? 100))
+  }
+
+  const getChipMemoryCost = (chipInstanceId: string): number => {
+    const chipInstance = getInstance(chipInstanceId)
+    const chipDefinition = chipInstance ? getDefinition(chipInstance.definitionId) : null
+    if (!chipDefinition || chipDefinition.category !== 'Chip') {
+      return 0
+    }
+    return Math.max(0, Math.floor(chipDefinition.chipMemoryCost ?? 0))
+  }
+
+  const findChipHostInstance = (chipInstanceId: string): PartInstance | null => {
+    return inventory.find((candidate) => candidate.installedChips.some((chip) => chip.chipInstanceId === chipInstanceId)) ?? null
+  }
+
+  const getUsedComputeForEquippedComputer = (excludeChipInstanceId?: string): number => {
+    const equippedComputerId = loadout.Computer
+    if (!equippedComputerId) {
+      return 0
+    }
+    const computerInstance = getInstance(equippedComputerId)
+    if (!computerInstance) {
+      return 0
+    }
+    let used = 0
+    for (const installedChip of computerInstance.installedChips) {
+      if (!installedChip.active) {
+        continue
+      }
+      if (installedChip.chipInstanceId === excludeChipInstanceId) {
+        continue
+      }
+      used += getChipMemoryCost(installedChip.chipInstanceId)
+    }
+    return used
+  }
+
   const validateEquip = (category: PartCategory, instanceId: string, callback?: (snapshot: GarageSnapshot) => EquipValidation): EquipValidation => {
     const instance = getInstance(instanceId)
     const definition = instance ? getDefinition(instance.definitionId) : null
@@ -241,7 +311,11 @@ export const createGarageStore = (): GarageStore => {
     ;(previewLoadout as Record<string, string>)[category] = instanceId
     return callback({
       catalog: catalog.map((entry) => ({ ...entry })),
-      inventory: inventory.map((entry) => ({ ...entry, modifiers: [...entry.modifiers], installedChips: [...entry.installedChips] })),
+      inventory: inventory.map((entry) => ({
+        ...entry,
+        modifiers: [...entry.modifiers],
+        installedChips: entry.installedChips.map((chip) => ({ ...chip }))
+      })),
       loadout: previewLoadout,
       devModeEnabled
     })
@@ -344,10 +418,105 @@ export const createGarageStore = (): GarageStore => {
     }
     return callback({
       catalog: catalog.map((entry) => ({ ...entry })),
-      inventory: inventory.map((entry) => ({ ...entry, modifiers: [...entry.modifiers], installedChips: [...entry.installedChips] })),
+      inventory: inventory.map((entry) => ({
+        ...entry,
+        modifiers: [...entry.modifiers],
+        installedChips: entry.installedChips.map((chip) => ({ ...chip }))
+      })),
       loadout: previewLoadout,
       devModeEnabled
     })
+  }
+
+  const installChipIntoPart = (hostInstanceId: string, chipInstanceId: string, slotIndex: number): ChipActivationResult => {
+    const hostInstance = getInstance(hostInstanceId)
+    const chipInstance = getInstance(chipInstanceId)
+    const hostDefinition = hostInstance ? getDefinition(hostInstance.definitionId) : null
+    const chipDefinition = chipInstance ? getDefinition(chipInstance.definitionId) : null
+    if (!hostInstance || !chipInstance || !hostDefinition || !chipDefinition || chipDefinition.category !== 'Chip') {
+      return { success: false, reason: 'invalid_target', message: 'Invalid host or chip instance.' }
+    }
+
+    const totalSlots = Math.max(0, Math.floor(hostDefinition.chipSlots ?? 0))
+    if (totalSlots <= 0) {
+      return { success: false, reason: 'invalid_target', message: 'This part has no chip slots.' }
+    }
+    if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= totalSlots) {
+      return { success: false, reason: 'invalid_target', message: 'Invalid chip slot.' }
+    }
+
+    const existingHost = findChipHostInstance(chipInstanceId)
+    if (existingHost) {
+      return { success: false, reason: 'invalid_target', message: 'Chip is already installed in another part.' }
+    }
+
+    if (hostInstance.installedChips.some((entry) => entry.chipInstanceId === chipInstanceId)) {
+      return { success: false, reason: 'invalid_target', message: 'Chip is already installed in this part.' }
+    }
+
+    if (hostInstance.installedChips.length >= totalSlots) {
+      return { success: false, reason: 'invalid_target', message: 'All chip slots are already occupied.' }
+    }
+
+    const insertionIndex = Math.min(slotIndex, hostInstance.installedChips.length)
+    const nextInstalled = [...hostInstance.installedChips]
+    nextInstalled.splice(insertionIndex, 0, { chipInstanceId, active: false })
+    hostInstance.installedChips = nextInstalled
+    persistInventory()
+    emitChange()
+    return { success: true }
+  }
+
+  const removeChipFromPart = (hostInstanceId: string, chipInstanceId: string): ChipActivationResult => {
+    const hostInstance = getInstance(hostInstanceId)
+    if (!hostInstance) {
+      return { success: false, reason: 'invalid_target', message: 'Invalid host part.' }
+    }
+    const before = hostInstance.installedChips.length
+    hostInstance.installedChips = hostInstance.installedChips.filter((entry) => entry.chipInstanceId !== chipInstanceId)
+    if (hostInstance.installedChips.length === before) {
+      return { success: false, reason: 'invalid_target', message: 'Chip is not installed in this part.' }
+    }
+    persistInventory()
+    emitChange()
+    return { success: true }
+  }
+
+  const setChipActive = (hostInstanceId: string, chipInstanceId: string, active: boolean): ChipActivationResult => {
+    const hostInstance = getInstance(hostInstanceId)
+    const hostDefinition = hostInstance ? getDefinition(hostInstance.definitionId) : null
+    const chipIndex = hostInstance?.installedChips.findIndex((entry) => entry.chipInstanceId === chipInstanceId) ?? -1
+    if (!hostInstance || !hostDefinition || chipIndex < 0) {
+      return { success: false, reason: 'invalid_target', message: 'Invalid host part or chip selection.' }
+    }
+
+    if (active) {
+      const hostIsEquippedComputer = loadout.Computer === hostInstance.instanceId
+      if (hostIsEquippedComputer) {
+        const capacity = getComputeCapacityForEquippedComputer()
+        const usedWithoutTarget = getUsedComputeForEquippedComputer(chipInstanceId)
+        const targetCost = getChipMemoryCost(chipInstanceId)
+        if ((usedWithoutTarget + targetCost) > capacity) {
+          return {
+            success: false,
+            reason: 'not_enough_compute',
+            message: 'Not enough memory bandwidth. Deactivate other chips to make room for this chip.'
+          }
+        }
+      }
+    }
+
+    const existingChipState = hostInstance.installedChips[chipIndex]
+    if (!existingChipState) {
+      return { success: false, reason: 'invalid_target', message: 'Chip state could not be resolved.' }
+    }
+    hostInstance.installedChips[chipIndex] = {
+      chipInstanceId: existingChipState.chipInstanceId,
+      active
+    }
+    persistInventory()
+    emitChange()
+    return { success: true }
   }
 
   const equipToWeaponSlot = (slot: WeaponMountSlot, instanceId: string): void => {
@@ -496,6 +665,10 @@ export const createGarageStore = (): GarageStore => {
     updateDefinition,
     deleteDefinition,
     createInstanceFromDefinition,
+    installChipIntoPart,
+    removeChipFromPart,
+    setChipActive,
+    findChipHostInstance,
     validateEquip,
     validateEquipToWeaponSlot,
     isTwoHandedWeaponEquipped,
@@ -536,7 +709,7 @@ export const createGarageStore = (): GarageStore => {
       const nextLoadout = cloneLoadout(loadout)
       const clearedLoadoutSlots: PartCategory[] = []
       PART_CATEGORIES.forEach((category) => {
-        if (category === 'HandWeapon' || category === 'ShoulderWeapon') return
+        if (category === 'HandWeapon' || category === 'ShoulderWeapon' || category === 'Chip') return
         const instanceId = (nextLoadout as Record<string, string | undefined>)[category]
         if (!instanceId) {
           return

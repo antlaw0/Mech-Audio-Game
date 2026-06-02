@@ -48,6 +48,8 @@
     ],
     "activeAbilities": [],
     "specialEffects": [],
+    "chipSlots": 4,
+    "computeBandWidth": 100,
     "lockOn": 1
   },
   {
@@ -65,6 +67,8 @@
     ],
     "activeAbilities": [],
     "specialEffects": [],
+    "chipSlots": 5,
+    "computeBandWidth": 100,
     "lockOn": 1.25
   },
   {
@@ -722,5 +726,138 @@
     "passiveBonuses": ["Single shoulder mount", "Full auto capable"],
     "activeAbilities": [],
     "specialEffects": []
+  },
+  {
+    "id": "chip.ep-regen.booster",
+    "name": "EP Regen Booster",
+    "category": "Chip",
+    "integrity": 40,
+    "weight": 4,
+    "PDEF": 0,
+    "EDEF": 0,
+    "energyDrain": 0,
+    "deprecated": false,
+    "passiveBonuses": [],
+    "activeAbilities": [],
+    "specialEffects": [],
+    "chipSlots": 0,
+    "chipMemoryCost": 12,
+    "chipModifiers": [
+      "+5% movingEnergyRegen"
+    ]
+  },
+  {
+    "id": "chip.energy-amp",
+    "name": "Energy Weapon Amplifier",
+    "category": "Chip",
+    "integrity": 40,
+    "weight": 5,
+    "PDEF": 0,
+    "EDEF": 0,
+    "energyDrain": 0,
+    "deprecated": false,
+    "passiveBonuses": [],
+    "activeAbilities": [],
+    "specialEffects": [],
+    "chipSlots": 0,
+    "chipMemoryCost": 22,
+    "chipModifiers": [
+      "+10% energy weapon damage"
+    ]
+  },
+  {
+    "id": "chip.flight-efficiency",
+    "name": "Flight Efficiency",
+    "category": "Chip",
+    "integrity": 40,
+    "weight": 4,
+    "PDEF": 0,
+    "EDEF": 0,
+    "energyDrain": 0,
+    "deprecated": false,
+    "passiveBonuses": [],
+    "activeAbilities": [],
+    "specialEffects": [],
+    "chipSlots": 0,
+    "chipMemoryCost": 18,
+    "chipModifiers": [
+      "-15% energy drain while flying"
+    ]
+  },
+  {
+    "id": "chip.turn-servo-tax",
+    "name": "Turn Servo Tax",
+    "category": "Chip",
+    "integrity": 40,
+    "weight": 3,
+    "PDEF": 0,
+    "EDEF": 0,
+    "energyDrain": 0,
+    "deprecated": false,
+    "passiveBonuses": [],
+    "activeAbilities": [],
+    "specialEffects": [],
+    "chipSlots": 0,
+    "chipMemoryCost": 9,
+    "chipModifiers": [
+      "-5% turning speed"
+    ]
+  },
+  {
+    "id": "chip.cooling-logic-pack",
+    "name": "Cooling Logic Pack",
+    "category": "Chip",
+    "integrity": 40,
+    "weight": 4,
+    "PDEF": 0,
+    "EDEF": 0,
+    "energyDrain": 0,
+    "deprecated": false,
+    "passiveBonuses": [],
+    "activeAbilities": [],
+    "specialEffects": [],
+    "chipSlots": 0,
+    "chipMemoryCost": 14,
+    "chipModifiers": [
+      "+8% heat dissipation"
+    ]
+  },
+  {
+    "id": "chip.sensor-burst-cache",
+    "name": "Sensor Burst Cache",
+    "category": "Chip",
+    "integrity": 40,
+    "weight": 3,
+    "PDEF": 0,
+    "EDEF": 0,
+    "energyDrain": 0,
+    "deprecated": false,
+    "passiveBonuses": [],
+    "activeAbilities": [],
+    "specialEffects": [],
+    "chipSlots": 0,
+    "chipMemoryCost": 16,
+    "chipModifiers": [
+      "+12% sensor strength"
+    ]
+  },
+  {
+    "id": "chip.recoil-optimizer",
+    "name": "Recoil Optimizer",
+    "category": "Chip",
+    "integrity": 40,
+    "weight": 5,
+    "PDEF": 0,
+    "EDEF": 0,
+    "energyDrain": 0,
+    "deprecated": false,
+    "passiveBonuses": [],
+    "activeAbilities": [],
+    "specialEffects": [],
+    "chipSlots": 0,
+    "chipMemoryCost": 20,
+    "chipModifiers": [
+      "-10% projectile spread"
+    ]
   }
 ]

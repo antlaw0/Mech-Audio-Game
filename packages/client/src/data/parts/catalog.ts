@@ -41,6 +41,13 @@ const isSwappableWeaponDefinition = (definition: PartDefinition): boolean => {
     && !definition.isPassive
 }
 
+const isAutoGarageSeedDefinition = (definition: PartDefinition): boolean => {
+  if (isSwappableWeaponDefinition(definition)) {
+    return true
+  }
+  return definition.category === 'Chip' && !definition.deprecated
+}
+
 const mergeWeaponAuthoritativeSeedFields = (
   mergedDefinition: PartDefinition,
   seedDefinition: PartDefinition | undefined
@@ -99,10 +106,18 @@ const normalizeDefinition = (definition: PartDefinition): PartDefinition => {
 
   return {
     ...normalizedDefinition,
+    chipSlots: Math.max(0, Math.floor(normalizedDefinition.chipSlots ?? 0)),
+    computeBandWidth: normalizedDefinition.category === 'Computer'
+      ? Math.max(0, Math.floor(normalizedDefinition.computeBandWidth ?? 100))
+      : undefined,
+    chipMemoryCost: normalizedDefinition.category === 'Chip'
+      ? Math.max(0, Math.floor(normalizedDefinition.chipMemoryCost ?? 0))
+      : undefined,
     spreadDegrees: normalizedSpreadDegrees,
     passiveBonuses: Array.isArray(normalizedDefinition.passiveBonuses) ? [...normalizedDefinition.passiveBonuses] : [],
     activeAbilities: Array.isArray(normalizedDefinition.activeAbilities) ? [...normalizedDefinition.activeAbilities] : [],
-    specialEffects: Array.isArray(normalizedDefinition.specialEffects) ? [...normalizedDefinition.specialEffects] : []
+    specialEffects: Array.isArray(normalizedDefinition.specialEffects) ? [...normalizedDefinition.specialEffects] : [],
+    chipModifiers: Array.isArray(normalizedDefinition.chipModifiers) ? [...normalizedDefinition.chipModifiers] : []
   }
 }
 
@@ -209,7 +224,14 @@ const createSeedInstances = (): { inventory: PartInstance[]; loadout: MechLoadou
     'basic.rotor.dual',
     'basic.head',
     'basic.laser-pistol',
-    'basic.shotgun'
+    'basic.shotgun',
+    'chip.ep-regen.booster',
+    'chip.energy-amp',
+    'chip.flight-efficiency',
+    'chip.turn-servo-tax',
+    'chip.cooling-logic-pack',
+    'chip.sensor-burst-cache',
+    'chip.recoil-optimizer'
   ]
 
   for (const [slotKey, definitionId] of Object.entries(equippedDefinitionIds)) {
@@ -254,16 +276,16 @@ const createSeedInstances = (): { inventory: PartInstance[]; loadout: MechLoadou
     inventory.push({
       instanceId: createInstanceId(),
       definitionId,
-      currentIntegrity: index === bonusDefinitionIds.length - 3 ? 34 : definition.integrity,
-      modifiers: index === bonusDefinitionIds.length - 3 ? [{ id: 'range-upgrade', type: 'stat_mult', stat: 'range', value: 0.1 }] : [],
-      installedChips: index === 1 ? ['mk1-lock-chip'] : [],
+      currentIntegrity: definitionId === 'basic.head' ? 34 : definition.integrity,
+      modifiers: definitionId === 'basic.head' ? [{ id: 'range-upgrade', type: 'stat_mult', stat: 'range', value: 0.1 }] : [],
+      installedChips: [],
       rngSeed: Math.floor(Math.random() * 1_000_000)
     })
   })
 
   const ownedDefinitionIds = new Set(inventory.map((entry) => entry.definitionId))
   for (const definition of seedCatalog) {
-    if (!isSwappableWeaponDefinition(definition) || ownedDefinitionIds.has(definition.id)) {
+    if (!isAutoGarageSeedDefinition(definition) || ownedDefinitionIds.has(definition.id)) {
       continue
     }
     inventory.push({
@@ -285,12 +307,29 @@ const normalizeInstance = (instance: PartInstance, catalog: PartDefinition[]): P
   if (!definition) {
     return null
   }
+  const normalizedInstalledChips = Array.isArray(instance.installedChips)
+    ? instance.installedChips.flatMap((entry) => {
+      if (typeof entry === 'string') {
+        return [{ chipInstanceId: entry, active: true }]
+      }
+      if (!entry || typeof entry !== 'object') {
+        return []
+      }
+      const maybeState = entry as { chipInstanceId?: unknown; active?: unknown }
+      const chipInstanceId = typeof maybeState.chipInstanceId === 'string' ? maybeState.chipInstanceId : ''
+      if (!chipInstanceId) {
+        return []
+      }
+      return [{ chipInstanceId, active: maybeState.active !== false }]
+    })
+    : []
+
   return {
     instanceId: String(instance.instanceId),
     definitionId: definition.id,
     currentIntegrity: Math.max(0, Math.min(definition.integrity, Number(instance.currentIntegrity) || definition.integrity)),
     modifiers: Array.isArray(instance.modifiers) ? [...instance.modifiers] : [],
-    installedChips: Array.isArray(instance.installedChips) ? [...instance.installedChips] : [],
+    installedChips: normalizedInstalledChips,
     rngSeed: Number.isFinite(instance.rngSeed) ? instance.rngSeed : Math.floor(Math.random() * 1_000_000)
   }
 }
@@ -350,7 +389,7 @@ export const loadGarageInventory = (catalog: PartDefinition[]): { inventory: Par
 
   const ownedDefinitionIds = new Set(normalizedInventory.map((entry) => entry.definitionId))
   for (const definition of catalog) {
-    if (!isSwappableWeaponDefinition(definition) || ownedDefinitionIds.has(definition.id)) {
+    if (!isAutoGarageSeedDefinition(definition) || ownedDefinitionIds.has(definition.id)) {
       continue
     }
     normalizedInventory.push({
