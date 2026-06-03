@@ -22,10 +22,23 @@ export type PartModifier = {
   value: number
 }
 
+export type PartVariantStatModifier =
+  | { op: 'add'; value: number }
+  | { op: 'mult'; value: number }
+  | { op: 'replace'; value: number }
+
+export type PartVariantStatModifierInput =
+  | PartVariantStatModifier
+  | { add: number }
+  | { mult: number }
+  | { replace: number }
+
 export type PartDefinition = {
   id: string
   name: string
   category: PartCategory
+  variantOf?: string
+  statModifiers?: Record<string, PartVariantStatModifierInput>
   integrity: number
   weight: number
   PDEF: number

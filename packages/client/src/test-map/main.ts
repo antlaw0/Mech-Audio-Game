@@ -347,6 +347,17 @@ function startTestMap(): void {
   const EMPTY_CLIP_SOUND_PATH = 'assets/sounds/weapons/emptyClip.ogg'
   const UNIVERSAL_AMMO_ITEM_ID = 'ammo_resource'
   const STARTING_UNIVERSAL_AMMO_QUANTITY = 1200
+  const PLAYER_RUNTIME_SAVE_KEY = 'mech.player.runtime.v1'
+
+  type PlayerRuntimeSnapshot = {
+    x: number
+    y: number
+    z: number
+    hp: number
+    ep: number
+    heat: number
+    savedAtMs: number
+  }
   const { canvas, width, height } = setupCanvas()
   const cargoInventory = createInventoryManager({ itemDatabase: defaultItemDatabase })
   const lootGenerator = createLootGenerator({ itemDatabase: defaultItemDatabase, lootTables: DEFAULT_LOOT_TABLES })
@@ -3907,6 +3918,13 @@ function startTestMap(): void {
       return
     } // end if typing in editable field
 
+    if (event.code === 'F5' && !event.repeat) {
+      event.preventDefault()
+      const saved = savePlayerRuntimeSnapshot()
+      speakSystemAnnouncement(saved ? 'Data saved.' : 'Data save failed.')
+      return
+    } // end if saving runtime player snapshot
+
     if (event.repeat || isGarageModalOpen() || isEditorModalOpen || isWeaponEditorOpen || isWorldMapVisible) {
       return
     } // end if editor modal blocks debug overlay shortcuts
@@ -4762,6 +4780,79 @@ function startTestMap(): void {
     devCurrentHeat = Math.max(0, Math.min(devMaxHeat, devCurrentHeat))
     return snapshot
   } // end function syncAuthoritativeMechStats
+
+  const savePlayerRuntimeSnapshot = (): boolean => {
+    const stats = syncAuthoritativeMechStats()
+    const snapshot: PlayerRuntimeSnapshot = {
+      x: player.x,
+      y: player.y,
+      z: player.z ?? 0,
+      hp: Math.max(0, Math.min(player.maxHp, player.hp)),
+      ep: Math.max(0, Math.min(player.maxEp, player.ep)),
+      heat: Math.max(0, Math.min(stats.maxHeat, devCurrentHeat)),
+      savedAtMs: Date.now()
+    }
+
+    try {
+      window.localStorage.setItem(PLAYER_RUNTIME_SAVE_KEY, JSON.stringify(snapshot))
+      nextEventTag('Player runtime state saved')
+      return true
+    } catch {
+      return false
+    }
+  } // end function savePlayerRuntimeSnapshot
+
+  const loadPlayerRuntimeSnapshot = (): boolean => {
+    let rawSnapshot = ''
+    try {
+      rawSnapshot = window.localStorage.getItem(PLAYER_RUNTIME_SAVE_KEY) ?? ''
+    } catch {
+      return false
+    }
+
+    if (!rawSnapshot) {
+      return false
+    }
+
+    let snapshot: Partial<PlayerRuntimeSnapshot> | null = null
+    try {
+      snapshot = JSON.parse(rawSnapshot) as Partial<PlayerRuntimeSnapshot>
+    } catch {
+      return false
+    }
+
+    if (!snapshot || typeof snapshot !== 'object') {
+      return false
+    }
+
+    syncAuthoritativeMechStats()
+
+    const x = Number(snapshot.x)
+    const y = Number(snapshot.y)
+    const z = Number(snapshot.z)
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      placePlayer(x, y, Number.isFinite(z) ? z : (player.z ?? 0))
+    }
+
+    const hp = Number(snapshot.hp)
+    if (Number.isFinite(hp)) {
+      player.hp = Math.max(0, Math.min(player.maxHp, hp))
+    }
+
+    const ep = Number(snapshot.ep)
+    if (Number.isFinite(ep)) {
+      player.ep = Math.max(0, Math.min(player.maxEp, ep))
+    }
+
+    const heat = Number(snapshot.heat)
+    if (Number.isFinite(heat)) {
+      devCurrentHeat = Math.max(0, Math.min(devMaxHeat, heat))
+      updateHeatState()
+    }
+
+    nextEventTag('Player runtime state loaded')
+    return true
+  } // end function loadPlayerRuntimeSnapshot
 
   const isDevPartOperational = (slot: DevPartSlot): boolean => {
     const part = getDevPartState(slot)
@@ -6313,6 +6404,12 @@ function startTestMap(): void {
       examples: ['inventory.add ammo_resource 300', 'inventory.add energy_cell 2']
     },
     {
+      syntax: 'garage.add <partDefinitionId> [quantity]',
+      description: 'Create one or more part instances in garage inventory from catalog definition id.',
+      helpPath: ['Inventory', 'Garage'],
+      examples: ['garage.add advanced.defense.head', 'garage.add advanced.defense.head 5']
+    },
+    {
       syntax: 'inventory.remove <itemId> <quantity>',
       description: 'Remove stack quantity from cargo inventory for testing.',
       helpPath: ['Inventory', 'Cargo'],
@@ -7234,6 +7331,35 @@ function startTestMap(): void {
         `ammo.universal = ${getUniversalAmmoResource()}`
       ]
     } // end if inventory.add command
+
+    if (normalizedCommand === 'garage.add' || normalizedCommand.startsWith('garage.add ')) {
+      const rawArgs = commandLine.trim().split(/\s+/)
+      const definitionId = rawArgs[1] ?? ''
+      const quantityRaw = rawArgs[2]
+      const quantity = quantityRaw === undefined
+        ? 1
+        : Math.max(0, Math.floor(parseFiniteNumber(quantityRaw, 'garage.add quantity')))
+
+      if (definitionId.length <= 0 || quantity <= 0) {
+        throw new Error('Usage: garage.add <partDefinitionId> [quantity]')
+      }
+
+      const definition = garageStore.getDefinition(definitionId)
+      if (!definition) {
+        throw new Error(`Unknown partDefinitionId: ${definitionId}`)
+      }
+
+      for (let index = 0; index < quantity; index += 1) {
+        garageStore.createInstanceFromDefinition(definitionId)
+      }
+
+      nextEventTag(`Garage add: ${definitionId} +${quantity}`)
+      return [
+        `garage.add ok: ${definitionId} +${quantity}`,
+        `name = ${definition.name}`,
+        `category = ${definition.category}`
+      ]
+    } // end if garage.add command
 
     if (normalizedCommand.startsWith('inventory.remove ') || normalizedCommand.startsWith('inventory.drop ')) {
       const rawArgs = commandLine.trim().split(/\s+/)
@@ -8441,6 +8567,21 @@ function startTestMap(): void {
         .filter((itemId) => itemId.toLowerCase().startsWith(currentItemId))
         .map((itemId) => `${currentCommand} ${itemId} `)
     } // end if completing inventory mutation commands
+
+    if (currentCommand === 'garage') {
+      const suffix = tokens.slice(1).join(' ').toLowerCase()
+      return ['garage.add ']
+        .filter((entry) => entry.startsWith(`garage ${suffix}`.trim()))
+    } // end if completing garage commands
+
+    if (currentCommand === 'garage.add') {
+      const currentDefinitionId = hasTrailingWhitespace ? '' : ((tokens[1] ?? '').toLowerCase())
+      return garageStore.getSnapshot().catalog
+        .map((definition) => definition.id)
+        .filter((id, index, source) => source.indexOf(id) === index)
+        .filter((id) => id.toLowerCase().startsWith(currentDefinitionId))
+        .map((id) => `garage.add ${id} `)
+    } // end if completing garage.add command
 
     if (currentCommand === 'generateforentity' || currentCommand === 'generateforcontainer') {
       const currentTableId = hasTrailingWhitespace ? '' : ((tokens[1] ?? '').toLowerCase())
@@ -10231,6 +10372,9 @@ function startTestMap(): void {
 
     requestAnimationFrame(gameLoop)
   } // end function gameLoop
+
+  // Load persisted runtime player state (position and vitals) before gameplay starts.
+  loadPlayerRuntimeSnapshot()
 
   requestAnimationFrame((timestampMs) => {
     lastTimeMs = timestampMs

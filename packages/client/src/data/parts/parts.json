@@ -17,6 +17,22 @@
     "range": 100
   },
   {
+    "id": "advanced.defense.head",
+    "name": "Advanced Defense Head",
+    "category": "Head",
+    "variantOf": "basic.head",
+    "statModifiers": {
+      "PDEF": {
+        "op": "add",
+        "value": 2
+      },
+      "EDEF": {
+        "op": "add",
+        "value": 2
+      }
+    }
+  },
+  {
     "id": "scout.head",
     "name": "Scout Head",
     "category": "Head",

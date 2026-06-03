@@ -5,6 +5,133 @@ const INVENTORY_STORAGE_KEY = 'mech.parts.inventory.v1'
 const LOADOUT_STORAGE_KEY = 'mech.parts.loadout.v1'
 const DEV_MODE_STORAGE_KEY = 'mech.parts.devMode.v1'
 
+type VariantStatModifier = {
+  op: 'add' | 'mult' | 'replace'
+  value: number
+}
+
+const parseVariantModifier = (value: unknown): VariantStatModifier | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const source = value as Record<string, unknown>
+
+  if (
+    (source.op === 'add' || source.op === 'mult' || source.op === 'replace')
+    && typeof source.value === 'number'
+    && Number.isFinite(source.value)
+  ) {
+    return { op: source.op, value: source.value }
+  }
+
+  if (typeof source.add === 'number' && Number.isFinite(source.add)) {
+    return { op: 'add', value: source.add }
+  }
+  if (typeof source.mult === 'number' && Number.isFinite(source.mult)) {
+    return { op: 'mult', value: source.mult }
+  }
+  if (typeof source.replace === 'number' && Number.isFinite(source.replace)) {
+    return { op: 'replace', value: source.replace }
+  }
+
+  return null
+}
+
+const applyVariantModifiers = (
+  baseDefinition: PartDefinition,
+  mergedDefinition: PartDefinition,
+  sourceDefinition: Record<string, unknown>
+): void => {
+  const rawStatModifiers = sourceDefinition.statModifiers
+  if (!rawStatModifiers || typeof rawStatModifiers !== 'object' || Array.isArray(rawStatModifiers)) {
+    return
+  }
+
+  const normalizedStatModifiers: Record<string, VariantStatModifier> = {}
+
+  for (const [statKey, rawModifier] of Object.entries(rawStatModifiers as Record<string, unknown>)) {
+    const modifier = parseVariantModifier(rawModifier)
+    if (!modifier) {
+      console.warn(`[parts] Ignoring invalid stat modifier "${statKey}" on variant "${mergedDefinition.id}".`)
+      continue
+    }
+
+    const baseValue = (baseDefinition as Record<string, unknown>)[statKey]
+    if (typeof baseValue !== 'number' || !Number.isFinite(baseValue)) {
+      console.warn(`[parts] Ignoring stat modifier "${statKey}" on variant "${mergedDefinition.id}": base stat is not numeric.`)
+      continue
+    }
+
+    normalizedStatModifiers[statKey] = modifier
+
+    let nextValue = baseValue
+    if (modifier.op === 'add') {
+      nextValue = baseValue + modifier.value
+    } else if (modifier.op === 'mult') {
+      nextValue = baseValue * modifier.value
+    } else {
+      nextValue = modifier.value
+    }
+
+    ;(mergedDefinition as Record<string, unknown>)[statKey] = nextValue
+  }
+
+  if (Object.keys(normalizedStatModifiers).length > 0) {
+    ;(mergedDefinition as Record<string, unknown>).statModifiers = normalizedStatModifiers
+  }
+}
+
+const resolveVariantSeedCatalog = (rawCatalog: PartDefinition[]): PartDefinition[] => {
+  const rawById = new Map(rawCatalog.map((definition) => [definition.id, definition] as const))
+  const resolvedById = new Map<string, PartDefinition>()
+  const resolvingIds = new Set<string>()
+
+  const resolveById = (id: string): PartDefinition | null => {
+    const existingResolved = resolvedById.get(id)
+    if (existingResolved) {
+      return existingResolved
+    }
+
+    const rawDefinition = rawById.get(id)
+    if (!rawDefinition) {
+      return null
+    }
+
+    if (resolvingIds.has(id)) {
+      console.warn(`[parts] Variant cycle detected while resolving "${id}".`)
+      return null
+    }
+
+    resolvingIds.add(id)
+
+    const sourceDefinition = rawDefinition as Record<string, unknown>
+    const variantOf = typeof sourceDefinition.variantOf === 'string' ? sourceDefinition.variantOf.trim() : ''
+
+    let resolvedDefinition: PartDefinition = { ...rawDefinition }
+
+    if (variantOf) {
+      const baseDefinition = resolveById(variantOf)
+      if (!baseDefinition) {
+        console.warn(`[parts] Variant "${id}" references missing base part "${variantOf}".`)
+      } else {
+        resolvedDefinition = {
+          ...baseDefinition,
+          ...rawDefinition,
+          variantOf
+        }
+        applyVariantModifiers(baseDefinition, resolvedDefinition, sourceDefinition)
+      }
+    }
+
+    resolvingIds.delete(id)
+    resolvedById.set(id, resolvedDefinition)
+    return resolvedDefinition
+  }
+
+  return rawCatalog.map((definition) => resolveById(definition.id) ?? { ...definition })
+}
+
 const loadSeedCatalog = (): PartDefinition[] => {
   if (typeof XMLHttpRequest === 'undefined') {
     return []
@@ -15,8 +142,11 @@ const loadSeedCatalog = (): PartDefinition[] => {
     request.open('GET', new URL('./parts.json', import.meta.url).toString(), false)
     request.send()
     if (request.status >= 200 && request.status < 300) {
-      const parsed = JSON.parse(request.responseText) as PartDefinition[]
-      return Array.isArray(parsed) ? parsed : []
+      const parsed = JSON.parse(request.responseText) as unknown
+      if (!Array.isArray(parsed)) {
+        return []
+      }
+      return resolveVariantSeedCatalog(parsed as PartDefinition[])
     }
   } catch {
     return []
