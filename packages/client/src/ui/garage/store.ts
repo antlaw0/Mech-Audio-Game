@@ -84,7 +84,7 @@ const createInstanceId = (): string => {
 
 const cloneLoadout = (loadout: MechLoadout): MechLoadout => ({ ...loadout })
 
-const REQUIRED_NUMERIC_KEYS: readonly PartNumericKey[] = ['integrity', 'weight', 'PDEF', 'EDEF', 'energyDrain']
+const REQUIRED_NUMERIC_KEYS: readonly PartNumericKey[] = ['integrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain']
 
 const parseFiniteNumber = (value: unknown, fieldName: string): number => {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -384,6 +384,9 @@ const normalizeCatalogDefinition = (entry: unknown, index: number): PartDefiniti
     name,
     category: categoryRaw as PartCategory,
     integrity: parseFiniteNumber(source.integrity, `${id}.integrity`),
+    armorValue: source.armorValue === undefined
+      ? parseFiniteNumber(source.integrity, `${id}.integrity`)
+      : parseFiniteNumber(source.armorValue, `${id}.armorValue`),
     weight: parseFiniteNumber(source.weight, `${id}.weight`),
     PDEF: parseFiniteNumber(source.PDEF, `${id}.PDEF`),
     EDEF: parseFiniteNumber(source.EDEF, `${id}.EDEF`),

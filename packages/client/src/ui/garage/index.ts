@@ -559,6 +559,7 @@ const buildDefinitionDraft = (definition?: PartDefinition, forcedCategory?: Part
     name: '',
     category: forcedCategory ?? 'Head',
     integrity: 100,
+    armorValue: 100,
     weight: 0,
     PDEF: 0,
     EDEF: 0,
@@ -570,7 +571,7 @@ const buildDefinitionDraft = (definition?: PartDefinition, forcedCategory?: Part
 }
 
 const getEditableKeys = (category: PartCategory): string[] => {
-  const shared = ['id', 'name', 'integrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'chipSlots']
+  const shared = ['id', 'name', 'integrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'chipSlots']
   switch (category) {
     case 'Head':
       return [...shared, 'range']
@@ -590,6 +591,8 @@ const getEditableKeys = (category: PartCategory): string[] => {
       return [...shared, 'sensorStrength']
     case 'Utility2':
       return [...shared, 'heatGeneration', 'liftCapacity', 'flightType', 'rotorCount', 'verticalTakeoffTime', 'flightStability', 'speedModifier', 'energyUse']
+    case 'GroundMobility':
+      return [...shared, 'speedModifier', 'stability', 'energyUse']
     case 'HandWeapon':
       return [...shared, 'damagePerShot', 'fireRateCooldownSeconds', 'projectileCount', 'spreadDegrees', 'bulletSpeed', 'clipSize', 'weaponReach', 'meleeContactTimeMs', 'accuracy', 'effectiveRange', 'stability', 'meleeDamage', 'meleeHitSound', 'twoHanded', 'isMelee', 'isPassive']
     case 'ShoulderWeapon':

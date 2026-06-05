@@ -387,6 +387,82 @@
     "flightType": "rotor"
   },
   {
+    "id": "basic.legs",
+    "name": "Basic Legs",
+    "category": "GroundMobility",
+    "integrity": 130,
+    "weight": 140,
+    "PDEF": 10,
+    "EDEF": 8,
+    "energyDrain": 0,
+    "deprecated": false,
+    "passiveBonuses": [
+      "Walker profile"
+    ],
+    "activeAbilities": [],
+    "specialEffects": [],
+    "speedModifier": 1,
+    "stability": 1,
+    "energyUse": 0
+  },
+  {
+    "id": "basic.wheels",
+    "name": "Basic Wheels",
+    "category": "GroundMobility",
+    "integrity": 125,
+    "weight": 110,
+    "PDEF": 8,
+    "EDEF": 7,
+    "energyDrain": 1,
+    "deprecated": false,
+    "passiveBonuses": [
+      "High road speed"
+    ],
+    "activeAbilities": [],
+    "specialEffects": [],
+    "speedModifier": 1.22,
+    "stability": 0.82,
+    "energyUse": 1.2
+  },
+  {
+    "id": "basic.treads",
+    "name": "Basic Treads",
+    "category": "GroundMobility",
+    "integrity": 170,
+    "weight": 185,
+    "PDEF": 14,
+    "EDEF": 8,
+    "energyDrain": 2,
+    "deprecated": false,
+    "passiveBonuses": [
+      "Stable under recoil"
+    ],
+    "activeAbilities": [],
+    "specialEffects": [],
+    "speedModifier": 0.9,
+    "stability": 1.25,
+    "energyUse": 1.4
+  },
+  {
+    "id": "basic.hover",
+    "name": "Basic Hover",
+    "category": "GroundMobility",
+    "integrity": 115,
+    "weight": 95,
+    "PDEF": 7,
+    "EDEF": 11,
+    "energyDrain": 4,
+    "deprecated": false,
+    "passiveBonuses": [
+      "Low-friction glide"
+    ],
+    "activeAbilities": [],
+    "specialEffects": [],
+    "speedModifier": 1.12,
+    "stability": 0.9,
+    "energyUse": 2.4
+  },
+  {
     "id": "HeavyHead",
     "name": "Combat Head",
     "category": "Head",

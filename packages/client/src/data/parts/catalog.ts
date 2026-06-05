@@ -331,6 +331,7 @@ const normalizeDefinition = (definition: PartDefinition): PartDefinition => {
 
   return {
     ...normalizedDefinition,
+    armorValue: Math.max(0, Number(normalizedDefinition.armorValue ?? normalizedDefinition.integrity ?? 0)),
     chipSlots: Math.max(0, Math.floor(normalizedDefinition.chipSlots ?? 0)),
     computeBandWidth: normalizedDefinition.category === 'Computer'
       ? Math.max(0, Math.floor(normalizedDefinition.computeBandWidth ?? 100))
@@ -428,7 +429,8 @@ const createSeedInstances = (): { inventory: PartInstance[]; loadout: MechLoadou
     LeftArm: 'basic.left-arm',
     RightArm: 'basic.right-arm',
     Utility1: 'basic.utility1',
-    Utility2: 'basic.jetpack'
+    Utility2: 'basic.jetpack',
+    GroundMobility: 'basic.legs'
   }
 
   const equippedWeaponSlotIds: Partial<Record<WeaponMountSlot, string>> = {
@@ -448,6 +450,9 @@ const createSeedInstances = (): { inventory: PartInstance[]; loadout: MechLoadou
     'stabilized.right-arm',
     'sensor.utility1',
     'basic.rotor.dual',
+    'basic.wheels',
+    'basic.treads',
+    'basic.hover',
     'basic.head',
     'basic.laser-pistol',
     'basic.shotgun',
@@ -550,10 +555,13 @@ const normalizeInstance = (instance: PartInstance, catalog: PartDefinition[]): P
     })
     : []
 
+  const parsedIntegrity = Number(instance.currentIntegrity)
+  const normalizedIntegrity = Number.isFinite(parsedIntegrity) ? parsedIntegrity : definition.integrity
+
   return {
     instanceId: String(instance.instanceId),
     definitionId: definition.id,
-    currentIntegrity: Math.max(0, Math.min(definition.integrity, Number(instance.currentIntegrity) || definition.integrity)),
+    currentIntegrity: Math.max(0, Math.min(definition.integrity, normalizedIntegrity)),
     modifiers: Array.isArray(instance.modifiers) ? [...instance.modifiers] : [],
     installedChips: normalizedInstalledChips,
     rngSeed: Number.isFinite(instance.rngSeed) ? instance.rngSeed : Math.floor(Math.random() * 1_000_000)
@@ -575,7 +583,7 @@ export const loadGarageInventory = (catalog: PartDefinition[]): { inventory: Par
     .filter((entry): entry is PartInstance => entry !== null)
 
   const loadout: MechLoadout = {}
-  for (const category of ['Head', 'Computer', 'Core', 'Generator', 'ThermalRegulator', 'LeftArm', 'RightArm', 'Utility1', 'Utility2'] as const) {
+  for (const category of ['Head', 'Computer', 'Core', 'Generator', 'ThermalRegulator', 'LeftArm', 'RightArm', 'Utility1', 'Utility2', 'GroundMobility'] as const) {
     const instanceId = storedLoadout[category]
     if (typeof instanceId === 'string' && normalizedInventory.some((entry) => entry.instanceId === instanceId)) {
       loadout[category] = instanceId
@@ -612,6 +620,35 @@ export const loadGarageInventory = (catalog: PartDefinition[]): { inventory: Par
       loadout.ThermalRegulator = firstThermal.instanceId
     }
   }
+
+  const ensureOwnedDefinition = (definitionId: string): PartInstance | null => {
+    const existing = normalizedInventory.find((entry) => entry.definitionId === definitionId)
+    if (existing) {
+      return existing
+    }
+    const definition = catalog.find((entry) => entry.id === definitionId)
+    if (!definition) {
+      return null
+    }
+    const created: PartInstance = {
+      instanceId: createInstanceId(),
+      definitionId: definition.id,
+      currentIntegrity: definition.integrity,
+      modifiers: [],
+      installedChips: [],
+      rngSeed: Math.floor(Math.random() * 1_000_000)
+    }
+    normalizedInventory.push(created)
+    return created
+  }
+
+  const defaultGroundMobility = ensureOwnedDefinition('basic.legs')
+  if (!loadout.GroundMobility && defaultGroundMobility) {
+    loadout.GroundMobility = defaultGroundMobility.instanceId
+  }
+  void ensureOwnedDefinition('basic.wheels')
+  void ensureOwnedDefinition('basic.treads')
+  void ensureOwnedDefinition('basic.hover')
 
   const ownedDefinitionIds = new Set(normalizedInventory.map((entry) => entry.definitionId))
   for (const definition of catalog) {

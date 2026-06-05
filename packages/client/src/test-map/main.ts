@@ -294,6 +294,7 @@ interface DevMechStatsSnapshot {
   totalWeight: number
   totalPDEF: number
   totalEDEF: number
+  maxHP: number
   maxEP: number
   maxHeat: number
 } // end interface DevMechStatsSnapshot
@@ -853,6 +854,7 @@ function startTestMap(): void {
     name: string
     integrity: number
     maxIntegrity: number
+    armorValue: number
     online: boolean
     weight: number
     PDEF: number
@@ -900,6 +902,7 @@ function startTestMap(): void {
     name: `${slot} Placeholder`,
     integrity: 100,
     maxIntegrity: 100,
+    armorValue: 0,
     online: true,
     weight: 0,
     PDEF: 0,
@@ -4836,6 +4839,12 @@ function startTestMap(): void {
       name: typeof safeSource.name === 'string' && safeSource.name.length > 0 ? safeSource.name : fallback.name,
       integrity: readNumber(safeSource.integrity, fallback.integrity),
       maxIntegrity: Math.max(1, readNumber(safeSource.maxIntegrity, fallback.maxIntegrity)),
+      armorValue: Math.max(
+        0,
+        safeSource.armorValue === undefined
+          ? readNumber(safeSource.integrity, fallback.armorValue)
+          : readNumber(safeSource.armorValue, fallback.armorValue)
+      ),
       online: typeof safeSource.online === 'boolean' ? safeSource.online : fallback.online,
       weight: readNumber(safeSource.weight, fallback.weight),
       PDEF: readNumber(safeSource.PDEF, fallback.PDEF),
@@ -4895,6 +4904,7 @@ function startTestMap(): void {
       totalWeight: 0,
       totalPDEF: 0,
       totalEDEF: 0,
+      maxHP: 0,
       maxEP: 0,
       maxHeat: 0
     }
@@ -4906,6 +4916,9 @@ function startTestMap(): void {
       snapshot.installedPartWeight += part.weight
       snapshot.totalPDEF += part.PDEF
       snapshot.totalEDEF += part.EDEF
+      if (part.integrity > 0) {
+        snapshot.maxHP += Math.max(0, part.armorValue)
+      }
       snapshot.maxEP += Math.max(0, part.energyCapacity ?? 0)
       snapshot.maxHeat += Math.max(0, part.heatCapacity ?? 0)
     } // end for each equipped aggregate part
@@ -4919,6 +4932,12 @@ function startTestMap(): void {
   const syncAuthoritativeMechStats = (): DevMechStatsSnapshot => {
     syncGarageLoadoutToDevParts()
     const snapshot = getDevMechStatsSnapshot()
+    const previousMaxHp = Math.max(0, player.maxHp)
+    const previousHp = Math.max(0, player.hp)
+    const hpRatio = previousMaxHp > 0 ? (previousHp / previousMaxHp) : 1
+    player.maxHp = Math.max(0, snapshot.maxHP)
+    player.hp = player.maxHp * hpRatio
+    player.hp = Math.max(0, Math.min(player.maxHp, player.hp))
     player.maxEp = snapshot.maxEP
     player.ep = Math.max(0, Math.min(player.maxEp, player.ep))
     devMaxHeat = snapshot.maxHeat
@@ -5333,12 +5352,8 @@ function startTestMap(): void {
     }
   } // end function applyEnergyStarvationShutdown
 
-  const inferMobilityType = (): string => {
-    const movementPart = getDevPartState('Movement')
-    if (movementPart?.mobilityType) {
-      return movementPart.mobilityType
-    }
-    const source = `${movementPart?.partId ?? ''} ${movementPart?.name ?? ''}`.toLowerCase()
+  const inferMobilityTypeFromSource = (sourceRaw: string): MobilityType => {
+    const source = sourceRaw.toLowerCase()
     if (source.includes('wheel')) {
       return 'Wheels'
     }
@@ -5355,6 +5370,15 @@ function startTestMap(): void {
       return 'Flight'
     }
     return 'Placeholder'
+  } // end function inferMobilityTypeFromSource
+
+  const inferMobilityType = (): string => {
+    const movementPart = getDevPartState('Movement')
+    if (movementPart?.mobilityType) {
+      return movementPart.mobilityType
+    }
+    const source = `${movementPart?.partId ?? ''} ${movementPart?.name ?? ''}`
+    return inferMobilityTypeFromSource(source)
   } // end function inferMobilityType
 
   const toMobilityType = (rawMobilityType?: string): MobilityType => {
@@ -5401,7 +5425,10 @@ function startTestMap(): void {
   } // end function getCurrentMovementArchetypeProfile
 
   const applyMovementArchetypeToPart = (part: DevPartState, mobilityTypeRaw: string): void => {
-    const mobilityType = toMobilityType(mobilityTypeRaw)
+    const explicitMobilityType = toMobilityType(mobilityTypeRaw)
+    const mobilityType = explicitMobilityType === 'Placeholder'
+      ? inferMobilityTypeFromSource(mobilityTypeRaw)
+      : explicitMobilityType
     const profile = MOVEMENT_ARCHETYPE_PROFILES[mobilityType]
     part.mobilityType = mobilityType
     part.ratedLoad = profile.ratedLoad
@@ -5424,11 +5451,12 @@ function startTestMap(): void {
     LeftArm: 'LeftArm',
     RightArm: 'RightArm',
     Utility1: 'Utility1',
-    Utility2: 'Utility2'
+    Utility2: 'Utility2',
+    GroundMobility: 'Movement'
   }
 
   const getManagedGarageCategories = (): Array<keyof MechLoadout & PartCategory> => {
-    return ['Head', 'Computer', 'Core', 'Generator', 'ThermalRegulator', 'LeftArm', 'RightArm', 'Utility1', 'Utility2'] as (keyof MechLoadout & PartCategory)[]
+    return ['Head', 'Computer', 'Core', 'Generator', 'ThermalRegulator', 'LeftArm', 'RightArm', 'Utility1', 'Utility2', 'GroundMobility'] as (keyof MechLoadout & PartCategory)[]
   } // end function getManagedGarageCategories
 
   const getManagedGarageWeight = (snapshot: GarageSnapshot): number => {
@@ -5495,15 +5523,21 @@ function startTestMap(): void {
       })
       const partType = category === 'Core'
         ? 'Core/ExoShell'
-        : category.replace('LeftArm', 'Left Arm').replace('RightArm', 'Right Arm').replace('Utility1', 'Utility 1').replace('Utility2', 'Utility 2')
+        : category
+          .replace('LeftArm', 'Left Arm')
+          .replace('RightArm', 'Right Arm')
+          .replace('Utility1', 'Utility 1')
+          .replace('Utility2', 'Utility 2')
+          .replace('GroundMobility', 'Ground Mobility')
 
-      devParts.set(slot, normalizeDevPartState(slot, {
+      const syncedPart = normalizeDevPartState(slot, {
         ...createPlaceholderPart(slot),
         partId: definition.id,
         partType,
         name: definition.name,
         integrity: resolved.currentIntegrity,
         maxIntegrity: definition.integrity,
+        armorValue: resolved.armorValue,
         online: resolved.currentIntegrity > 0,
         weight: resolved.weight,
         PDEF: resolved.PDEF,
@@ -5532,7 +5566,13 @@ function startTestMap(): void {
         ],
         activeAbilities: [...(definition.activeAbilities ?? [])],
         specialEffects: [...(definition.specialEffects ?? []), ...resolved.installedChips.map((chip) => `Chip: ${chip}`)]
-      }))
+      })
+
+      if (slot === 'Movement') {
+        applyMovementArchetypeToPart(syncedPart, `${definition.id} ${definition.name}`)
+      }
+
+      devParts.set(slot, syncedPart)
     }
 
     const utility2 = garageStore.getEquippedInstance('Utility2')
@@ -5581,6 +5621,7 @@ function startTestMap(): void {
         name: weaponDefinition.name,
         integrity: resolvedWeapon.currentIntegrity,
         maxIntegrity: weaponDefinition.integrity,
+        armorValue: resolvedWeapon.armorValue,
         online: resolvedWeapon.currentIntegrity > 0,
         weight: resolvedWeapon.weight,
         PDEF: resolvedWeapon.PDEF,
@@ -5612,7 +5653,23 @@ function startTestMap(): void {
     const predictedManagedWeight = getManagedGarageWeight(preview)
     const unmanagedWeight = Math.max(0, getDevTotalWeight() - currentManagedWeight)
     const predictedWeight = unmanagedWeight + predictedManagedWeight
-    const movementProfile = getCurrentMovementArchetypeProfile()
+    const predictedMobilityType = (() => {
+      const predictedGroundMobilityInstanceId = preview.loadout.GroundMobility
+      if (!predictedGroundMobilityInstanceId) {
+        return getCurrentMovementArchetypeProfile().mobilityType
+      }
+
+      const predictedGroundMobilityInstance = garageStore.getInstance(predictedGroundMobilityInstanceId)
+      const predictedGroundMobilityDefinition = predictedGroundMobilityInstance
+        ? garageStore.getDefinition(predictedGroundMobilityInstance.definitionId)
+        : null
+
+      const source = `${predictedGroundMobilityDefinition?.id ?? ''} ${predictedGroundMobilityDefinition?.name ?? ''}`
+      const inferred = inferMobilityTypeFromSource(source)
+      return inferred === 'Placeholder' ? getCurrentMovementArchetypeProfile().mobilityType : inferred
+    })()
+
+    const movementProfile = MOVEMENT_ARCHETYPE_PROFILES[predictedMobilityType]
     if (predictedWeight > movementProfile.ratedLoad) {
       warnings.push(`Ground carry limit exceeded: ${predictedWeight.toFixed(1)} / ${movementProfile.ratedLoad.toFixed(1)} kg.`)
     }

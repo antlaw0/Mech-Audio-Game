@@ -44,6 +44,7 @@ export type PartCardChipSectionViewModel = {
 const PART_STAT_LABELS: Record<string, string> = {
   integrity: 'Base Integrity',
   currentIntegrity: 'Current Integrity',
+  armorValue: 'Armor Value',
   weight: 'Weight',
   PDEF: 'PDEF',
   EDEF: 'EDEF',
@@ -93,26 +94,29 @@ const PART_STAT_LABELS: Record<string, string> = {
 const getCategoryStats = (category: PartCategory): string[] => {
   switch (category) {
     case 'Head':
-      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'range']
+      return ['currentIntegrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'range']
     case 'Computer':
-      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'lockOn', 'computeBandWidth', 'chipSlots']
+      return ['currentIntegrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'lockOn', 'computeBandWidth', 'chipSlots']
     case 'Core':
-      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'stability']
+      return ['currentIntegrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'stability']
     case 'Generator':
-      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'energyCapacity', 'powerOutput']
+      return ['currentIntegrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'energyCapacity', 'powerOutput']
     case 'ThermalRegulator':
-      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'heatDissipation', 'heatCapacity', 'emergencyCooling']
+      return ['currentIntegrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'heatDissipation', 'heatCapacity', 'emergencyCooling']
     case 'LeftArm':
-      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'meleeDamage']
+      return ['currentIntegrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'meleeDamage']
     case 'RightArm':
-      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'accuracy']
+      return ['currentIntegrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'accuracy']
     case 'Utility1':
-      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'sensorStrength']
+      return ['currentIntegrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'sensorStrength']
     case 'Utility2':
-      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'liftCapacity', 'speedModifier', 'energyUse']
+      return ['currentIntegrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'liftCapacity', 'speedModifier', 'energyUse']
+    case 'GroundMobility':
+      return ['currentIntegrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'speedModifier', 'stability', 'energyUse']
     case 'HandWeapon':
       return [
         'currentIntegrity',
+        'armorValue',
         'weight',
         'PDEF',
         'EDEF',
@@ -139,6 +143,7 @@ const getCategoryStats = (category: PartCategory): string[] => {
     case 'ShoulderWeapon':
       return [
         'currentIntegrity',
+        'armorValue',
         'weight',
         'PDEF',
         'EDEF',
@@ -167,7 +172,7 @@ const getCategoryStats = (category: PartCategory): string[] => {
     case 'Chip':
       return ['chipMemoryCost']
     default:
-      return ['currentIntegrity', 'weight', 'PDEF', 'EDEF', 'energyDrain']
+      return ['currentIntegrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain']
   }
 }
 

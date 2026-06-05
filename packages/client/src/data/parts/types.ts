@@ -8,6 +8,7 @@ export const PART_CATEGORIES = [
   'RightArm',
   'Utility1',
   'Utility2',
+  'GroundMobility',
   'Chip',
   'HandWeapon',
   'ShoulderWeapon'
@@ -75,6 +76,7 @@ export type PartDefinition = {
   variantOf?: string
   statModifiers?: Record<string, PartVariantStatModifierInput>
   integrity: number
+  armorValue: number
   weight: number
   PDEF: number
   EDEF: number
@@ -169,6 +171,7 @@ export type MechLoadout = {
   RightArm?: string
   Utility1?: string
   Utility2?: string
+  GroundMobility?: string
   LeftHand?: string
   RightHand?: string
   ShoulderLeft?: string
@@ -208,6 +211,7 @@ export type GarageSnapshot = {
 
 export const PART_DEFINITION_NUMERIC_KEYS = [
   'integrity',
+  'armorValue',
   'weight',
   'PDEF',
   'EDEF',
@@ -260,6 +264,7 @@ export const CATEGORY_LABELS: Record<PartCategory, string> = {
   RightArm: 'Right Arm',
   Utility1: 'Utility 1',
   Utility2: 'Utility 2',
+  GroundMobility: 'Ground Mobility',
   Chip: 'Chips',
   HandWeapon: 'Hand Weapon',
   ShoulderWeapon: 'Shoulder Weapon'
