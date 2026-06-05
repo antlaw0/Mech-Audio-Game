@@ -1,6 +1,6 @@
 import { createPartCard } from '../components/PartCard.js'
 import { getFinalPartStats } from '../../systems/parts/statResolver.js'
-import { CATEGORY_LABELS, WEAPON_MOUNT_SLOT_LABELS, WEAPON_MOUNT_SLOTS, type GarageSnapshot, type MechLoadout, type PartCategory, type PartDefinition, type PartInstance, type WeaponMountSlot } from '../../data/parts/types.js'
+import { CATEGORY_LABELS, WEAPON_MOUNT_SLOT_LABELS, WEAPON_MOUNT_SLOTS, type GarageSnapshot, type MechLoadout, type PartCategory, type PartDefinition, type PartInstance, type PartVariantStatModifierInput, type WeaponMountSlot } from '../../data/parts/types.js'
 import { GARAGE_CATEGORY_ORDER, type EquipValidation, type GarageStore } from './store.js'
 
 const createDefinitionPreviewStats = (definition: PartDefinition) => ({
@@ -62,10 +62,92 @@ type ModalFocusOptions = {
 
 const cloneDefinition = (definition: PartDefinition): PartDefinition => ({
   ...definition,
+  statModifiers: definition.statModifiers ? { ...definition.statModifiers } : undefined,
   passiveBonuses: [...(definition.passiveBonuses ?? [])],
   activeAbilities: [...(definition.activeAbilities ?? [])],
   specialEffects: [...(definition.specialEffects ?? [])]
 })
+
+const normalizeVariantModifierForEditor = (value: unknown): PartVariantStatModifierInput | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const source = value as Record<string, unknown>
+  if (
+    (source.op === 'add' || source.op === 'mult' || source.op === 'replace')
+    && typeof source.value === 'number'
+    && Number.isFinite(source.value)
+  ) {
+    return { op: source.op, value: source.value }
+  }
+  if (typeof source.add === 'number' && Number.isFinite(source.add)) {
+    return { op: 'add', value: source.add }
+  }
+  if (typeof source.additive === 'number' && Number.isFinite(source.additive)) {
+    return { op: 'add', value: source.additive }
+  }
+  if (typeof source.mult === 'number' && Number.isFinite(source.mult)) {
+    return { op: 'mult', value: source.mult }
+  }
+  if (typeof source.multiplier === 'number' && Number.isFinite(source.multiplier)) {
+    return { op: 'mult', value: source.multiplier }
+  }
+  if (typeof source.replace === 'number' && Number.isFinite(source.replace)) {
+    return { op: 'replace', value: source.replace }
+  }
+
+  return null
+}
+
+const parseVariantModifiersFromEditor = (raw: string): Record<string, PartVariantStatModifierInput> => {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return {}
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    throw new Error('Variant stat modifiers must be valid JSON.')
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Variant stat modifiers must be a JSON object keyed by stat name.')
+  }
+
+  const normalized: Record<string, PartVariantStatModifierInput> = {}
+  Object.entries(parsed as Record<string, unknown>).forEach(([statKey, rawModifier]) => {
+    const modifier = normalizeVariantModifierForEditor(rawModifier)
+    if (!modifier) {
+      throw new Error(`Invalid variant modifier for "${statKey}". Use add/additive, mult/multiplier, or replace.`)
+    }
+    normalized[statKey] = modifier
+  })
+
+  return normalized
+}
+
+const serializeVariantModifiersForEditor = (statModifiers: PartDefinition['statModifiers']): string => {
+  if (!statModifiers || Object.keys(statModifiers).length <= 0) {
+    return ''
+  }
+
+  const normalized: Record<string, PartVariantStatModifierInput> = {}
+  Object.entries(statModifiers).forEach(([statKey, rawModifier]) => {
+    const modifier = normalizeVariantModifierForEditor(rawModifier)
+    if (modifier) {
+      normalized[statKey] = modifier
+    }
+  })
+
+  if (Object.keys(normalized).length <= 0) {
+    return ''
+  }
+
+  return JSON.stringify(normalized, null, 2)
+}
 
 const getFocusableElements = (container: HTMLElement): HTMLElement[] => {
   const selector = [
@@ -532,6 +614,7 @@ const createDefinitionEditor = (
   existing?: PartDefinition
 ): HTMLElement => {
   const draft = buildDefinitionDraft(existing, category)
+  const initialVariantModifiers = serializeVariantModifiersForEditor(draft.statModifiers)
   const form = document.createElement('form')
   form.className = 'garage-definition-form'
 
@@ -572,6 +655,51 @@ const createDefinitionEditor = (
     form.appendChild(row)
   })
 
+  const variantOfRow = document.createElement('label')
+  variantOfRow.className = 'garage-definition-row'
+
+  const variantOfLabel = document.createElement('span')
+  variantOfLabel.textContent = 'variantOf'
+  variantOfRow.appendChild(variantOfLabel)
+
+  const variantOfInput = document.createElement('input')
+  variantOfInput.type = 'text'
+  variantOfInput.placeholder = 'base.part.id'
+  variantOfInput.value = (draft.variantOf ?? '').trim()
+  variantOfInput.addEventListener('input', () => {
+    const value = variantOfInput.value.trim()
+    draft.variantOf = value.length > 0 ? value : undefined
+  })
+  variantOfRow.appendChild(variantOfInput)
+  form.appendChild(variantOfRow)
+
+  const statModifiersRow = document.createElement('label')
+  statModifiersRow.className = 'garage-definition-row'
+
+  const statModifiersLabel = document.createElement('span')
+  statModifiersLabel.textContent = 'statModifiers'
+  statModifiersRow.appendChild(statModifiersLabel)
+
+  const statModifiersInput = document.createElement('textarea')
+  statModifiersInput.rows = 8
+  statModifiersInput.placeholder = '{\n  "integrity": { "add": 20 },\n  "weight": { "mult": 0.9 },\n  "energyDrain": { "replace": 5 }\n}'
+  statModifiersInput.value = initialVariantModifiers
+  statModifiersInput.addEventListener('input', () => {
+    const value = statModifiersInput.value.trim()
+    if (!value) {
+      draft.statModifiers = undefined
+      return
+    }
+
+    try {
+      draft.statModifiers = parseVariantModifiersFromEditor(value)
+    } catch {
+      // Parsing is validated on submit; keep current draft modifiers until then.
+    }
+  })
+  statModifiersRow.appendChild(statModifiersInput)
+  form.appendChild(statModifiersRow)
+
   const submitRow = document.createElement('div')
   submitRow.className = 'garage-modal-actions'
 
@@ -591,6 +719,27 @@ const createDefinitionEditor = (
 
   form.addEventListener('submit', (event) => {
     event.preventDefault()
+
+    const variantOf = variantOfInput.value.trim()
+    draft.variantOf = variantOf.length > 0 ? variantOf : undefined
+
+    const statModifierText = statModifiersInput.value.trim()
+    if (statModifierText.length > 0) {
+      try {
+        draft.statModifiers = parseVariantModifiersFromEditor(statModifierText)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Invalid stat modifiers.'
+        window.alert(message)
+        return
+      }
+    } else {
+      draft.statModifiers = undefined
+    }
+
+    if (!draft.variantOf) {
+      draft.statModifiers = undefined
+    }
+
     onSubmit({ ...draft, category })
     form.dispatchEvent(new CustomEvent<boolean>('garage:close', { bubbles: true, detail: true }))
   })

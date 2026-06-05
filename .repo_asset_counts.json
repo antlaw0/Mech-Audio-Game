@@ -1,0 +1,67 @@
+﻿[
+    {
+        "type":  "Audio",
+        "pattern":  "assets/**/*.ogg",
+        "count":  63
+    },
+    {
+        "type":  "Audio",
+        "pattern":  "assets/**/*.mp3",
+        "count":  0
+    },
+    {
+        "type":  "Audio",
+        "pattern":  "assets/**/*.wav",
+        "count":  4
+    },
+    {
+        "type":  "Images",
+        "pattern":  "assets/**/*.png",
+        "count":  0
+    },
+    {
+        "type":  "Images",
+        "pattern":  "assets/**/*.jpg",
+        "count":  0
+    },
+    {
+        "type":  "Images",
+        "pattern":  "assets/**/*.jpeg",
+        "count":  0
+    },
+    {
+        "type":  "Images",
+        "pattern":  "assets/**/*.svg",
+        "count":  0
+    },
+    {
+        "type":  "Images",
+        "pattern":  "assets/**/*.webp",
+        "count":  0
+    },
+    {
+        "type":  "JSON data",
+        "pattern":  "**/*.json",
+        "count":  3
+    },
+    {
+        "type":  "Configuration files",
+        "pattern":  "**/*.yaml",
+        "count":  0
+    },
+    {
+        "type":  "Configuration files",
+        "pattern":  "**/*.yml",
+        "count":  0
+    },
+    {
+        "type":  "Configuration files",
+        "pattern":  "**/tsconfig*.json",
+        "count":  0
+    },
+    {
+        "type":  "Configuration files",
+        "pattern":  "**/package.json",
+        "count":  0
+    }
+]

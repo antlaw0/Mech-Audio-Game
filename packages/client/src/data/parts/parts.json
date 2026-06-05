@@ -45,6 +45,15 @@
     "passiveBonuses": [
       "Recon sweep refresh -12%"
     ],
+    "effectModifiers": [
+      {
+        "id": "scout-ballistic-logic",
+        "target": "weaponDamageBallistic",
+        "op": "mult",
+        "value": 0.05,
+        "description": "+5% ballistic weapon damage"
+      }
+    ],
     "activeAbilities": [],
     "specialEffects": [],
     "range": 132
@@ -80,6 +89,18 @@
     "deprecated": false,
     "passiveBonuses": [
       "Target reacquisition +15%"
+    ],
+    "effectModifiers": [
+      {
+        "id": "high-ep-turning",
+        "target": "turnRate",
+        "op": "mult",
+        "value": 0.1,
+        "conditions": {
+          "epPercentGte": 50
+        },
+        "description": "+10% turn rate above 50% EP"
+      }
     ],
     "activeAbilities": [],
     "specialEffects": [],
@@ -155,6 +176,18 @@
     "deprecated": false,
     "passiveBonuses": [
       "Peak output +44%"
+    ],
+    "effectModifiers": [
+      {
+        "id": "idle-regen-boost",
+        "target": "energyRegenPerSecond",
+        "op": "mult",
+        "value": 0.05,
+        "conditions": {
+          "isStandingStill": true
+        },
+        "description": "+5% EP regen while standing still"
+      }
     ],
     "activeAbilities": [],
     "specialEffects": [],
@@ -758,6 +791,18 @@
     "specialEffects": [],
     "chipSlots": 0,
     "chipMemoryCost": 12,
+    "effectModifiers": [
+      {
+        "id": "ep-regen-booster-moving",
+        "target": "energyRegenPerSecond",
+        "op": "mult",
+        "value": 0.05,
+        "conditions": {
+          "isMoving": true
+        },
+        "description": "+5% movingEnergyRegen"
+      }
+    ],
     "chipModifiers": [
       "+5% movingEnergyRegen"
     ]
@@ -777,6 +822,15 @@
     "specialEffects": [],
     "chipSlots": 0,
     "chipMemoryCost": 22,
+    "effectModifiers": [
+      {
+        "id": "energy-weapon-amp",
+        "target": "weaponDamageEnergy",
+        "op": "mult",
+        "value": 0.1,
+        "description": "+10% energy weapon damage"
+      }
+    ],
     "chipModifiers": [
       "+10% energy weapon damage"
     ]
@@ -796,6 +850,18 @@
     "specialEffects": [],
     "chipSlots": 0,
     "chipMemoryCost": 18,
+    "effectModifiers": [
+      {
+        "id": "flight-efficiency-active-drain",
+        "target": "activeEnergyDrainPerSecond",
+        "op": "mult",
+        "value": -0.15,
+        "conditions": {
+          "isFlying": true
+        },
+        "description": "-15% energy drain while flying"
+      }
+    ],
     "chipModifiers": [
       "-15% energy drain while flying"
     ]
@@ -815,6 +881,15 @@
     "specialEffects": [],
     "chipSlots": 0,
     "chipMemoryCost": 9,
+    "effectModifiers": [
+      {
+        "id": "turn-servo-tax",
+        "target": "turnRate",
+        "op": "mult",
+        "value": -0.05,
+        "description": "-5% turning speed"
+      }
+    ],
     "chipModifiers": [
       "-5% turning speed"
     ]
@@ -834,6 +909,15 @@
     "specialEffects": [],
     "chipSlots": 0,
     "chipMemoryCost": 14,
+    "effectModifiers": [
+      {
+        "id": "cooling-logic-pack",
+        "target": "coolingPerSecond",
+        "op": "mult",
+        "value": 0.08,
+        "description": "+8% heat dissipation"
+      }
+    ],
     "chipModifiers": [
       "+8% heat dissipation"
     ]
@@ -872,6 +956,15 @@
     "specialEffects": [],
     "chipSlots": 0,
     "chipMemoryCost": 20,
+    "effectModifiers": [
+      {
+        "id": "recoil-optimizer",
+        "target": "projectileSpreadDegrees",
+        "op": "mult",
+        "value": -0.1,
+        "description": "-10% projectile spread"
+      }
+    ],
     "chipModifiers": [
       "-10% projectile spread"
     ]

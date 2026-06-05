@@ -79,6 +79,12 @@ Use Garage developer mode export to download a catalog JSON, then apply it to so
 npm run catalog:apply -- ./path/to/garage-catalog-YYYY-MM-DD.json --allow-parts-json-write
 ```
 
+Quick apply using your most recent export (project root, exports folder, or Downloads):
+
+```bash
+npm run catalog:apply:latest
+```
+
 This command validates schema, writes a timestamped backup under `packages/client/src/data/parts/backups/`, and then updates `packages/client/src/data/parts/parts.json`.
 
 ## Notes

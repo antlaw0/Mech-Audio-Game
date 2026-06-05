@@ -32,7 +32,8 @@
 
     "typecheck": "npm run typecheck -ws",
 
-    "catalog:apply": "node ./scripts/apply-catalog-export.mjs"
+    "catalog:apply": "node ./scripts/apply-catalog-export.mjs",
+    "catalog:apply:latest": "node ./scripts/apply-latest-catalog-export.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

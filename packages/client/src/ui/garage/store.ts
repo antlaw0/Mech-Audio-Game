@@ -8,6 +8,7 @@ import {
 } from '../../data/parts/catalog.js'
 import {
   CATEGORY_LABELS,
+  PART_EFFECT_TARGETS,
   PART_CATEGORIES,
   PART_DEFINITION_NUMERIC_KEYS,
   WEAPON_MOUNT_SLOTS,
@@ -15,7 +16,11 @@ import {
   type MechLoadout,
   type PartCategory,
   type PartNumericKey,
+  type PartEffectCondition,
+  type PartEffectModifier,
   type PartDefinition,
+  type PartVariantStatModifier,
+  type PartVariantStatModifierInput,
   type PartInstance,
   type WeaponMountSlot
 } from '../../data/parts/types.js'
@@ -95,6 +100,265 @@ const normalizeStringArray = (value: unknown): string[] => {
   return value.filter((entry): entry is string => typeof entry === 'string')
 }
 
+const normalizeEffectConditions = (value: unknown): PartEffectCondition | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+
+  const source = value as Record<string, unknown>
+  const normalized: PartEffectCondition = {}
+
+  if (typeof source.epPercentGte === 'number' && Number.isFinite(source.epPercentGte)) {
+    normalized.epPercentGte = source.epPercentGte
+  }
+  if (typeof source.epPercentLte === 'number' && Number.isFinite(source.epPercentLte)) {
+    normalized.epPercentLte = source.epPercentLte
+  }
+  if (typeof source.heatPercentGte === 'number' && Number.isFinite(source.heatPercentGte)) {
+    normalized.heatPercentGte = source.heatPercentGte
+  }
+  if (typeof source.heatPercentLte === 'number' && Number.isFinite(source.heatPercentLte)) {
+    normalized.heatPercentLte = source.heatPercentLte
+  }
+  if (typeof source.isFlying === 'boolean') {
+    normalized.isFlying = source.isFlying
+  }
+  if (typeof source.isMoving === 'boolean') {
+    normalized.isMoving = source.isMoving
+  }
+  if (typeof source.isStandingStill === 'boolean') {
+    normalized.isStandingStill = source.isStandingStill
+  }
+  if (Array.isArray(source.weaponTypeIn)) {
+    const weaponTypeIn = source.weaponTypeIn.filter(
+      (entry): entry is 'ballistic' | 'energy' | 'missile' => entry === 'ballistic' || entry === 'energy' || entry === 'missile'
+    )
+    if (weaponTypeIn.length > 0) {
+      normalized.weaponTypeIn = weaponTypeIn
+    }
+  }
+  if (Array.isArray(source.targetEnemyTypeIn)) {
+    const targetEnemyTypeIn = source.targetEnemyTypeIn
+      .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+      .map((entry) => entry.trim())
+    if (targetEnemyTypeIn.length > 0) {
+      normalized.targetEnemyTypeIn = targetEnemyTypeIn
+    }
+  }
+
+  if (normalized.epPercentGte !== undefined && normalized.epPercentLte !== undefined && normalized.epPercentGte > normalized.epPercentLte) {
+    throw new Error('Invalid effect condition: epPercentGte cannot be greater than epPercentLte.')
+  }
+  if (normalized.heatPercentGte !== undefined && normalized.heatPercentLte !== undefined && normalized.heatPercentGte > normalized.heatPercentLte) {
+    throw new Error('Invalid effect condition: heatPercentGte cannot be greater than heatPercentLte.')
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined
+}
+
+const normalizeEffectModifiers = (value: unknown, id: string): PartEffectModifier[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.flatMap((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error(`Invalid field "${id}.effectModifiers[${index}]": expected an object.`)
+    }
+
+    const source = entry as Record<string, unknown>
+    const effectId = typeof source.id === 'string' && source.id.trim().length > 0
+      ? source.id.trim()
+      : `effect-${index + 1}`
+    const target = typeof source.target === 'string' ? source.target : ''
+    const op = source.op === 'add' || source.op === 'mult' ? source.op : null
+    const effectValue = source.value
+
+    if (!PART_EFFECT_TARGETS.includes(target as typeof PART_EFFECT_TARGETS[number])) {
+      throw new Error(`Invalid field "${id}.effectModifiers[${index}].target": unsupported target "${target}".`)
+    }
+    if (!op) {
+      throw new Error(`Invalid field "${id}.effectModifiers[${index}].op": expected "add" or "mult".`)
+    }
+    if (typeof effectValue !== 'number' || !Number.isFinite(effectValue)) {
+      throw new Error(`Invalid field "${id}.effectModifiers[${index}].value": expected a finite number.`)
+    }
+
+    return [{
+      id: effectId,
+      target: target as PartEffectModifier['target'],
+      op,
+      value: effectValue,
+      conditions: normalizeEffectConditions(source.conditions),
+      description: typeof source.description === 'string' ? source.description : undefined
+    }]
+  })
+}
+
+const parseVariantStatModifier = (value: unknown): PartVariantStatModifier | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const source = value as Record<string, unknown>
+
+  if (
+    (source.op === 'add' || source.op === 'mult' || source.op === 'replace')
+    && typeof source.value === 'number'
+    && Number.isFinite(source.value)
+  ) {
+    return { op: source.op, value: source.value }
+  }
+
+  if (
+    (source.op === 'additive' || source.op === 'multiplier')
+    && typeof source.value === 'number'
+    && Number.isFinite(source.value)
+  ) {
+    return {
+      op: source.op === 'additive' ? 'add' : 'mult',
+      value: source.value
+    }
+  }
+
+  if (typeof source.add === 'number' && Number.isFinite(source.add)) {
+    return { op: 'add', value: source.add }
+  }
+  if (typeof source.additive === 'number' && Number.isFinite(source.additive)) {
+    return { op: 'add', value: source.additive }
+  }
+  if (typeof source.mult === 'number' && Number.isFinite(source.mult)) {
+    return { op: 'mult', value: source.mult }
+  }
+  if (typeof source.multiplier === 'number' && Number.isFinite(source.multiplier)) {
+    return { op: 'mult', value: source.multiplier }
+  }
+  if (typeof source.replace === 'number' && Number.isFinite(source.replace)) {
+    return { op: 'replace', value: source.replace }
+  }
+
+  return null
+}
+
+const normalizeVariantStatModifiers = (value: unknown, id: string): Record<string, PartVariantStatModifierInput> | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Invalid field "${id}.statModifiers": expected an object.`)
+  }
+
+  const normalized: Record<string, PartVariantStatModifierInput> = {}
+  const source = value as Record<string, unknown>
+
+  Object.entries(source).forEach(([statKey, rawModifier]) => {
+    const modifier = parseVariantStatModifier(rawModifier)
+    if (!modifier) {
+      throw new Error(
+        `Invalid field "${id}.statModifiers.${statKey}": expected add/additive, mult/multiplier, or replace modifier with numeric value.`
+      )
+    }
+    normalized[statKey] = modifier
+  })
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined
+}
+
+const applyVariantStats = (
+  baseDefinition: PartDefinition,
+  mergedDefinition: PartDefinition,
+  sourceDefinition: PartDefinition
+): void => {
+  if (!sourceDefinition.statModifiers || typeof sourceDefinition.statModifiers !== 'object') {
+    return
+  }
+
+  const normalizedStatModifiers: Record<string, PartVariantStatModifier> = {}
+
+  Object.entries(sourceDefinition.statModifiers).forEach(([statKey, rawModifier]) => {
+    const modifier = parseVariantStatModifier(rawModifier)
+    if (!modifier) {
+      console.warn(`[garage] Ignoring invalid stat modifier "${statKey}" on variant "${sourceDefinition.id}".`)
+      return
+    }
+
+    const baseValue = (baseDefinition as Record<string, unknown>)[statKey]
+    if (typeof baseValue !== 'number' || !Number.isFinite(baseValue)) {
+      console.warn(`[garage] Ignoring stat modifier "${statKey}" on variant "${sourceDefinition.id}": base stat is not numeric.`)
+      return
+    }
+
+    normalizedStatModifiers[statKey] = modifier
+
+    if (modifier.op === 'add') {
+      ;(mergedDefinition as Record<string, unknown>)[statKey] = baseValue + modifier.value
+      return
+    }
+    if (modifier.op === 'mult') {
+      ;(mergedDefinition as Record<string, unknown>)[statKey] = baseValue * modifier.value
+      return
+    }
+
+    ;(mergedDefinition as Record<string, unknown>)[statKey] = modifier.value
+  })
+
+  if (Object.keys(normalizedStatModifiers).length > 0) {
+    mergedDefinition.statModifiers = normalizedStatModifiers
+  }
+}
+
+const resolveVariantCatalog = (sourceCatalog: PartDefinition[]): PartDefinition[] => {
+  const sourceById = new Map(sourceCatalog.map((definition) => [definition.id, definition] as const))
+  const resolvedById = new Map<string, PartDefinition>()
+  const resolvingIds = new Set<string>()
+
+  const resolveById = (id: string): PartDefinition | null => {
+    const existing = resolvedById.get(id)
+    if (existing) {
+      return existing
+    }
+
+    const sourceDefinition = sourceById.get(id)
+    if (!sourceDefinition) {
+      return null
+    }
+
+    if (resolvingIds.has(id)) {
+      console.warn(`[garage] Variant cycle detected while resolving "${id}".`)
+      return null
+    }
+
+    resolvingIds.add(id)
+
+    const variantOf = typeof sourceDefinition.variantOf === 'string'
+      ? sourceDefinition.variantOf.trim()
+      : ''
+
+    let resolved: PartDefinition = {
+      ...sourceDefinition,
+      statModifiers: sourceDefinition.statModifiers ? { ...sourceDefinition.statModifiers } : undefined
+    }
+
+    if (variantOf) {
+      const baseDefinition = resolveById(variantOf)
+      if (!baseDefinition) {
+        console.warn(`[garage] Variant "${sourceDefinition.id}" references missing base part "${variantOf}".`)
+      } else {
+        resolved = {
+          ...baseDefinition,
+          ...sourceDefinition,
+          variantOf,
+          statModifiers: sourceDefinition.statModifiers ? { ...sourceDefinition.statModifiers } : undefined
+        }
+        applyVariantStats(baseDefinition, resolved, sourceDefinition)
+      }
+    }
+
+    resolvingIds.delete(id)
+    resolvedById.set(id, resolved)
+    return resolved
+  }
+
+  return sourceCatalog.map((definition) => resolveById(definition.id) ?? { ...definition })
+}
+
 const normalizeCatalogDefinition = (entry: unknown, index: number): PartDefinition => {
   if (!entry || typeof entry !== 'object') {
     throw new Error(`Invalid catalog entry at index ${index}: expected an object.`)
@@ -130,6 +394,16 @@ const normalizeCatalogDefinition = (entry: unknown, index: number): PartDefiniti
     specialEffects: normalizeStringArray(source.specialEffects)
   }
 
+  if (typeof source.variantOf === 'string') {
+    const variantOf = source.variantOf.trim()
+    if (variantOf.length > 0) {
+      normalized.variantOf = variantOf
+    }
+  }
+  if (source.statModifiers !== undefined) {
+    normalized.statModifiers = normalizeVariantStatModifiers(source.statModifiers, id)
+  }
+
   for (const key of PART_DEFINITION_NUMERIC_KEYS) {
     if (REQUIRED_NUMERIC_KEYS.includes(key)) {
       continue
@@ -149,6 +423,9 @@ const normalizeCatalogDefinition = (entry: unknown, index: number): PartDefiniti
   }
   if (Array.isArray(source.chipModifiers)) {
     normalized.chipModifiers = source.chipModifiers.filter((entry): entry is string => typeof entry === 'string')
+  }
+  if (Array.isArray(source.effectModifiers)) {
+    normalized.effectModifiers = normalizeEffectModifiers(source.effectModifiers, id)
   }
 
   if (source.twoHanded === true) {
@@ -175,7 +452,7 @@ const normalizeCatalogDefinition = (entry: unknown, index: number): PartDefiniti
 }
 
 export const createGarageStore = (): GarageStore => {
-  let catalog = loadPartCatalog()
+  let catalog = resolveVariantCatalog(loadPartCatalog())
   let { inventory, loadout } = loadGarageInventory(catalog)
   let devModeEnabled = loadDevModeFlag()
   let pendingCatalogSave = 0
@@ -580,7 +857,7 @@ export const createGarageStore = (): GarageStore => {
 
   const addDefinition = (definition: PartDefinition): void => {
     ensureUniqueDefinition(definition)
-    catalog = [...catalog, { ...definition }]
+    catalog = resolveVariantCatalog([...catalog, { ...definition }])
     persistCatalogDebounced()
     emitChange()
   }
@@ -595,7 +872,7 @@ export const createGarageStore = (): GarageStore => {
       ))
       persistInventory()
     }
-    catalog = catalog.map((entry) => (entry.id === definitionId ? { ...nextDefinition } : entry))
+    catalog = resolveVariantCatalog(catalog.map((entry) => (entry.id === definitionId ? { ...nextDefinition } : entry)))
     persistCatalogDebounced()
     emitChange()
   }
@@ -699,7 +976,7 @@ export const createGarageStore = (): GarageStore => {
         seenIds.add(entry.id)
       })
 
-      catalog = nextCatalog
+      catalog = resolveVariantCatalog(nextCatalog)
 
       const inventoryBefore = inventory.length
       inventory = inventory.filter((entry) => seenIds.has(entry.definitionId))

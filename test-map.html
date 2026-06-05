@@ -1199,6 +1199,7 @@
       <div class="pause-debug-tab-buttons" role="tablist" aria-label="Pause Debug Tabs">
         <button id="pauseDebugTabRuntimeButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="true" aria-controls="pauseDebugRuntimePanel">Runtime Stats</button>
         <button id="pauseDebugTabEventsButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugEventsPanel">Event Log</button>
+        <button id="pauseDebugTabDiagnosticsButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugDiagnosticsPanel">Diagnostics</button>
         <button id="pauseDebugTabTuningButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugTuningPanel">Live Tuning</button>
         <button id="pauseDebugTabInventoryButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugInventoryPanel">Inventory</button>
         <button id="pauseDebugTabLoadoutButton" class="pause-debug-tab-button" type="button" role="tab" aria-selected="false" aria-controls="pauseDebugLoadoutPanel">Garage</button>
@@ -1209,6 +1210,9 @@
       </section>
       <section id="pauseDebugEventsPanel" class="pause-debug-tab-panel" role="tabpanel" aria-label="Event Log">
         <pre id="pauseDebugEventsContent" class="pause-debug-pre">No events yet.</pre>
+      </section>
+      <section id="pauseDebugDiagnosticsPanel" class="pause-debug-tab-panel" role="tabpanel" aria-label="Diagnostics Log">
+        <pre id="pauseDebugDiagnosticsContent" class="pause-debug-pre" tabindex="0" aria-label="Diagnostics output log. Screen readers can read this line by line.">No diagnostics yet.</pre>
       </section>
       <section id="pauseDebugTuningPanel" class="pause-debug-tab-panel" role="tabpanel" aria-label="Live Tuning">
         <div class="pause-debug-tuning-grid">

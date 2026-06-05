@@ -1,4 +1,4 @@
-import type { PartDefinition, PartInstance, MechLoadout, PartCategory, WeaponMountSlot } from './types.js'
+import { PART_EFFECT_TARGETS, type PartDefinition, type PartEffectCondition, type PartEffectModifier, type PartCategory, type PartInstance, type MechLoadout, type WeaponMountSlot } from './types.js'
 
 const CATALOG_STORAGE_KEY = 'mech.parts.catalog.v1'
 const INVENTORY_STORAGE_KEY = 'mech.parts.inventory.v1'
@@ -219,6 +219,101 @@ const mergeWeaponAuthoritativeSeedFields = (
   }
 }
 
+const normalizeEffectConditions = (source: unknown, definitionId: string): PartEffectCondition | undefined => {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    return undefined
+  }
+
+  const raw = source as Record<string, unknown>
+  const normalized: PartEffectCondition = {}
+
+  if (typeof raw.epPercentGte === 'number' && Number.isFinite(raw.epPercentGte)) {
+    normalized.epPercentGte = raw.epPercentGte
+  }
+  if (typeof raw.epPercentLte === 'number' && Number.isFinite(raw.epPercentLte)) {
+    normalized.epPercentLte = raw.epPercentLte
+  }
+  if (typeof raw.heatPercentGte === 'number' && Number.isFinite(raw.heatPercentGte)) {
+    normalized.heatPercentGte = raw.heatPercentGte
+  }
+  if (typeof raw.heatPercentLte === 'number' && Number.isFinite(raw.heatPercentLte)) {
+    normalized.heatPercentLte = raw.heatPercentLte
+  }
+  if (typeof raw.isFlying === 'boolean') {
+    normalized.isFlying = raw.isFlying
+  }
+  if (typeof raw.isMoving === 'boolean') {
+    normalized.isMoving = raw.isMoving
+  }
+  if (typeof raw.isStandingStill === 'boolean') {
+    normalized.isStandingStill = raw.isStandingStill
+  }
+  if (Array.isArray(raw.weaponTypeIn)) {
+    const validTypes = raw.weaponTypeIn.filter(
+      (entry): entry is 'ballistic' | 'energy' | 'missile' => entry === 'ballistic' || entry === 'energy' || entry === 'missile'
+    )
+    if (validTypes.length > 0) {
+      normalized.weaponTypeIn = validTypes
+    }
+  }
+  if (Array.isArray(raw.targetEnemyTypeIn)) {
+    const validEnemyTypes = raw.targetEnemyTypeIn.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+      .map((entry) => entry.trim())
+    if (validEnemyTypes.length > 0) {
+      normalized.targetEnemyTypeIn = validEnemyTypes
+    }
+  }
+
+  if (normalized.epPercentGte !== undefined && normalized.epPercentLte !== undefined && normalized.epPercentGte > normalized.epPercentLte) {
+    console.warn(`[parts] Ignoring contradictory EP condition bounds on "${definitionId}".`)
+    delete normalized.epPercentGte
+    delete normalized.epPercentLte
+  }
+  if (normalized.heatPercentGte !== undefined && normalized.heatPercentLte !== undefined && normalized.heatPercentGte > normalized.heatPercentLte) {
+    console.warn(`[parts] Ignoring contradictory heat condition bounds on "${definitionId}".`)
+    delete normalized.heatPercentGte
+    delete normalized.heatPercentLte
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined
+}
+
+const normalizeEffectModifiers = (source: unknown, definitionId: string): PartEffectModifier[] => {
+  if (!Array.isArray(source)) {
+    return []
+  }
+
+  const normalized: PartEffectModifier[] = []
+  source.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return
+    }
+    const raw = entry as Record<string, unknown>
+    const id = typeof raw.id === 'string' ? raw.id.trim() : `effect-${index + 1}`
+    const op = raw.op === 'add' || raw.op === 'mult' ? raw.op : null
+    const target = typeof raw.target === 'string' && PART_EFFECT_TARGETS.includes(raw.target as typeof PART_EFFECT_TARGETS[number])
+      ? raw.target
+      : null
+    const value = typeof raw.value === 'number' && Number.isFinite(raw.value) ? raw.value : null
+
+    if (!op || !target || value === null) {
+      console.warn(`[parts] Ignoring invalid effect modifier on "${definitionId}" at index ${index}.`)
+      return
+    }
+
+    normalized.push({
+      id,
+      op,
+      target: target as PartEffectModifier['target'],
+      value,
+      conditions: normalizeEffectConditions(raw.conditions, definitionId),
+      description: typeof raw.description === 'string' ? raw.description : undefined
+    })
+  })
+
+  return normalized
+}
+
 const normalizeDefinition = (definition: PartDefinition): PartDefinition => {
   const seedDefinition = seedCatalogById.get(definition.id)
   const mergedDefinition = {
@@ -247,7 +342,8 @@ const normalizeDefinition = (definition: PartDefinition): PartDefinition => {
     passiveBonuses: Array.isArray(normalizedDefinition.passiveBonuses) ? [...normalizedDefinition.passiveBonuses] : [],
     activeAbilities: Array.isArray(normalizedDefinition.activeAbilities) ? [...normalizedDefinition.activeAbilities] : [],
     specialEffects: Array.isArray(normalizedDefinition.specialEffects) ? [...normalizedDefinition.specialEffects] : [],
-    chipModifiers: Array.isArray(normalizedDefinition.chipModifiers) ? [...normalizedDefinition.chipModifiers] : []
+    chipModifiers: Array.isArray(normalizedDefinition.chipModifiers) ? [...normalizedDefinition.chipModifiers] : [],
+    effectModifiers: normalizeEffectModifiers(normalizedDefinition.effectModifiers, normalizedDefinition.id)
   }
 }
 

@@ -62,6 +62,7 @@ import { isTypingContextActive } from './keyboard-focus.js'
 import { TEST_MAP_NAVIGATION_POIS } from './scene-layout.js'
 import { createSprites } from './sprites.js'
 import { configurePartStatResolver, getFinalPartStats } from '../systems/parts/statResolver.js'
+import { applyPartEffectModifiers, isPartEffectModifierActive, type PartEffectRuntimeContext } from '../systems/parts/effectModifiers.js'
 import { type GarageViewController, createGarageView } from '../ui/garage/index.js'
 import { createGarageStore } from '../ui/garage/store.js'
 import { createThreeRenderSystem } from './three-render.js'
@@ -80,7 +81,7 @@ import {
 import { SURFACE_MATERIAL, resolveWorldSurfaceMaterial } from './surface-material.js'
 import { createWorldStreamingManager } from './world-streaming.js'
 import { createFrameUpdateScheduler } from './update-scheduler.js'
-import type { GarageSnapshot, MechLoadout, PartCategory, PartDefinition, WeaponMountSlot } from '../data/parts/types.js'
+import type { GarageSnapshot, MechLoadout, PartCategory, PartDefinition, PartEffectModifier, PartEffectTarget, WeaponMountSlot } from '../data/parts/types.js'
 import type { InventoryStack, ItemCategory } from '../data/items/types.js'
 import { createInventoryManager } from '../systems/inventory/inventoryManager.js'
 import { defaultItemDatabase } from '../systems/inventory/itemDatabase.js'
@@ -151,7 +152,7 @@ interface KnownPoi {
   position: WorldPosition
 } // end interface KnownPoi
 
-type PauseDebugTabId = 'runtime' | 'events' | 'tuning' | 'inventory' | 'loadout' | 'controls'
+type PauseDebugTabId = 'runtime' | 'events' | 'diagnostics' | 'tuning' | 'inventory' | 'loadout' | 'controls'
 type PauseOverlayMode = 'pause' | 'container-transfer'
 type HeatState = 'NORMAL' | 'HOT' | 'CRITICAL' | 'DANGER' | 'OVERHEAT'
 
@@ -414,12 +415,14 @@ function startTestMap(): void {
   const pauseMenuAnchorElement = document.getElementById('pauseMenuTitle')
   const pauseDebugTabRuntimeButtonElement = document.getElementById('pauseDebugTabRuntimeButton')
   const pauseDebugTabEventsButtonElement = document.getElementById('pauseDebugTabEventsButton')
+  const pauseDebugTabDiagnosticsButtonElement = document.getElementById('pauseDebugTabDiagnosticsButton')
   const pauseDebugTabTuningButtonElement = document.getElementById('pauseDebugTabTuningButton')
   const pauseDebugTabInventoryButtonElement = document.getElementById('pauseDebugTabInventoryButton')
   const pauseDebugTabLoadoutButtonElement = document.getElementById('pauseDebugTabLoadoutButton')
   const pauseDebugTabControlsButtonElement = document.getElementById('pauseDebugTabControlsButton')
   const pauseDebugRuntimePanelElement = document.getElementById('pauseDebugRuntimePanel')
   const pauseDebugEventsPanelElement = document.getElementById('pauseDebugEventsPanel')
+  const pauseDebugDiagnosticsPanelElement = document.getElementById('pauseDebugDiagnosticsPanel')
   const pauseDebugTuningPanelElement = document.getElementById('pauseDebugTuningPanel')
   const pauseDebugInventoryPanelElement = document.getElementById('pauseDebugInventoryPanel')
   const pauseInventoryAnchorElement = document.getElementById('pauseInventoryAnchor')
@@ -428,6 +431,7 @@ function startTestMap(): void {
   const pauseDebugControlsPanelElement = document.getElementById('pauseDebugControlsPanel')
   const pauseDebugRuntimeContentElement = document.getElementById('pauseDebugRuntimeContent')
   const pauseDebugEventsContentElement = document.getElementById('pauseDebugEventsContent')
+  const pauseDebugDiagnosticsContentElement = document.getElementById('pauseDebugDiagnosticsContent')
   const pauseInventoryCategoryTabsElement = document.getElementById('pauseInventoryCategoryTabs')
   const pauseContainerContextLabelElement = document.getElementById('pauseContainerContextLabel')
   const pauseContainerActionsElement = document.getElementById('pauseContainerActions')
@@ -698,6 +702,7 @@ function startTestMap(): void {
     ...weapon,
     swingSoundPaths: [...weapon.swingSoundPaths]
   }))
+  let activeLoadoutEffectModifiers: PartEffectModifier[] = []
   let activeRangedSlot: WeaponMountSlot = 'RightHand'
   let playerWeapon = weaponLoadout.find((weapon) => weapon.id === 'basic.pistol') ?? weaponLoadout[0]!
   let equippedMeleeWeapon = meleeLoadout[0] ?? null
@@ -719,6 +724,10 @@ function startTestMap(): void {
   let devLastEvent = 'none'
   let devEventCounter = 0
   const devEventLog: string[] = []
+  const devDiagnosticsLog: string[] = []
+  let devDiagnosticsEnabled = false
+  let devDiagnosticsPartEffectsEnabled = true
+  const devDiagnosticsLastEntryMs = new Map<string, number>()
   const devTimers = new Map<string, number>()
   let devVelocityX = 0
   let devVelocityY = 0
@@ -1704,6 +1713,121 @@ function startTestMap(): void {
       || input.turnRight
   } // end function isPlayerUsingMovingEnergyRegenMode
 
+  const getPartEffectRuntimeContext = (
+    options: {
+      currentWeaponType?: 'ballistic' | 'energy' | 'missile'
+      targetEnemyType?: string
+    } = {}
+  ): PartEffectRuntimeContext => {
+    const epRatio = Math.max(0, Math.min(1, player.ep / Math.max(1, player.maxEp)))
+    const heatRatio = Math.max(0, Math.min(1, devCurrentHeat / Math.max(1, devMaxHeat)))
+    const isMoving = isPlayerUsingMovingEnergyRegenMode()
+    const isFlying = !!player.isFlying
+    return {
+      epRatio,
+      heatRatio,
+      isFlying,
+      isMoving,
+      isStandingStill: !isMoving && !isFlying,
+      currentWeaponType: options.currentWeaponType,
+      targetEnemyType: options.targetEnemyType
+    }
+  } // end function getPartEffectRuntimeContext
+
+  const pushDiagnosticLogEntry = (channel: 'part-effects', message: string): void => {
+    if (!devDiagnosticsEnabled) {
+      return
+    }
+    if (channel === 'part-effects' && !devDiagnosticsPartEffectsEnabled) {
+      return
+    }
+    const timestampSeconds = (performance.now() / 1000).toFixed(2)
+    const nextEntry = `${timestampSeconds} [${channel}] ${message}`
+    devDiagnosticsLog.unshift(nextEntry)
+    while (devDiagnosticsLog.length > 400) {
+      devDiagnosticsLog.pop()
+    }
+    if (isPaused && pauseDebugActiveTab === 'diagnostics') {
+      updatePauseDebugTabs()
+    }
+  } // end function pushDiagnosticLogEntry
+
+  const applyPartEffectsWithDiagnostics = (
+    baseValue: number,
+    target: PartEffectTarget,
+    context: PartEffectRuntimeContext,
+    traceLabel: string
+  ): number => {
+    const appliedValue = applyPartEffectModifiers(baseValue, activeLoadoutEffectModifiers, target, context)
+    if (!devDiagnosticsEnabled || !devDiagnosticsPartEffectsEnabled || activeLoadoutEffectModifiers.length <= 0) {
+      return appliedValue
+    }
+
+    const activeModifiers = activeLoadoutEffectModifiers.filter((modifier) => modifier.target === target && isPartEffectModifierActive(modifier, context))
+    if (activeModifiers.length <= 0) {
+      return appliedValue
+    }
+
+    const dedupeKey = `${traceLabel}|${target}|${context.currentWeaponType ?? 'none'}|${context.targetEnemyType ?? 'none'}|${context.isFlying ? 'f' : 'g'}|${context.isMoving ? 'm' : 's'}`
+    const nowMs = performance.now()
+    const lastLoggedAt = devDiagnosticsLastEntryMs.get(dedupeKey)
+    if (lastLoggedAt !== undefined && (nowMs - lastLoggedAt) < 250) {
+      return appliedValue
+    }
+    devDiagnosticsLastEntryMs.set(dedupeKey, nowMs)
+
+    const modifierSummary = activeModifiers.map((modifier) => {
+      const parts: string[] = []
+      if (modifier.op === 'add' && Number.isFinite(modifier.value)) {
+        parts.push(`add ${modifier.value >= 0 ? '+' : ''}${modifier.value.toFixed(3)}`)
+      }
+      if (modifier.op === 'mult' && Number.isFinite(modifier.value)) {
+        parts.push(`mult ${modifier.value >= 0 ? '+' : ''}${(modifier.value * 100).toFixed(1)}%`)
+      }
+      return `${modifier.id}${parts.length > 0 ? ` (${parts.join(', ')})` : ''}`
+    }).join('; ')
+
+    pushDiagnosticLogEntry(
+      'part-effects',
+      `${traceLabel} target=${target} base=${baseValue.toFixed(3)} final=${appliedValue.toFixed(3)} ep=${(context.epRatio * 100).toFixed(0)}% heat=${(context.heatRatio * 100).toFixed(0)}% enemy=${context.targetEnemyType ?? 'none'} modifiers=${modifierSummary}`
+    )
+
+    return appliedValue
+  } // end function applyPartEffectsWithDiagnostics
+
+  const getEffectiveWeaponDamagePerShot = (weapon: PlayerWeaponDefinition, targetEnemyType?: string): number => {
+    const targetByWeaponType: Record<PlayerWeaponDefinition['weaponType'], PartEffectModifier['target']> = {
+      ballistic: 'weaponDamageBallistic',
+      energy: 'weaponDamageEnergy',
+      missile: 'weaponDamageMissile'
+    }
+    return Math.max(
+      1,
+      applyPartEffectsWithDiagnostics(
+        weapon.damagePerShot,
+        targetByWeaponType[weapon.weaponType],
+        getPartEffectRuntimeContext({ currentWeaponType: weapon.weaponType, targetEnemyType }),
+        `weapon.damage.${weapon.id}`
+      )
+    )
+  } // end function getEffectiveWeaponDamagePerShot
+
+  const getEffectiveMeleeDamagePerSwing = (targetEnemyType?: string): number => {
+    if (!equippedMeleeWeapon) {
+      return 0
+    }
+
+    return Math.max(
+      1,
+      applyPartEffectsWithDiagnostics(
+        equippedMeleeWeapon.damagePerSwing,
+        'weaponDamageMelee',
+        getPartEffectRuntimeContext({ targetEnemyType }),
+        `weapon.melee.${equippedMeleeWeapon.id}`
+      )
+    )
+  } // end function getEffectiveMeleeDamagePerSwing
+
   const getEnergyHeatMultiplier = (): number => {
     const heatState = resolveHeatState(devCurrentHeat, devMaxHeat, devHeatState)
     if (heatState === 'HOT') {
@@ -1740,7 +1864,13 @@ function startTestMap(): void {
     const baseRegen = getCurrentBaseEnergyRegenPerSecond()
     const weightFactor = calculateWeightFactor(totalWeight, ratedLoad).weightFactor
     const heatMultiplier = getEnergyHeatMultiplier()
-    return baseRegen * weightFactor * heatMultiplier * Math.max(0, devEnergyRegenRate)
+    const regenBeforeEffects = baseRegen * weightFactor * heatMultiplier * Math.max(0, devEnergyRegenRate)
+    return applyPartEffectsWithDiagnostics(
+      regenBeforeEffects,
+      'energyRegenPerSecond',
+      getPartEffectRuntimeContext(),
+      'regen.energy'
+    )
   } // end function getCurrentEnergyRegenPerSecond
 
   const canAffordWeaponReload = (weapon: PlayerWeaponDefinition): boolean => {
@@ -2841,6 +2971,7 @@ function startTestMap(): void {
       const buttonState = [
         { button: pauseDebugTabRuntimeButtonElement, selected: nextTab === 'runtime' },
         { button: pauseDebugTabEventsButtonElement, selected: nextTab === 'events' },
+        { button: pauseDebugTabDiagnosticsButtonElement, selected: nextTab === 'diagnostics' },
         { button: pauseDebugTabTuningButtonElement, selected: nextTab === 'tuning' },
         { button: pauseDebugTabInventoryButtonElement, selected: nextTab === 'inventory' },
         { button: pauseDebugTabLoadoutButtonElement, selected: nextTab === 'loadout' },
@@ -2856,6 +2987,7 @@ function startTestMap(): void {
       const panelState = [
         { panel: pauseDebugRuntimePanelElement, active: nextTab === 'runtime' },
         { panel: pauseDebugEventsPanelElement, active: nextTab === 'events' },
+        { panel: pauseDebugDiagnosticsPanelElement, active: nextTab === 'diagnostics' },
         { panel: pauseDebugTuningPanelElement, active: nextTab === 'tuning' },
         { panel: pauseDebugInventoryPanelElement, active: nextTab === 'inventory' },
         { panel: pauseDebugLoadoutPanelElement, active: nextTab === 'loadout' },
@@ -2884,7 +3016,9 @@ function startTestMap(): void {
     if (isPaused && !isConsoleOpen && !isNavigationMenuOpen && !isGarageModalOpen()) {
       const focusTarget = nextTab === 'inventory'
         ? (pauseOverlayMode === 'container-transfer' ? pauseCargoAnchorElement : pauseInventoryAnchorElement)
-        : (nextTab === 'loadout' ? pauseLoadoutTitleElement : pauseMenuAnchorElement)
+        : (nextTab === 'loadout'
+            ? pauseLoadoutTitleElement
+            : (nextTab === 'diagnostics' ? pauseDebugDiagnosticsContentElement : pauseMenuAnchorElement))
       if (focusTarget instanceof HTMLElement) {
         accessibilityModeManager.enterUiMode(focusTarget)
       }
@@ -2936,6 +3070,12 @@ function startTestMap(): void {
         ? devEventLog.join('\n')
         : 'No events yet.'
     } // end if event tab content exists
+
+    if (pauseDebugDiagnosticsContentElement instanceof HTMLElement) {
+      pauseDebugDiagnosticsContentElement.textContent = devDiagnosticsLog.length > 0
+        ? devDiagnosticsLog.join('\n')
+        : `${getDiagnosticsStatusLines().join('\n')}\n\nNo diagnostics recorded yet.`
+    } // end if diagnostics tab content exists
 
     setPauseDebugActiveTab(pauseDebugActiveTab)
   } // end function updatePauseDebugTabs
@@ -3729,6 +3869,7 @@ function startTestMap(): void {
   const pauseDebugTabButtons: Array<[HTMLButtonElement | null, PauseDebugTabId]> = [
     [pauseDebugTabRuntimeButtonElement instanceof HTMLButtonElement ? pauseDebugTabRuntimeButtonElement : null, 'runtime'],
     [pauseDebugTabEventsButtonElement instanceof HTMLButtonElement ? pauseDebugTabEventsButtonElement : null, 'events'],
+    [pauseDebugTabDiagnosticsButtonElement instanceof HTMLButtonElement ? pauseDebugTabDiagnosticsButtonElement : null, 'diagnostics'],
     [pauseDebugTabTuningButtonElement instanceof HTMLButtonElement ? pauseDebugTabTuningButtonElement : null, 'tuning'],
     [pauseDebugTabInventoryButtonElement instanceof HTMLButtonElement ? pauseDebugTabInventoryButtonElement : null, 'inventory'],
     [pauseDebugTabLoadoutButtonElement instanceof HTMLButtonElement ? pauseDebugTabLoadoutButtonElement : null, 'loadout'],
@@ -4198,6 +4339,7 @@ function startTestMap(): void {
     targets: readonly TargetableEnemyRender[]
   ): {
     targetId: number
+    enemyType: string
     hitDistance: number
     hitX: number
     hitY: number
@@ -4205,6 +4347,7 @@ function startTestMap(): void {
   } | null => {
     let nearestHitDistance = Number.POSITIVE_INFINITY
     let nearestTargetId = -1
+    let nearestEnemyType = ''
     let nearestX = 0
     let nearestY = 0
     let nearestZ = 0
@@ -4246,6 +4389,7 @@ function startTestMap(): void {
 
       nearestHitDistance = entryDistance
       nearestTargetId = target.id
+      nearestEnemyType = target.enemyType
       nearestX = originX + (dirX * entryDistance)
       nearestY = originY + (dirY * entryDistance)
       nearestZ = originZ + (dirZ * entryDistance)
@@ -4257,6 +4401,7 @@ function startTestMap(): void {
 
     return {
       targetId: nearestTargetId,
+      enemyType: nearestEnemyType,
       hitDistance: nearestHitDistance,
       hitX: nearestX,
       hitY: nearestY,
@@ -5030,6 +5175,19 @@ function startTestMap(): void {
     return devLastEvent
   } // end function nextEventTag
 
+  const clearDiagnosticsLog = (): void => {
+    devDiagnosticsLog.length = 0
+    devDiagnosticsLastEntryMs.clear()
+  } // end function clearDiagnosticsLog
+
+  const getDiagnosticsStatusLines = (): string[] => {
+    return [
+      `diagnostics.mode = ${devDiagnosticsEnabled ? 'on' : 'off'}`,
+      `diagnostics.effects = ${devDiagnosticsPartEffectsEnabled ? 'on' : 'off'}`,
+      `diagnostics.lines = ${devDiagnosticsLog.length}`
+    ]
+  } // end function getDiagnosticsStatusLines
+
   const formatDevPart = (slot: DevPartSlot): string => {
     const part = getDevPartState(slot)
 
@@ -5223,6 +5381,11 @@ function startTestMap(): void {
     const movementPart = getDevPartState('Movement')
     const mobilityType = toMobilityType(movementPart?.mobilityType ?? inferMobilityType())
     const defaults = MOVEMENT_ARCHETYPE_PROFILES[mobilityType]
+    const baseTurnRate = Math.max(0.1, movementPart?.turnRate ?? defaults.turnRate)
+    const effectiveTurnRate = Math.max(
+      0.1,
+      applyPartEffectsWithDiagnostics(baseTurnRate, 'turnRate', getPartEffectRuntimeContext(), 'movement.turnRate')
+    )
     return {
       mobilityType,
       ratedLoad: Math.max(1, movementPart?.ratedLoad ?? defaults.ratedLoad),
@@ -5231,7 +5394,7 @@ function startTestMap(): void {
       maxForwardSpeed: Math.max(0.1, movementPart?.maxForwardSpeed ?? defaults.maxForwardSpeed),
       maxReverseSpeed: Math.max(0.1, movementPart?.maxReverseSpeed ?? defaults.maxReverseSpeed),
       maxStrafeSpeed: Math.max(0, movementPart?.maxStrafeSpeed ?? defaults.maxStrafeSpeed),
-      turnRate: Math.max(0.1, movementPart?.turnRate ?? defaults.turnRate),
+      turnRate: effectiveTurnRate,
       terrainPenaltyMultiplier: Math.max(0.1, movementPart?.terrainPenaltyMultiplier ?? defaults.terrainPenaltyMultiplier),
       energyUse: Math.max(0, movementPart?.energyUse ?? defaults.energyUse)
     }
@@ -5292,6 +5455,14 @@ function startTestMap(): void {
 
   const syncGarageLoadoutToDevParts = (): void => {
     const snapshot = garageStore.getSnapshot()
+    const collectedEffectModifiers: PartEffectModifier[] = []
+    const collectDefinitionEffects = (definition: PartDefinition | null): void => {
+      if (!definition?.effectModifiers || definition.effectModifiers.length <= 0) {
+        return
+      }
+      collectedEffectModifiers.push(...definition.effectModifiers.map((entry) => ({ ...entry })))
+    }
+
     for (const category of getManagedGarageCategories()) {
       const slot = GARAGE_CATEGORY_TO_DEV_SLOT[category]
       if (!slot) continue
@@ -5314,7 +5485,14 @@ function startTestMap(): void {
         continue
       }
 
+      collectDefinitionEffects(definition)
       const resolved = getFinalPartStats(instanceId)
+      resolved.installedChipStates.forEach((chipState) => {
+        if (!chipState.active || !chipState.supportedByCompute) {
+          return
+        }
+        collectDefinitionEffects(garageStore.getDefinition(chipState.chipDefinitionId))
+      })
       const partType = category === 'Core'
         ? 'Core/ExoShell'
         : category.replace('LeftArm', 'Left Arm').replace('RightArm', 'Right Arm').replace('Utility1', 'Utility 1').replace('Utility2', 'Utility 2')
@@ -5388,7 +5566,14 @@ function startTestMap(): void {
         }))
         continue
       }
+      collectDefinitionEffects(weaponDefinition)
       const resolvedWeapon = getFinalPartStats(weaponInstance.instanceId)
+      resolvedWeapon.installedChipStates.forEach((chipState) => {
+        if (!chipState.active || !chipState.supportedByCompute) {
+          return
+        }
+        collectDefinitionEffects(garageStore.getDefinition(chipState.chipDefinitionId))
+      })
       devParts.set(devSlot, normalizeDevPartState(devSlot, {
         ...createPlaceholderPart(devSlot),
         partId: weaponDefinition.id,
@@ -5406,6 +5591,8 @@ function startTestMap(): void {
         activeAbilities: [...(weaponDefinition.activeAbilities ?? [])]
       }))
     }
+
+    activeLoadoutEffectModifiers = collectedEffectModifiers
 
     syncActiveCombatLoadout()
   } // end function syncGarageLoadoutToDevParts
@@ -6642,6 +6829,26 @@ function startTestMap(): void {
     {
       syntax: 'events.debug on|off',
       description: 'Toggle placeholder event debug flag.',
+      helpPath: ['Console', 'Utility']
+    },
+    {
+      syntax: 'diagnostics.mode on|off',
+      description: 'Enable or disable diagnostics logging and pause-tab output.',
+      helpPath: ['Console', 'Utility']
+    },
+    {
+      syntax: 'diagnostics.effects on|off',
+      description: 'Control logging for part effect modifier diagnostics.',
+      helpPath: ['Console', 'Utility']
+    },
+    {
+      syntax: 'diagnostics.status',
+      description: 'Show diagnostics mode state and current log size.',
+      helpPath: ['Console', 'Utility']
+    },
+    {
+      syntax: 'diagnostics.clear',
+      description: 'Clear diagnostics history in the pause Diagnostics tab.',
       helpPath: ['Console', 'Utility']
     },
     {
@@ -8171,6 +8378,45 @@ function startTestMap(): void {
       return ['events.debug = off']
     } // end if events.debug off command
 
+    if (normalizedCommand === 'diagnostics.mode on') {
+      devDiagnosticsEnabled = true
+      nextEventTag('Diagnostics mode enabled')
+      updatePauseDebugTabs()
+      return getDiagnosticsStatusLines()
+    } // end if diagnostics.mode on command
+
+    if (normalizedCommand === 'diagnostics.mode off') {
+      devDiagnosticsEnabled = false
+      nextEventTag('Diagnostics mode disabled')
+      updatePauseDebugTabs()
+      return getDiagnosticsStatusLines()
+    } // end if diagnostics.mode off command
+
+    if (normalizedCommand === 'diagnostics.effects on') {
+      devDiagnosticsPartEffectsEnabled = true
+      nextEventTag('Diagnostics part-effects channel enabled')
+      updatePauseDebugTabs()
+      return getDiagnosticsStatusLines()
+    } // end if diagnostics.effects on command
+
+    if (normalizedCommand === 'diagnostics.effects off') {
+      devDiagnosticsPartEffectsEnabled = false
+      nextEventTag('Diagnostics part-effects channel disabled')
+      updatePauseDebugTabs()
+      return getDiagnosticsStatusLines()
+    } // end if diagnostics.effects off command
+
+    if (normalizedCommand === 'diagnostics.status') {
+      return getDiagnosticsStatusLines()
+    } // end if diagnostics.status command
+
+    if (normalizedCommand === 'diagnostics.clear') {
+      clearDiagnosticsLog()
+      nextEventTag('Diagnostics log cleared')
+      updatePauseDebugTabs()
+      return ['Diagnostics log cleared.', ...getDiagnosticsStatusLines()]
+    } // end if diagnostics.clear command
+
     if (normalizedCommand.startsWith('save.build ')) {
       const name = commandLine.trim().slice('save.build '.length).trim()
       if (name.length <= 0) {
@@ -9166,6 +9412,9 @@ function startTestMap(): void {
           )
         )
 
+        const dashTargetEnemyType = activeMeleeDash.targetEnemyId !== null
+          ? (getDashTargetById(activeMeleeDash.targetEnemyId)?.enemyType)
+          : undefined
         activeMeleeDash = null
         if (equippedMeleeWeapon) {
           const swingSoundPath = equippedMeleeWeapon.swingSoundPaths[Math.floor(Math.random() * equippedMeleeWeapon.swingSoundPaths.length)]
@@ -9180,7 +9429,7 @@ function startTestMap(): void {
             combatWorld,
             audio,
             player,
-            equippedMeleeWeapon.damagePerSwing,
+            getEffectiveMeleeDamagePerSwing(dashTargetEnemyType),
             dashStrikeRange,
             dashStrikeConeAngle
           )
@@ -9248,9 +9497,18 @@ function startTestMap(): void {
     const baseEnergyRegenPerSecond = getCurrentEnergyRegenPerSecond(effectiveTotalWeight, movementProfile.ratedLoad)
     const passiveEnergyDrainPerSecond = getPassiveEnergyDrainPerSecond()
     const flightEnergyDrainPerSecond = player.isFlying ? flightRuntimeProfile.energyUsePerSecond : 0
-    const activeEnergyDrainPerSecond = devInfiniteEp
+    const baseActiveEnergyDrainPerSecond = devInfiniteEp
       ? 0
       : flightEnergyDrainPerSecond + ((player.isBoosting ?? false) ? BOOST_EP_DRAIN_PER_SECOND : 0)
+    const activeEnergyDrainPerSecond = Math.max(
+      0,
+      applyPartEffectsWithDiagnostics(
+        baseActiveEnergyDrainPerSecond,
+        'activeEnergyDrainPerSecond',
+        getPartEffectRuntimeContext(),
+        'energy.activeDrain'
+      )
+    )
     if (activeEnergyDrainPerSecond > 0) {
       devLastActiveEnergyUseTimeMs = timestampMs
     }
@@ -9270,7 +9528,12 @@ function startTestMap(): void {
     const flightHeatGain = (player.isFlying && !devInfiniteCooling) ? (flightRuntimeProfile.heatGenerationPerSecond * deltaSeconds) : 0
     devCurrentHeat = devInfiniteCooling ? 0 : Math.min(devMaxHeat, devCurrentHeat + flightHeatGain)
     updateEmergencyCoolingState()
-    const passiveCoolingPerSecond = getPassiveCoolingRatePerSecond()
+    const passiveCoolingPerSecond = applyPartEffectsWithDiagnostics(
+      getPassiveCoolingRatePerSecond(),
+      'coolingPerSecond',
+      getPartEffectRuntimeContext(),
+      'heat.cooling'
+    )
     devCurrentHeat = devInfiniteCooling ? 0 : Math.max(0, devCurrentHeat - (passiveCoolingPerSecond * deltaSeconds))
     updateHeatState()
     applyOverheatShutdown()
@@ -9841,6 +10104,17 @@ function startTestMap(): void {
         const playerSpeed = Math.hypot(player.x - previousPlayerX, player.y - previousPlayerY) / Math.max(deltaSeconds, 0.0001)
         const maxMoveSpeed = player.isFlying ? flightSpeedLimit : PLAYER_SPEED
         const speedFraction = Math.min(1, playerSpeed / maxMoveSpeed)
+        const defaultTargetEnemyType = lockUpdate.lockedTarget?.enemyType
+        const effectiveWeaponDamagePerShot = getEffectiveWeaponDamagePerShot(playerWeapon, defaultTargetEnemyType)
+        const effectiveWeaponSpreadDegrees = Math.max(
+          0,
+          applyPartEffectsWithDiagnostics(
+            playerWeapon.spreadDegrees,
+            'projectileSpreadDegrees',
+            getPartEffectRuntimeContext({ currentWeaponType: playerWeapon.weaponType, targetEnemyType: defaultTargetEnemyType }),
+            `weapon.spread.${playerWeapon.id}`
+          )
+        )
 
         if (minigunEquippedNow) {
           audio.startMinigunFiringLoop()
@@ -9972,10 +10246,11 @@ function startTestMap(): void {
                 }
 
                 if (targetHit && targetHit.hitDistance <= worldHitDistance) {
+                  const effectiveMinigunDamage = getEffectiveWeaponDamagePerShot(playerWeapon, targetHit.enemyType)
                   const hitResult = applyDirectHitscanDamage(
                     combatWorld,
                     targetHit.targetId,
-                    playerWeapon.damagePerShot,
+                    effectiveMinigunDamage,
                     audio,
                     player,
                     true
@@ -10098,7 +10373,7 @@ function startTestMap(): void {
                 combatWorld,
                 player,
                 lockedTargetId,
-                playerWeapon.damagePerShot,
+                effectiveWeaponDamagePerShot,
                 playerWeapon.bulletSpeed,
                 playerWeapon.maxRange,
                 playerWeapon.projectileSize,
@@ -10138,19 +10413,19 @@ function startTestMap(): void {
               effectiveDirectFireAccuracy,
               speedFraction,
               playerWeapon.stability ?? 1,
-              playerWeapon.damagePerShot,
+              effectiveWeaponDamagePerShot,
               playerWeapon.bulletSpeed,
               playerWeapon.maxRange,
               playerWeapon.projectileSize,
               playerWeapon.projectileType,
               playerWeapon.projectileCount,
-              playerWeapon.spreadDegrees
+              effectiveWeaponSpreadDegrees
             )
           } else {
             spawnPlayerBullet(
               combatWorld,
               player,
-              playerWeapon.damagePerShot,
+              effectiveWeaponDamagePerShot,
               playerWeapon.bulletSpeed,
               playerWeapon.maxRange,
               playerWeapon.projectileSize,
@@ -10159,7 +10434,7 @@ function startTestMap(): void {
               speedFraction,
               playerWeapon.stability ?? 1,
               playerWeapon.projectileCount,
-              playerWeapon.spreadDegrees
+              effectiveWeaponSpreadDegrees
             )
           } // end if locked target for accuracy cone
           if (shotEnergyCost > 0) {
@@ -10286,12 +10561,13 @@ function startTestMap(): void {
         ? `${(1 / playerWeapon.fireRateCooldownSeconds).toFixed(2)}/s`
         : 'Unlimited'
       const meleeName = equippedMeleeWeapon?.name ?? 'None'
-      const meleeDamage = equippedMeleeWeapon?.damagePerSwing ?? 0
+      const rangedDamage = getEffectiveWeaponDamagePerShot(playerWeapon)
+      const meleeDamage = equippedMeleeWeapon ? getEffectiveMeleeDamagePerSwing() : 0
       const meleeRate = equippedMeleeWeapon?.meleeCooldownSeconds
       const meleeRange = equippedMeleeWeapon?.reach ?? 0
       if (awarenessWeaponNameElement) awarenessWeaponNameElement.textContent = `${playerWeapon.name} | R: ${meleeName}`
       if (awarenessWeaponTypeElement) awarenessWeaponTypeElement.textContent = `${playerWeapon.weaponType} | clip ${playerWeapon.ammoInClip}/${playerWeapon.clipSize}`
-      if (awarenessWeaponDamageElement) awarenessWeaponDamageElement.textContent = `${playerWeapon.damagePerShot} | ${meleeDamage}`
+      if (awarenessWeaponDamageElement) awarenessWeaponDamageElement.textContent = `${rangedDamage} | ${meleeDamage}`
       if (awarenessWeaponRateElement) awarenessWeaponRateElement.textContent = `${rateOfFireLabel} | ${isReloading ? 'Reloading...' : `${meleeRate?.toFixed(2) ?? '0.00'}s`}`
       if (awarenessWeaponRangeElement) awarenessWeaponRangeElement.textContent = `${playerWeapon.maxRange.toFixed(1)} | ${meleeRange.toFixed(1)}`
       if (awarenessWeaponProjectilesElement) awarenessWeaponProjectilesElement.textContent = `${playerWeapon.projectileCount} | reload ${getWeaponReloadCost(playerWeapon)}`

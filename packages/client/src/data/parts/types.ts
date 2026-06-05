@@ -22,6 +22,41 @@ export type PartModifier = {
   value: number
 }
 
+export const PART_EFFECT_TARGETS = [
+  'energyRegenPerSecond',
+  'activeEnergyDrainPerSecond',
+  'coolingPerSecond',
+  'turnRate',
+  'projectileSpreadDegrees',
+  'weaponDamageBallistic',
+  'weaponDamageEnergy',
+  'weaponDamageMissile',
+  'weaponDamageMelee'
+] as const
+
+export type PartEffectTarget = typeof PART_EFFECT_TARGETS[number]
+
+export type PartEffectCondition = {
+  epPercentGte?: number
+  epPercentLte?: number
+  heatPercentGte?: number
+  heatPercentLte?: number
+  isFlying?: boolean
+  isMoving?: boolean
+  isStandingStill?: boolean
+  weaponTypeIn?: Array<'ballistic' | 'energy' | 'missile'>
+  targetEnemyTypeIn?: string[]
+}
+
+export type PartEffectModifier = {
+  id: string
+  target: PartEffectTarget
+  op: 'add' | 'mult'
+  value: number
+  conditions?: PartEffectCondition
+  description?: string
+}
+
 export type PartVariantStatModifier =
   | { op: 'add'; value: number }
   | { op: 'mult'; value: number }
@@ -97,6 +132,7 @@ export type PartDefinition = {
   computeBandWidth?: number
   chipMemoryCost?: number
   chipModifiers?: string[]
+  effectModifiers?: PartEffectModifier[]
 }
 
 export type InstalledChipState = {
