@@ -121,6 +121,7 @@ const PROJECTILE_IMPACT_GLOBAL_GAIN = 2.2
 const PROJECTILE_IMPACT_GAIN_COMPENSATION_MIN_DISTANCE = 6
 const PROJECTILE_IMPACT_GAIN_COMPENSATION_MAX_DISTANCE = 72
 const PROJECTILE_IMPACT_GAIN_COMPENSATION_MAX_GAIN = 2.4
+const UI_SOUND_POOL_SIZE = 6
 const IMPACT_CLUSTER_RADIUS = 2.6
 const IMPACT_CLUSTER_RETENTION_SECONDS = 0.45
 const IMPACT_DENSITY_WINDOW_SECONDS = 1
@@ -869,6 +870,7 @@ export function createAudioController(): AudioController {
   let servoVolume = 1
   let servoMotionIntensity = 0
   let footstepsVolume = 1
+  let uiVolume = 1
   let debugPitchScale = 1
   let flightLoopVolume = 0.5
   let energyStatusVolume = 1.35
@@ -876,6 +878,7 @@ export function createAudioController(): AudioController {
   let objectsVolume = 1
   let enemiesVolume = 1
   let navigationVolume = 1
+  const uiCueVoicePools = new Map<string, { voices: HTMLAudioElement[]; cursor: number }>()
 
   const aimAssistProjectileRadius = 0.25
 
@@ -989,6 +992,41 @@ export function createAudioController(): AudioController {
     })
   } // end function applyHtmlAudioPitchScale
 
+  const getOrCreateUiCuePool = (soundPath: string): { voices: HTMLAudioElement[]; cursor: number } => {
+    const existing = uiCueVoicePools.get(soundPath)
+    if (existing) {
+      return existing
+    }
+
+    const voices = Array.from({ length: UI_SOUND_POOL_SIZE }, () => {
+      const audio = new Audio(soundPath)
+      audio.preload = 'auto'
+      audio.volume = 0
+      return audio
+    })
+    const created = { voices, cursor: 0 }
+    uiCueVoicePools.set(soundPath, created)
+    return created
+  } // end function getOrCreateUiCuePool
+
+  const playUiCue = (soundPath: string): void => {
+    if (!audioStarted || !isAudioContextRunning()) {
+      return
+    } // end if audio context is unavailable
+
+    const pool = getOrCreateUiCuePool(soundPath)
+    const voice = pool.voices[pool.cursor]
+    if (!voice) {
+      return
+    }
+
+    pool.cursor = (pool.cursor + 1) % pool.voices.length
+    voice.playbackRate = Math.max(0.5, Math.min(2, debugPitchScale))
+    voice.volume = clampVolumeScalar(masterVolume * uiVolume)
+    voice.currentTime = 0
+    void voice.play().catch(() => undefined)
+  } // end function playUiCue
+
   const setServoMotionIntensity = (normalizedMotion: number): void => {
     servoMotionIntensity = Math.max(0, Math.min(1, normalizedMotion))
     applyServoPlaybackRate()
@@ -1075,6 +1113,10 @@ export function createAudioController(): AudioController {
       energyStatusVolume = nextValue
       return energyStatusVolume
     } // end if energy-status volume
+    if (name === 'ui') {
+      uiVolume = nextValue
+      return uiVolume
+    } // end if ui volume
     if (name === 'proximity') {
       proximityVolume = nextValue
       return proximityVolume
@@ -1099,6 +1141,7 @@ export function createAudioController(): AudioController {
     if (name === 'footsteps') return footstepsVolume
     if (name === 'flightLoop') return flightLoopVolume
     if (name === 'energyStatus') return energyStatusVolume
+    if (name === 'ui') return uiVolume
     return getCategoryVolume(name)
   } // end function getVolumeChannel
 
@@ -5212,6 +5255,7 @@ export function createAudioController(): AudioController {
     updateTargetLockProgressAudio,
     resetTargetLockProgressAudio,
     playNegativeActionTone,
+    playUiCue,
     playExplosion,
     playCardinalHeadingCueForFacing: (playerAngle: number) => playCardinalHeadingCue(playerAngle),
     prewarmEnemyAudioAssets,

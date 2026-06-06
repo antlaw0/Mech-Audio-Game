@@ -1,0 +1,7 @@
+node_modules/
+dist/
+build/
+packages/server/
+packages/shared/
+packages/client/src/net/
+packages/client/src/data/

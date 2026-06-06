@@ -65,6 +65,7 @@ import { configurePartStatResolver, getFinalPartStats } from '../systems/parts/s
 import { applyPartEffectModifiers, isPartEffectModifierActive, type PartEffectRuntimeContext } from '../systems/parts/effectModifiers.js'
 import { type GarageViewController, createGarageView } from '../ui/garage/index.js'
 import { createGarageStore } from '../ui/garage/store.js'
+import { createUiAudioService, UiSound } from '../systems/audio/uiAudio.js'
 import { createThreeRenderSystem } from './three-render.js'
 import { createUpdateState, updateFrame } from './update.js'
 import { createWorldMapOverlay } from './world-map-overlay.js'
@@ -588,6 +589,8 @@ function startTestMap(): void {
   const input = createInputState()
   const updateState = createUpdateState()
   const audio = createAudioController()
+  const uiAudio = createUiAudioService(audio)
+  uiAudio.installGlobalFocusAndActivationAudio(50)
   audio.prewarmEnemyAudioAssets()
 
   // Create the pickup world system — manages 3D meshes and audio beacons for
@@ -3238,6 +3241,7 @@ function startTestMap(): void {
     isNavigationMenuOpen = false
     updateNavigationOverlayVisibility(false)
     clearGameplayInputs()
+    uiAudio.play(UiSound.PopupClose)
   } // end function closeNavigationMenu
 
   const openNavigationMenu = (): void => {
@@ -3249,6 +3253,7 @@ function startTestMap(): void {
     renderNavigationPoiMenu()
     updateNavigationOverlayVisibility(true)
     clearGameplayInputs()
+    uiAudio.play(UiSound.PopupOpen)
     if (navCategoryCitiesButtonElement instanceof HTMLButtonElement) {
       navCategoryCitiesButtonElement.focus()
     } // end if first category button exists
@@ -3698,7 +3703,7 @@ function startTestMap(): void {
     if (!isPaused) {
       isPaused = true
       await audio.ensureAudio()
-      audio.playPauseOpenChirp()
+      uiAudio.play(UiSound.PopupOpen)
       await new Promise<void>((resolve) => {
         window.setTimeout(() => resolve(), 90)
       })
@@ -3731,7 +3736,7 @@ function startTestMap(): void {
     activeContainerTransferId = null
     setPauseOverlayVisible(false)
     await audio.resumeAllAudio()
-    audio.playPauseCloseChirp()
+    uiAudio.play(UiSound.PopupClose)
     isPaused = false
     lastTimeMs = performance.now()
 
@@ -5716,6 +5721,7 @@ function startTestMap(): void {
         summary: pauseLoadoutSummaryElement
       },
       getEquipValidation: getGarageEquipValidation,
+      uiAudio,
       onLoadoutChanged: () => {
         syncGarageLoadoutToDevParts()
         applySubsystemIntegrityState()
@@ -6084,7 +6090,7 @@ function startTestMap(): void {
       `weapon = type:${playerWeapon.weaponType} accuracy:${playerWeapon.accuracy.toFixed(2)} pellets:${playerWeapon.projectileCount} spread:${playerWeapon.spreadDegrees.toFixed(1)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fullAuto:${playerWeapon.isFullAuto} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)} clip:${playerWeapon.ammoInClip}/${playerWeapon.clipSize} reloadCost:${getWeaponReloadCost(playerWeapon)}`,
       `ammo.universal = ${Math.round(getUniversalAmmoResource())} reloading:${isReloading}`,
       `audio frontBack = enabled:${frontBackSettings.enabled} rearCue:${frontBackSettings.rearCueLayerEnabled} intensity:${frontBackSettings.intensity.toFixed(2)} debug:${frontBackSettings.debugLogging}`,
-      `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} music:${audio.getVolumeChannel('music').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)} energy:${audio.getVolumeChannel('energyStatus').toFixed(2)}`,
+      `audio volumes = master:${audio.getVolumeChannel('master').toFixed(2)} ambience:${audio.getVolumeChannel('ambience').toFixed(2)} music:${audio.getVolumeChannel('music').toFixed(2)} footsteps:${audio.getVolumeChannel('footsteps').toFixed(2)} servo:${audio.getVolumeChannel('servo').toFixed(2)} ui:${audio.getVolumeChannel('ui').toFixed(2)} energy:${audio.getVolumeChannel('energyStatus').toFixed(2)}`,
       `audio categories = proximity:${audio.getCategoryEnabled('proximity')}@${audio.getVolumeChannel('proximity').toFixed(2)} objects:${audio.getCategoryEnabled('objects')}@${audio.getVolumeChannel('objects').toFixed(2)} enemies:${audio.getCategoryEnabled('enemies')}@${audio.getVolumeChannel('enemies').toFixed(2)} navigation:${audio.getCategoryEnabled('navigation')}@${audio.getVolumeChannel('navigation').toFixed(2)}`
     ]
   } // end function getStateLines
@@ -6472,6 +6478,12 @@ function startTestMap(): void {
       helpPath: ['Audio', 'Mix'],
       get: () => audio.getVolumeChannel('energyStatus'),
       set: (rawValue) => audio.setVolumeChannel('energyStatus', parseFiniteNumber(rawValue, 'audio.energy.volume'))
+    },
+    'audio.ui.volume': {
+      description: 'UI sound volume scalar from 0 to 2.',
+      helpPath: ['Audio', 'Mix'],
+      get: () => audio.getVolumeChannel('ui'),
+      set: (rawValue) => audio.setVolumeChannel('ui', parseFiniteNumber(rawValue, 'audio.ui.volume'))
     },
     'audio.proximity.enabled': {
       description: 'Enable or disable the proximity audio category.',

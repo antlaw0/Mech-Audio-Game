@@ -1,5 +1,6 @@
 import { createPartCard } from '../components/PartCard.js'
 import { getFinalPartStats } from '../../systems/parts/statResolver.js'
+import { UiSound, type UiAudioService } from '../../systems/audio/uiAudio.js'
 import { CATEGORY_LABELS, WEAPON_MOUNT_SLOT_LABELS, WEAPON_MOUNT_SLOTS, type GarageSnapshot, type MechLoadout, type PartCategory, type PartDefinition, type PartInstance, type PartVariantStatModifierInput, type WeaponMountSlot } from '../../data/parts/types.js'
 import { GARAGE_CATEGORY_ORDER, type EquipValidation, type GarageStore } from './store.js'
 
@@ -52,6 +53,7 @@ export type GarageViewOptions = {
   elements: GarageViewElements
   getEquipValidation: (category: PartCategory, instanceId: string, preview: GarageSnapshot) => EquipValidation
   onLoadoutChanged: (snapshot: GarageSnapshot) => void
+  uiAudio?: UiAudioService
 }
 
 type ModalFocusOptions = {
@@ -1186,6 +1188,7 @@ export const createGarageView = (options: GarageViewOptions): GarageViewControll
       }
       options.store.equipToWeaponSlot(slotId, instance.instanceId)
       options.onLoadoutChanged(options.store.getSnapshot())
+      options.uiAudio?.play(UiSound.EquipPart)
     } else {
       const validation = options.store.validateEquip(slotId, instance.instanceId, (preview) => options.getEquipValidation(slotId, instance.instanceId, preview))
       if (!validation.valid) {
@@ -1207,6 +1210,7 @@ export const createGarageView = (options: GarageViewOptions): GarageViewControll
       }
       options.store.equipInstance(slotId, instance.instanceId)
       options.onLoadoutChanged(options.store.getSnapshot())
+      options.uiAudio?.play(UiSound.EquipPart)
     }
   }
 

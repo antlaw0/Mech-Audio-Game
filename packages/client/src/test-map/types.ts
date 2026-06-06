@@ -381,7 +381,7 @@ export type SpriteType = 'tree' | 'rock' | 'pillar'
 
 export type AudioCategory = 'proximity' | 'objects' | 'enemies' | 'navigation'
 
-export type AudioVolumeChannel = AudioCategory | 'master' | 'ambience' | 'music' | 'servo' | 'footsteps' | 'flightLoop' | 'energyStatus'
+export type AudioVolumeChannel = AudioCategory | 'master' | 'ambience' | 'music' | 'servo' | 'footsteps' | 'flightLoop' | 'energyStatus' | 'ui'
 
 export interface SpriteObject {
   x: number
@@ -510,6 +510,7 @@ export interface AudioController {
   ) => void
   resetTargetLockProgressAudio: () => void
   playNegativeActionTone: () => void
+  playUiCue: (soundPath: string) => void
   playExplosion: (
     worldX: number,
     worldY: number,
