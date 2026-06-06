@@ -1,7 +1,7 @@
 {
-  /* ---------------------------
+  /* ===========================
      FILE SYSTEM FILTERING
-  ----------------------------*/
+  =========================== */
   "files.watcherExclude": {
     "**/.git/**": true,
     "**/node_modules/**": true,
@@ -41,15 +41,14 @@
     "**/*Freeze-Investigation*.txt": true
   },
 
-  /* ---------------------------
-     TYPESCRIPT (slightly safer)
-  ----------------------------*/
+  /* ===========================
+     TYPESCRIPT (STABILITY FIRST)
+  =========================== */
   "typescript.tsserver.watchOptions": {
     "watchFile": "useFsEventsOnParentDirectory",
     "watchDirectory": "useFsEvents",
     "fallbackPolling": "dynamicPriority",
     "synchronousWatchDirectory": false,
-
     "excludeDirectories": [
       "**/node_modules",
       "**/packages/*/dist",
@@ -63,34 +62,57 @@
   "typescript.disableAutomaticTypeAcquisition": true,
   "typescript.tsserver.experimental.enableProjectDiagnostics": false,
 
-  /* ---------------------------
+  /* ===========================
+     COPILOT BEHAVIOR CONTROL
+     (THIS IS THE IMPORTANT PART)
+  =========================== */
+
+  "github.copilot.editor.enableAutoCompletions": true,
+  "github.copilot.inlineSuggest.enable": true,
+
+  // Keep chat available but prevent overreach patterns
+  "github.copilot.chat.enabled": true,
+
+  // Reduce “model verbosity / overgeneration”
+  "github.copilot.advanced": {
+    "length": "short"
+  },
+
+  // Prevent Copilot from being too aggressive in markdown/log contexts
+  "github.copilot.enable": {
+    "*": true,
+    "markdown": false,
+    "plaintext": true
+  },
+
+  /* ===========================
      TOOLING BEHAVIOR
-  ----------------------------*/
+  =========================== */
   "npm.autoDetect": "off",
   "git.autorefresh": false,
   "task.allowAutomaticTasks": "on",
   "task.autoDetect": "off",
 
-  /* ---------------------------
+  /* ===========================
      TERMINAL UX
-  ----------------------------*/
+  =========================== */
   "terminal.integrated.confirmOnKill": "never",
   "terminal.integrated.enableMultiLinePasteWarning": "never",
 
-  /* ---------------------------
+  /* ===========================
      SEARCH BEHAVIOR
-  ----------------------------*/
+  =========================== */
   "search.followSymlinks": false,
 
-  /* ---------------------------
+  /* ===========================
      UI PREFERENCES
-  ----------------------------*/
+  =========================== */
   "explorer.autoReveal": false,
   "breadcrumbs.enabled": true,
 
-  /* ---------------------------
-     WORKSPACE TRUST (fine as-is)
-  ----------------------------*/
+  /* ===========================
+     WORKSPACE TRUST
+  =========================== */
   "security.workspace.trust.enabled": true,
   "security.workspace.trust.startupPrompt": "never",
   "security.workspace.trust.untrustedFiles": "open"
