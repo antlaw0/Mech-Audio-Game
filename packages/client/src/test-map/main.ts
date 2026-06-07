@@ -97,6 +97,7 @@ import {
   getTotalMechWeight,
   type OverencumbranceThresholds
 } from '../systems/weight/mechWeight.js'
+import { trace } from '../../../shared/dist/trace.js'
 import type { AudioCategory, AudioVolumeChannel } from './types.js'
 import type { WorldPosition } from './types.js'
 
@@ -9097,11 +9098,29 @@ function startTestMap(): void {
       intervalFrames: streamingIntervalFrames,
       maxDeferralFrames: 4,
       run: () => {
+        trace.emit({
+          domain: 'scene-transitions',
+          event: 'enter',
+          payload: {
+            frame: updateScheduler.getFrameIndex(),
+            playerX: player.x,
+            playerY: player.y
+          }
+        })
         worldStreaming.update(player.x, player.y)
         const activeChunkKeys = worldStreaming.getActiveChunkKeys()
         const dormantChunkKeys = worldStreaming.getDormantChunkKeys()
         setWorldCollisionActiveChunks(collisionWorld, activeChunkKeys)
         threeRenderer.setChunkVisibility(activeChunkKeys, dormantChunkKeys)
+        trace.emit({
+          domain: 'scene-transitions',
+          event: 'exit',
+          payload: {
+            frame: updateScheduler.getFrameIndex(),
+            activeChunks: activeChunkKeys.length,
+            dormantChunks: dormantChunkKeys.length
+          }
+        })
       }
     })
 
@@ -9381,6 +9400,15 @@ function startTestMap(): void {
       frameInput.toggleWorldMapPending = false
     } // end if dash should disable movement controls handled by default update
 
+    trace.emit({
+      domain: 'movement',
+      event: 'enter',
+      payload: {
+        frame: updateScheduler.getFrameIndex(),
+        deltaSeconds: movementDeltaSeconds,
+        isFlying: !!player.isFlying
+      }
+    })
     updateFrame(
       {
         player,
@@ -9409,6 +9437,16 @@ function startTestMap(): void {
       },
       movementDeltaSeconds
     )
+    trace.emit({
+      domain: 'movement',
+      event: 'exit',
+      payload: {
+        frame: updateScheduler.getFrameIndex(),
+        playerX: player.x,
+        playerY: player.y,
+        playerZ: player.z ?? 0
+      }
+    })
 
     if (activeMeleeDash !== null) {
       const dashHeatRatio = Math.max(0, Math.min(1, devCurrentHeat / Math.max(1, devMaxHeat)))
@@ -9526,6 +9564,15 @@ function startTestMap(): void {
       devPrevZ = currentZ
     } // end if velocity sample is valid
 
+    trace.emit({
+      domain: 'inventory',
+      event: 'enter',
+      payload: {
+        frame: updateScheduler.getFrameIndex(),
+        playerX: player.x,
+        playerY: player.y
+      }
+    })
     const pickupUpdate = pickupSystem.updatePlayerPresence({
       x: player.x,
       y: player.y,
@@ -9560,6 +9607,15 @@ function startTestMap(): void {
       devPickupBeaconMaxDistance,
       devPickupBeaconIntervalSeconds
     )
+    trace.emit({
+      domain: 'inventory',
+      event: 'exit',
+      payload: {
+        frame: updateScheduler.getFrameIndex(),
+        autoCollectedStacks: pickupUpdate.autoCollected.length,
+        hasPrompt: pickupUpdate.prompt !== null
+      }
+    })
 
     const hpBeforeCombat = Math.max(0, player.hp)
 
@@ -9687,6 +9743,22 @@ function startTestMap(): void {
         intervalFrames: aiCadenceFrames,
         maxDeferralFrames: 3,
         run: () => {
+          trace.emit({
+            domain: 'ai-decision-loops',
+            event: 'enter',
+            payload: {
+              frame: updateScheduler.getFrameIndex(),
+              cadenceFrames: aiCadenceFrames
+            }
+          })
+          trace.emit({
+            domain: 'combat',
+            event: 'enter',
+            payload: {
+              frame: updateScheduler.getFrameIndex(),
+              deltaSeconds
+            }
+          })
           stepCombatEcsWorld(combatWorld, collisionWorld, audio, player, deltaSeconds, (event) => {
             const appliedAmount = Math.max(0, event.amount)
             if (appliedAmount <= 0) {
@@ -9722,6 +9794,23 @@ function startTestMap(): void {
               }
               const bucketKey = Math.abs((Math.floor(x) * 13) + (Math.floor(y) * 29))
               return (bucketKey + schedulerFrameIndex) % 2 === 0
+            }
+          })
+          trace.emit({
+            domain: 'combat',
+            event: 'exit',
+            payload: {
+              frame: updateScheduler.getFrameIndex(),
+              enemies: getCombatEntityCounts(combatWorld).enemies,
+              projectiles: getCombatEntityCounts(combatWorld).projectiles
+            }
+          })
+          trace.emit({
+            domain: 'ai-decision-loops',
+            event: 'exit',
+            payload: {
+              frame: updateScheduler.getFrameIndex(),
+              cadenceFrames: aiCadenceFrames
             }
           })
         }
@@ -10569,6 +10658,15 @@ function startTestMap(): void {
       const distanceToPlayer = Math.hypot(enemy.position.x - player.x, enemy.position.y - player.y, enemy.position.z - (player.z ?? 0))
       return distanceToPlayer <= 42
     })
+    trace.emit({
+      domain: 'audio-system',
+      event: 'enter',
+      payload: {
+        frame: updateScheduler.getFrameIndex(),
+        deltaSeconds,
+        emitters: prioritizedEnemyAudioStates.length
+      }
+    })
     worldStreaming.recordAudioEmitters(prioritizedEnemyAudioStates.length)
 
     const destinationPoi = getDestinationPoi()
@@ -10624,6 +10722,15 @@ function startTestMap(): void {
       combatRenderForDisplay.bullets.filter((bullet) => bullet.kind === 'rocket' || bullet.kind === 'missile').length
       + combatRenderForDisplay.missileExplosions.length
     )
+    trace.emit({
+      domain: 'audio-system',
+      event: 'exit',
+      payload: {
+        frame: updateScheduler.getFrameIndex(),
+        activeEnemyRuntimes: audioDiagnostics.activeEnemyRuntimes,
+        occlusionEmitters: audioDiagnostics.occlusionEmitters
+      }
+    })
 
     if (awarenessStatusElement) {
       const rateOfFireLabel = playerWeapon.fireRateCooldownSeconds > 0

@@ -218,6 +218,17 @@
 				"-sb"
 			],
 			"problemMatcher": []
+		},
+		{
+			"label": "Build Shared Dist",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"build",
+				"-w",
+				"@mech-audio/shared"
+			]
 		}
 	]
 }
