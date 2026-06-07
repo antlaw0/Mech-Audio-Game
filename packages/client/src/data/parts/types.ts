@@ -101,6 +101,7 @@ export type PartDefinition = {
   verticalTakeoffTime?: number
   flightStability?: number
   speedModifier?: number
+  groundCapacity: number
   energyUse?: number
   range?: number
   lockOn?: number
@@ -227,6 +228,7 @@ export const PART_DEFINITION_NUMERIC_KEYS = [
   'verticalTakeoffTime',
   'flightStability',
   'speedModifier',
+  'groundCapacity',
   'energyUse',
   'range',
   'lockOn',

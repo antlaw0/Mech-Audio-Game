@@ -6,6 +6,7 @@ import {
   MAP_WIDTH,
   MUZZLE_FLASH_DURATION,
   MAX_LOOK_PITCH,
+  PLAYER_BOOST_SPEED,
   PLAYER_HEIGHT,
   PLAYER_FLIGHT_SPEED,
   PLAYER_RADIUS,
@@ -100,9 +101,11 @@ import {
 import { trace } from '../../../shared/dist/trace.js'
 import type { AudioCategory, AudioVolumeChannel } from './types.js'
 import type { WorldPosition } from './types.js'
+import type { MovementDebugSnapshot } from './movement-debug.js'
 
 interface TestMapDevConsole {
   help(): string[]
+  dumpMovement(): MovementDebugSnapshot
   execute(commandLine: string): Promise<string[]>
   getState(): {
     sharedFlightHeight: number
@@ -5895,6 +5898,39 @@ function startTestMap(): void {
     return Math.atan2(playerEyeZ - targetCenterZ, horizontalDistance)
   } // end function getTargetElevationOffset
 
+  const getMovementDebugSnapshot = (): MovementDebugSnapshot => {
+    const stats = getDevMechStatsSnapshot()
+    const movementProfile = getCurrentMovementArchetypeProfile()
+    const ratedLoad = Math.max(1, movementProfile.ratedLoad)
+    const overencumbrance = getOverencumbranceState(stats.totalWeight, ratedLoad, devOverencumbranceThresholds)
+    const effectiveTotalWeight = devWeightlessMode ? 0 : stats.totalWeight
+    const movementWeightFactor = calculateWeightFactor(effectiveTotalWeight, ratedLoad).weightFactor
+    const flightRuntimeProfile = getFlightRuntimeProfile()
+    const flightHorizontalLimit = PLAYER_FLIGHT_SPEED * flightRuntimeProfile.speedMultiplier
+    const groundForwardLimit = movementProfile.maxForwardSpeed
+    const groundReverseLimit = movementProfile.maxReverseSpeed * movementWeightFactor
+    const groundStrafeLimit = movementProfile.maxStrafeSpeed * movementWeightFactor
+    const activeHorizontalLimit = player.flightState === 'grounded'
+      ? groundForwardLimit
+      : ((player.isBoosting ?? false) ? PLAYER_BOOST_SPEED : flightHorizontalLimit)
+
+    return {
+      movementArchetype: movementProfile.mobilityType,
+      totalWeight: stats.totalWeight,
+      ratedLoad,
+      loadRatio: overencumbrance.loadRatio,
+      overencumbranceState: overencumbrance.state,
+      flightSpeedMultiplier: flightRuntimeProfile.speedMultiplier,
+      effectiveSpeedLimits: {
+        activeHorizontal: activeHorizontalLimit,
+        groundForward: groundForwardLimit,
+        groundReverse: groundReverseLimit,
+        groundStrafe: groundStrafeLimit,
+        flightHorizontal: flightHorizontalLimit
+      }
+    }
+  } // end function getMovementDebugSnapshot
+
   const getRuntimeDebugOverlayLines = (): string[] => {
     const headingDegrees = normalizeDegrees((player.angle * 180) / Math.PI)
     const stats = syncAuthoritativeMechStats()
@@ -9027,6 +9063,7 @@ function startTestMap(): void {
   window.mechDev = {
     help: () => [
       'window.mechDev.getState()',
+      'window.mechDev.dumpMovement()',
       'window.mechDev.execute("FPSmode on")',
       'window.mechDev.execute("set audio.enemies.volume 0.4")',
       'window.mechDev.execute("set audio.energy.volume 1.6")',
@@ -9061,6 +9098,7 @@ function startTestMap(): void {
       weapon: { ...playerWeapon },
       paused: isPaused
     }),
+    dumpMovement: () => getMovementDebugSnapshot(),
     execute: async (commandLine: string) => executeDeveloperCommand(commandLine),
     setSharedFlightHeight: (value: number) => applySharedFlightHeight(value),
     setPlayerAltitude: (value: number) => setPlayerAltitude(value),
