@@ -4956,7 +4956,7 @@ const weightFactor = calculateWeightFactor(totalWeight, groundRatedLoad).weightF
   const syncAuthoritativeMechStats = (): DevMechStatsSnapshot => {
     syncGarageLoadoutToDevParts()
     const snapshot = getDevMechStatsSnapshot()
-console.log("🔥 SNAPSHOT UPDATE", getDevPartState('Movement')?.ratedLoad)
+
     const previousMaxHp = Math.max(0, player.maxHp)
     const previousHp = Math.max(0, player.hp)
     const hpRatio = previousMaxHp > 0 ? (previousHp / previousMaxHp) : 1
@@ -4972,10 +4972,6 @@ console.log("🔥 SNAPSHOT UPDATE", getDevPartState('Movement')?.ratedLoad)
 
   const savePlayerRuntimeSnapshot = (): boolean => {
     const stats = syncAuthoritativeMechStats()
-console.log("RATED LOAD FLOW CHECK", {
-  part: getDevPartState('Movement')?.ratedLoad,
-  snapshot: stats.ratedLoad
-})
     const snapshot: PlayerRuntimeSnapshot = {
       x: player.x,
       y: player.y,
@@ -5594,13 +5590,9 @@ const applyMovementArchetypeToPart = (
 
       collectDefinitionEffects(definition)
       const resolved = getFinalPartStats(instanceId)
-      console.log('MOVEMENT DEV PART:', getDevPartState('Movement'))  
-      console.log('MOBILITY RESOLVED:', {
-    id: definition.id,
-    category: definition.category,
-    ratedLoad: resolved.ratedLoad,
-    groundCapacity: resolved.groundCapacity
-  })
+      
+  
+      
       
       resolved.installedChipStates.forEach((chipState) => {
         if (!chipState.active || !chipState.supportedByCompute) {
@@ -6172,7 +6164,7 @@ const groundRatedLoad = getDevPartState('Movement')?.ratedLoad ?? 0
 
   const dumpRuntimeDebugOverlay = (): void => {
     const lines = getRuntimeDebugOverlayLines()
-    console.log(`[runtime-debug-overlay]\n${lines.join('\n')}`)
+
     devConsole?.print(['[runtime debug dump]', ...lines])
   } // end function dumpRuntimeDebugOverlay
 

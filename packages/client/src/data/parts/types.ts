@@ -83,9 +83,8 @@ export type PartDefinition = {
   PDEF: number
   EDEF: number
   energyDrain: number
-ratedLoad?: number // ✅ ADD THIS
-  // 🔥 SINGLE SOURCE OF TRUTH FOR MOVEMENT LOAD
-  groundCapacity: number
+ratedLoad?: number 
+  groundCapacity?: number
 
   deprecated?: boolean
   passiveBonuses?: string[]
