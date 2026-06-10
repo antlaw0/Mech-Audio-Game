@@ -556,7 +556,8 @@ const createInfoModalContent = (titleText: string, bodyText: string): HTMLElemen
 }
 
 const buildDefinitionDraft = (definition?: PartDefinition, forcedCategory?: PartCategory): PartDefinition => {
-  return cloneDefinition(definition ?? {
+return cloneDefinition(
+  definition ?? {
     id: '',
     name: '',
     category: forcedCategory ?? 'Head',
@@ -568,8 +569,10 @@ const buildDefinitionDraft = (definition?: PartDefinition, forcedCategory?: Part
     energyDrain: 0,
     passiveBonuses: [],
     activeAbilities: [],
-    specialEffects: []
-  })
+    specialEffects: [],
+    groundCapacity: 0
+  }
+)
 }
 
 const getEditableKeys = (category: PartCategory): string[] => {

@@ -1,4 +1,4 @@
-import {
+        import {
   BOOST_EP_DRAIN_PER_SECOND,
   CANVAS_HEIGHT_LIMIT,
   CANVAS_WIDTH_LIMIT,
@@ -911,7 +911,6 @@ function startTestMap(): void {
     integrity: 100,
     maxIntegrity: 100,
     armorValue: 0,
-    ratedLoad: 0,
     online: true,
     weight: 0,
     PDEF: 0,
@@ -2260,7 +2259,6 @@ const weightFactor = calculateWeightFactor(totalWeight, groundRatedLoad).weightF
 
   const getLoadoutAggregateLines = (): string[] => {
     const stats = syncAuthoritativeMechStats()
-    const groundRatedLoad = getDevPartState('Movement')?.ratedLoad ?? 0
     const movementPart = getDevPartState('Movement')
     const utility2Part = getDevPartState('Utility2')
     const movementProfile = getCurrentMovementArchetypeProfile()
@@ -2268,8 +2266,8 @@ const weightFactor = calculateWeightFactor(totalWeight, groundRatedLoad).weightF
       ratedLoad,
       loadRatio,
       weightFactor
-    } = calculateWeightFactor(stats.totalWeight, groundRatedLoad)
-
+    } = calculateWeightFactor(stats.totalWeight, stats.ratedLoad)
+const groundRatedLoad = getDevPartState('Movement')?.ratedLoad ?? 0
     const overencumbrance = getOverencumbranceTelemetry(
   stats.totalWeight,
   groundRatedLoad
@@ -4930,9 +4928,11 @@ const weightFactor = calculateWeightFactor(totalWeight, groundRatedLoad).weightF
       maxEP: 0,
       maxHeat: 0
     }
-const movementPart = getDevPartState('Movement')
-snapshot.ratedLoad = movementPart?.ratedLoad ?? 0
+
     for (const { slot, part } of getAllDevParts()) {
+              if (slot === 'Movement') {
+  snapshot.ratedLoad = Math.max(0, part.ratedLoad ?? 0)
+}
       if (!part.online || !AGGREGATE_PART_SLOTS.has(slot)) {
 
         continue
@@ -4956,7 +4956,6 @@ snapshot.ratedLoad = movementPart?.ratedLoad ?? 0
   const syncAuthoritativeMechStats = (): DevMechStatsSnapshot => {
     syncGarageLoadoutToDevParts()
     const snapshot = getDevMechStatsSnapshot()
-console.log("🔥 SNAPSHOT UPDATE", getDevPartState('Movement')?.ratedLoad)
     const previousMaxHp = Math.max(0, player.maxHp)
     const previousHp = Math.max(0, player.hp)
     const hpRatio = previousMaxHp > 0 ? (previousHp / previousMaxHp) : 1
@@ -4972,10 +4971,6 @@ console.log("🔥 SNAPSHOT UPDATE", getDevPartState('Movement')?.ratedLoad)
 
   const savePlayerRuntimeSnapshot = (): boolean => {
     const stats = syncAuthoritativeMechStats()
-console.log("RATED LOAD FLOW CHECK", {
-  part: getDevPartState('Movement')?.ratedLoad,
-  snapshot: stats.ratedLoad
-})
     const snapshot: PlayerRuntimeSnapshot = {
       x: player.x,
       y: player.y,
@@ -5460,7 +5455,6 @@ console.log("RATED LOAD FLOW CHECK", {
       : explicitMobilityType
     const profile = MOVEMENT_ARCHETYPE_PROFILES[mobilityType]
     part.mobilityType = mobilityType
-    part.ratedLoad = profile.ratedLoad
     part.groundAcceleration = profile.groundAcceleration
     part.groundDeceleration = profile.groundDeceleration
     part.maxForwardSpeed = profile.maxForwardSpeed
@@ -5566,7 +5560,6 @@ console.log("RATED LOAD FLOW CHECK", {
         name: definition.name,
         integrity: resolved.currentIntegrity,
         maxIntegrity: definition.integrity,
-        
         armorValue: resolved.armorValue,
         online: resolved.currentIntegrity > 0,
         weight: resolved.weight,
@@ -5700,10 +5693,10 @@ console.log("RATED LOAD FLOW CHECK", {
     })()
 
     const stats = syncAuthoritativeMechStats()
-const groundRatedLoad = getDevPartState('Movement')?.ratedLoad ?? 0
-if (predictedWeight > groundRatedLoad ) {
+
+if (predictedWeight > stats.ratedLoad) {
   warnings.push(
-    `Ground carry limit exceeded: ${predictedWeight.toFixed(1)} / ${groundRatedLoad .toFixed(1)} kg.`
+    `Ground carry limit exceeded: ${predictedWeight.toFixed(1)} / ${stats.ratedLoad.toFixed(1)} kg.`
   )
 }
     const predictedUtilityInstanceId = preview.loadout.Utility2
@@ -5924,8 +5917,7 @@ if (predictedWeight > groundRatedLoad ) {
   const getMovementDebugSnapshot = (): MovementDebugSnapshot => {
     const stats = getDevMechStatsSnapshot()
     const movementProfile = getCurrentMovementArchetypeProfile()
-      const groundRatedLoad = getDevPartState('Movement')?.ratedLoad ?? 0
-    const ratedLoad = Math.max(1, groundRatedLoad )
+    const ratedLoad = Math.max(1, stats.ratedLoad)
     const overencumbrance = getOverencumbranceState(stats.totalWeight, ratedLoad, devOverencumbranceThresholds)
     const effectiveTotalWeight = devWeightlessMode ? 0 : stats.totalWeight
     const movementWeightFactor = calculateWeightFactor(effectiveTotalWeight, ratedLoad).weightFactor
@@ -5958,15 +5950,14 @@ if (predictedWeight > groundRatedLoad ) {
   const getRuntimeDebugOverlayLines = (): string[] => {
     const headingDegrees = normalizeDegrees((player.angle * 180) / Math.PI)
     const stats = syncAuthoritativeMechStats()
-const groundRatedLoad = getDevPartState('Movement')?.ratedLoad ?? 0
     const movementProfile = getCurrentMovementArchetypeProfile()
     const {
       ratedLoad,
       loadRatio,
       weightFactor
-    } = calculateWeightFactor(stats.totalWeight, groundRatedLoad )
-    const overencumbrance = getOverencumbranceTelemetry(stats.totalWeight, groundRatedLoad )
-    const currentEnergyRegenPerSecond = getCurrentEnergyRegenPerSecond(stats.totalWeight, groundRatedLoad )
+    } = calculateWeightFactor(stats.totalWeight, stats.ratedLoad)
+    const overencumbrance = getOverencumbranceTelemetry(stats.totalWeight, stats.ratedLoad)
+    const currentEnergyRegenPerSecond = getCurrentEnergyRegenPerSecond(stats.totalWeight, stats.ratedLoad)
     const staggerResistance = calculateWeightResistance(stats.totalWeight)
     const flightRuntimeProfile = getFlightRuntimeProfile()
     const movementSpeedLimit = player.isFlying
@@ -6140,19 +6131,18 @@ const groundRatedLoad = getDevPartState('Movement')?.ratedLoad ?? 0
     const movementProfile = getCurrentMovementArchetypeProfile()
 const stats = syncAuthoritativeMechStats()
 
-const groundRatedLoad = getDevPartState('Movement')?.ratedLoad ?? 0
+
 const overencumbrance = getOverencumbranceTelemetry(
   stats.totalWeight,
-  groundRatedLoad 
+  stats.ratedLoad
 )
-    
-return [
+    return [
       `paused = ${isPaused}`,
       `console.open = ${isConsoleOpen}`,
       `player = mapX:${player.x.toFixed(2)} mapY:${player.y.toFixed(2)} centeredX:${centered.x.toFixed(2)} centeredY:${centered.y.toFixed(2)} z:${(player.z ?? 0).toFixed(2)} angle:${((player.angle * 180) / Math.PI).toFixed(1)} pitch:${((player.pitch * 180) / Math.PI).toFixed(1)}`,
       `player vitals = hp:${player.hp.toFixed(1)}/${player.maxHp.toFixed(1)} ep:${player.ep.toFixed(1)}/${player.maxEp.toFixed(1)}`,
       `player.flight = state:${player.flightState ?? 'grounded'} flying:${player.isFlying ? 'true' : 'false'} sharedHeight:${getSharedFlightHeight().toFixed(2)}`,
-      `weight = total:${stats.totalWeight.toFixed(1)} rated:${groundRatedLoad .toFixed(1)} loadRatio:${overencumbrance.loadRatio.toFixed(3)} state:${overencumbrance.state}`,
+      `weight = total:${stats.totalWeight.toFixed(1)} rated:${stats.ratedLoad.toFixed(1)} loadRatio:${overencumbrance.loadRatio.toFixed(3)} state:${overencumbrance.state}`,
       `music.track = ${audio.getMusicTrack()}`,
       `weapon = type:${playerWeapon.weaponType} accuracy:${playerWeapon.accuracy.toFixed(2)} pellets:${playerWeapon.projectileCount} spread:${playerWeapon.spreadDegrees.toFixed(1)} damage:${playerWeapon.damagePerShot} speed:${playerWeapon.bulletSpeed.toFixed(2)} range:${playerWeapon.maxRange.toFixed(2)} fullAuto:${playerWeapon.isFullAuto} fireRate:${playerWeapon.fireRateCooldownSeconds.toFixed(2)} clip:${playerWeapon.ammoInClip}/${playerWeapon.clipSize} reloadCost:${getWeaponReloadCost(playerWeapon)}`,
       `ammo.universal = ${Math.round(getUniversalAmmoResource())} reloading:${isReloading}`,
@@ -6213,9 +6203,8 @@ return [
       helpPath: ['Player', 'Vitals'],
       get: () => {
         const stats = syncAuthoritativeMechStats()
-          const groundRatedLoad = getDevPartState('Movement')?.ratedLoad ?? 0
         const movementProfile = getCurrentMovementArchetypeProfile()
-        return getOverencumbranceTelemetry(stats.totalWeight, groundRatedLoad ).state
+        return getOverencumbranceTelemetry(stats.totalWeight, stats.ratedLoad).state
       }
     },
     'player.weight.threshold.heavy': {
@@ -7563,9 +7552,8 @@ return [
       const targetId = targetLockState.currentTargetId
       const stats = syncAuthoritativeMechStats()
       const weight = stats.totalWeight
-      const commandGroundRatedLoad = getDevPartState('Movement')?.ratedLoad ?? 0
       const movementProfile = getCurrentMovementArchetypeProfile()
-      const weightTelemetry = getOverencumbranceTelemetry(weight, commandGroundRatedLoad )
+      const weightTelemetry = getOverencumbranceTelemetry(weight, stats.ratedLoad)
       if (mode === 'all') {
         return [
           `position = (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${(player.z ?? 0).toFixed(2)})`,
@@ -7593,11 +7581,10 @@ return [
       if (mode === 'energy') {
         return [`energy = ${player.ep.toFixed(1)}/${stats.maxEP.toFixed(1)}`]
       } // end if player.get energy
-        const groundRatedLoad = getDevPartState('Movement')?.ratedLoad ?? 0
       if (mode === 'weight') {
         return [
           `weight = ${weight.toFixed(1)}`,
-          `ratedLoad = ${groundRatedLoad .toFixed(1)}`,
+          `ratedLoad = ${stats.ratedLoad.toFixed(1)}`,
           `loadRatio = ${weightTelemetry.loadRatio.toFixed(3)}`,
           `loadState = ${weightTelemetry.state}`
         ]

@@ -388,6 +388,7 @@ const normalizeCatalogDefinition = (entry: unknown, index: number): PartDefiniti
       ? parseFiniteNumber(source.integrity, `${id}.integrity`)
       : parseFiniteNumber(source.armorValue, `${id}.armorValue`),
     weight: parseFiniteNumber(source.weight, `${id}.weight`),
+	groundCapacity: 0,
     PDEF: parseFiniteNumber(source.PDEF, `${id}.PDEF`),
     EDEF: parseFiniteNumber(source.EDEF, `${id}.EDEF`),
     energyDrain: parseFiniteNumber(source.energyDrain, `${id}.energyDrain`),
