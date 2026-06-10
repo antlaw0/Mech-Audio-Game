@@ -74,44 +74,57 @@ export type PartDefinition = {
   name: string
   category: PartCategory
   variantOf?: string
+
   statModifiers?: Record<string, PartVariantStatModifierInput>
+
   integrity: number
   armorValue: number
   weight: number
   PDEF: number
   EDEF: number
   energyDrain: number
+ratedLoad?: number // ✅ ADD THIS
+  // 🔥 SINGLE SOURCE OF TRUTH FOR MOVEMENT LOAD
+  groundCapacity: number
+
   deprecated?: boolean
   passiveBonuses?: string[]
   activeAbilities?: string[]
   specialEffects?: string[]
+
   energyCapacity?: number
   idleEnergyRegen?: number
   movingEnergyRegen?: number
   flyingEnergyRegen?: number
   regenDelay?: number
+
   powerOutput?: number
   heatGeneration?: number
   heatDissipation?: number
   heatCapacity?: number
   emergencyCooling?: number
+
   liftCapacity?: number
   flightType?: string
   rotorCount?: number
   verticalTakeoffTime?: number
   flightStability?: number
+
   speedModifier?: number
-  groundCapacity: number
+
   energyUse?: number
   range?: number
   lockOn?: number
   stability?: number
+
   meleeDamage?: number
   accuracy?: number
   sensorStrength?: number
+
   twoHanded?: boolean
   isMelee?: boolean
   isPassive?: boolean
+
   damagePerShot?: number
   fireRateCooldownSeconds?: number
   projectileCount?: number
@@ -119,21 +132,28 @@ export type PartDefinition = {
   spreadDegrees?: number
   bulletSpeed?: number
   clipSize?: number
+
   weaponReach?: number
   meleeContactTimeMs?: number
+
   fireSound?: string
   meleeHitSound?: string
   reloadSound?: string
+
   damageType?: string
   firingMode?: 'fullauto' | 'semiauto'
+
   horizontalLockAngle?: number
   verticalLockAngle?: number
   effectiveRange?: number
+
   ammoConsumedPerShot?: number
   energyPerShot?: number
+
   chipSlots?: number
   computeBandWidth?: number
   chipMemoryCost?: number
+
   chipModifiers?: string[]
   effectModifiers?: PartEffectModifier[]
 }
@@ -179,9 +199,18 @@ export type MechLoadout = {
   ShoulderRight?: string
 }
 
-export type WeaponMountSlot = 'LeftHand' | 'RightHand' | 'ShoulderLeft' | 'ShoulderRight'
+export type WeaponMountSlot =
+  | 'LeftHand'
+  | 'RightHand'
+  | 'ShoulderLeft'
+  | 'ShoulderRight'
 
-export const WEAPON_MOUNT_SLOTS: readonly WeaponMountSlot[] = ['LeftHand', 'RightHand', 'ShoulderLeft', 'ShoulderRight']
+export const WEAPON_MOUNT_SLOTS: readonly WeaponMountSlot[] = [
+  'LeftHand',
+  'RightHand',
+  'ShoulderLeft',
+  'ShoulderRight'
+]
 
 export const WEAPON_MOUNT_SLOT_LABELS: Record<WeaponMountSlot, string> = {
   LeftHand: 'Left Hand',
@@ -195,9 +224,11 @@ export type ResolvedPartStats = PartDefinition & {
   currentIntegrity: number
   integrityRatio: number
   damagePenaltyMultiplier: number
+
   modifierSummary: string[]
   installedChips: string[]
   installedChipStates: ResolvedInstalledChip[]
+
   chipSlotCount: number
   chipComputeUsed: number
   chipComputeCapacity: number
@@ -229,6 +260,7 @@ export const PART_DEFINITION_NUMERIC_KEYS = [
   'flightStability',
   'speedModifier',
   'groundCapacity',
+  'ratedLoad',
   'energyUse',
   'range',
   'lockOn',

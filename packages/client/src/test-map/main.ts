@@ -207,7 +207,7 @@ type MobilityType = 'Wheels' | 'Treads' | 'Hover' | 'Walker' | 'Flight' | 'Place
 
 interface MovementArchetypeProfile {
   mobilityType: MobilityType
-  ratedLoad: number
+  
   groundAcceleration: number
   groundDeceleration: number
   maxForwardSpeed: number
@@ -217,11 +217,11 @@ interface MovementArchetypeProfile {
   terrainPenaltyMultiplier: number
   energyUse: number
 } // end interface MovementArchetypeProfile
-
-const MOVEMENT_ARCHETYPE_PROFILES: Readonly<Record<MobilityType, MovementArchetypeProfile>> = {
+const MOVEMENT_ARCHETYPE_PROFILES: Readonly<
+  Record<MobilityType, Omit<MovementArchetypeProfile, 'ratedLoad'>>
+> = {
   Wheels: {
     mobilityType: 'Wheels',
-    ratedLoad: 1500,
     groundAcceleration: 5.2,
     groundDeceleration: 7.2,
     maxForwardSpeed: 7.2,
@@ -233,7 +233,6 @@ const MOVEMENT_ARCHETYPE_PROFILES: Readonly<Record<MobilityType, MovementArchety
   },
   Treads: {
     mobilityType: 'Treads',
-    ratedLoad: 2200,
     groundAcceleration: 3.8,
     groundDeceleration: 6.6,
     maxForwardSpeed: 5.4,
@@ -245,7 +244,6 @@ const MOVEMENT_ARCHETYPE_PROFILES: Readonly<Record<MobilityType, MovementArchety
   },
   Hover: {
     mobilityType: 'Hover',
-    ratedLoad: 1400,
     groundAcceleration: 6.4,
     groundDeceleration: 3.1,
     maxForwardSpeed: 8.2,
@@ -257,7 +255,6 @@ const MOVEMENT_ARCHETYPE_PROFILES: Readonly<Record<MobilityType, MovementArchety
   },
   Walker: {
     mobilityType: 'Walker',
-    ratedLoad: 1600,
     groundAcceleration: 4.9,
     groundDeceleration: 5.2,
     maxForwardSpeed: 6.4,
@@ -269,7 +266,6 @@ const MOVEMENT_ARCHETYPE_PROFILES: Readonly<Record<MobilityType, MovementArchety
   },
   Flight: {
     mobilityType: 'Flight',
-    ratedLoad: 1350,
     groundAcceleration: 4.2,
     groundDeceleration: 4.8,
     maxForwardSpeed: 6,
@@ -281,7 +277,6 @@ const MOVEMENT_ARCHETYPE_PROFILES: Readonly<Record<MobilityType, MovementArchety
   },
   Placeholder: {
     mobilityType: 'Placeholder',
-    ratedLoad: 1000,
     groundAcceleration: 3,
     groundDeceleration: 3,
     maxForwardSpeed: PLAYER_SPEED,
@@ -4919,39 +4914,44 @@ const weightFactor = calculateWeightFactor(totalWeight, groundRatedLoad).weightF
   } // end function getAllDevParts
 
   const getDevMechStatsSnapshot = (): DevMechStatsSnapshot => {
-    const snapshot: DevMechStatsSnapshot = {
-      installedPartWeight: 0,
-      cargoWeight: cargoInventory.getCargoWeight(),
-      totalWeight: 0,
-      ratedLoad: 0,
-      totalPDEF: 0,
-      totalEDEF: 0,
-      maxHP: 0,
-      maxEP: 0,
-      maxHeat: 0
+  const snapshot: DevMechStatsSnapshot = {
+    installedPartWeight: 0,
+    cargoWeight: cargoInventory.getCargoWeight(),
+    totalWeight: 0,
+    ratedLoad: 0,
+    totalPDEF: 0,
+    totalEDEF: 0,
+    maxHP: 0,
+    maxEP: 0,
+    maxHeat: 0
+  }
+
+  const movementPart = getDevPartState('Movement')
+  snapshot.ratedLoad = Math.max(0, movementPart.ratedLoad ?? 0)
+
+  for (const { slot, part } of getAllDevParts()) {
+    if (!part.online || !AGGREGATE_PART_SLOTS.has(slot)) {
+      continue
     }
-const movementPart = getDevPartState('Movement')
-snapshot.ratedLoad = movementPart?.ratedLoad ?? 0
-    for (const { slot, part } of getAllDevParts()) {
-      if (!part.online || !AGGREGATE_PART_SLOTS.has(slot)) {
 
-        continue
-      }
-      snapshot.installedPartWeight += part.weight
-      snapshot.totalPDEF += part.PDEF
-      snapshot.totalEDEF += part.EDEF
-      if (part.integrity > 0) {
-        snapshot.maxHP += Math.max(0, part.armorValue)
-      }
-      snapshot.maxEP += Math.max(0, part.energyCapacity ?? 0)
-      snapshot.maxHeat += Math.max(0, part.heatCapacity ?? 0)
-    } // end for each equipped aggregate part
+    snapshot.installedPartWeight += part.weight
+    snapshot.totalPDEF += part.PDEF
+    snapshot.totalEDEF += part.EDEF
 
-    snapshot.totalWeight = getTotalMechWeight(snapshot.installedPartWeight, snapshot.cargoWeight)
-    snapshot.maxEP = Math.max(0, snapshot.maxEP)
-    snapshot.maxHeat = Math.max(1, snapshot.maxHeat)
-    return snapshot
-  } // end function getDevMechStatsSnapshot
+    if (part.integrity > 0) {
+      snapshot.maxHP += Math.max(0, part.armorValue)
+    }
+
+    snapshot.maxEP += Math.max(0, part.energyCapacity ?? 0)
+    snapshot.maxHeat += Math.max(0, part.heatCapacity ?? 0)
+  }
+
+  snapshot.totalWeight = getTotalMechWeight(snapshot.installedPartWeight, snapshot.cargoWeight)
+  snapshot.maxEP = Math.max(0, snapshot.maxEP)
+  snapshot.maxHeat = Math.max(1, snapshot.maxHeat)
+
+  return snapshot
+} // end function getDevMechStatsSnapshot
 
   const syncAuthoritativeMechStats = (): DevMechStatsSnapshot => {
     syncGarageLoadoutToDevParts()
@@ -5430,47 +5430,97 @@ console.log("RATED LOAD FLOW CHECK", {
     return 'Placeholder'
   } // end function toMobilityType
 
-  const getCurrentMovementArchetypeProfile = (): MovementArchetypeProfile => {
-    const movementPart = getDevPartState('Movement')
-    const mobilityType = toMobilityType(movementPart?.mobilityType ?? inferMobilityType())
-    const defaults = MOVEMENT_ARCHETYPE_PROFILES[mobilityType]
-    const baseTurnRate = Math.max(0.1, movementPart?.turnRate ?? defaults.turnRate)
-    const effectiveTurnRate = Math.max(
-      0.1,
-      applyPartEffectsWithDiagnostics(baseTurnRate, 'turnRate', getPartEffectRuntimeContext(), 'movement.turnRate')
-    )
-    return {
-      mobilityType,
-      ratedLoad: Math.max(1, movementPart?.ratedLoad ?? defaults.ratedLoad),
-      groundAcceleration: Math.max(0.1, movementPart?.groundAcceleration ?? defaults.groundAcceleration),
-      groundDeceleration: Math.max(0.1, movementPart?.groundDeceleration ?? defaults.groundDeceleration),
-      maxForwardSpeed: Math.max(0.1, movementPart?.maxForwardSpeed ?? defaults.maxForwardSpeed),
-      maxReverseSpeed: Math.max(0.1, movementPart?.maxReverseSpeed ?? defaults.maxReverseSpeed),
-      maxStrafeSpeed: Math.max(0, movementPart?.maxStrafeSpeed ?? defaults.maxStrafeSpeed),
-      turnRate: effectiveTurnRate,
-      terrainPenaltyMultiplier: Math.max(0.1, movementPart?.terrainPenaltyMultiplier ?? defaults.terrainPenaltyMultiplier),
-      energyUse: Math.max(0, movementPart?.energyUse ?? defaults.energyUse)
-    }
-  } // end function getCurrentMovementArchetypeProfile
+const getCurrentMovementArchetypeProfile = (): MovementArchetypeProfile => {
+  const movementPart = getDevPartState('Movement')
 
-  const applyMovementArchetypeToPart = (part: DevPartState, mobilityTypeRaw: string): void => {
-    const explicitMobilityType = toMobilityType(mobilityTypeRaw)
-    const mobilityType = explicitMobilityType === 'Placeholder'
+  const mobilityType = toMobilityType(
+    movementPart?.mobilityType ?? inferMobilityType()
+  )
+
+  const defaults = MOVEMENT_ARCHETYPE_PROFILES[mobilityType]
+
+  const baseTurnRate = Math.max(
+    0.1,
+    movementPart?.turnRate ?? defaults.turnRate
+  )
+
+  const effectiveTurnRate = Math.max(
+    0.1,
+    applyPartEffectsWithDiagnostics(
+      baseTurnRate,
+      'turnRate',
+      getPartEffectRuntimeContext(),
+      'movement.turnRate'
+    )
+  )
+
+  return {
+    mobilityType,
+
+    // NOTE: ratedLoad intentionally NOT here anymore
+
+    groundAcceleration: Math.max(
+      0.1,
+      movementPart?.groundAcceleration ?? defaults.groundAcceleration
+    ),
+
+    groundDeceleration: Math.max(
+      0.1,
+      movementPart?.groundDeceleration ?? defaults.groundDeceleration
+    ),
+
+    maxForwardSpeed: Math.max(
+      0.1,
+      movementPart?.maxForwardSpeed ?? defaults.maxForwardSpeed
+    ),
+
+    maxReverseSpeed: Math.max(
+      0.1,
+      movementPart?.maxReverseSpeed ?? defaults.maxReverseSpeed
+    ),
+
+    maxStrafeSpeed: Math.max(
+      0,
+      movementPart?.maxStrafeSpeed ?? defaults.maxStrafeSpeed
+    ),
+
+    turnRate: effectiveTurnRate,
+
+    terrainPenaltyMultiplier: Math.max(
+      0.1,
+      movementPart?.terrainPenaltyMultiplier ?? defaults.terrainPenaltyMultiplier
+    ),
+
+    energyUse: Math.max(
+      0,
+      movementPart?.energyUse ?? defaults.energyUse
+    )
+  }
+}  
+const applyMovementArchetypeToPart = (
+  part: DevPartState,
+  mobilityTypeRaw: string
+): void => {
+  const explicitMobilityType = toMobilityType(mobilityTypeRaw)
+
+  const mobilityType =
+    explicitMobilityType === 'Placeholder'
       ? inferMobilityTypeFromSource(mobilityTypeRaw)
       : explicitMobilityType
-    const profile = MOVEMENT_ARCHETYPE_PROFILES[mobilityType]
-    part.mobilityType = mobilityType
-    part.ratedLoad = profile.ratedLoad
-    part.groundAcceleration = profile.groundAcceleration
-    part.groundDeceleration = profile.groundDeceleration
-    part.maxForwardSpeed = profile.maxForwardSpeed
-    part.maxReverseSpeed = profile.maxReverseSpeed
-    part.maxStrafeSpeed = profile.maxStrafeSpeed
-    part.turnRate = profile.turnRate
-    part.terrainPenaltyMultiplier = profile.terrainPenaltyMultiplier
-    part.energyUse = profile.energyUse
-  } // end function applyMovementArchetypeToPart
 
+  const profile = MOVEMENT_ARCHETYPE_PROFILES[mobilityType]
+
+  part.mobilityType = mobilityType
+
+  part.groundAcceleration = profile.groundAcceleration
+  part.groundDeceleration = profile.groundDeceleration
+  part.maxForwardSpeed = profile.maxForwardSpeed
+  part.maxReverseSpeed = profile.maxReverseSpeed
+  part.maxStrafeSpeed = profile.maxStrafeSpeed
+  part.turnRate = profile.turnRate
+  part.terrainPenaltyMultiplier = profile.terrainPenaltyMultiplier
+  part.energyUse = profile.energyUse
+} // end function applyMovementArchetypeToPart  
   const GARAGE_CATEGORY_TO_DEV_SLOT: Partial<Record<PartCategory, DevPartSlot>> = {
     Head: 'Head',
     Computer: 'Computer',
@@ -5544,6 +5594,14 @@ console.log("RATED LOAD FLOW CHECK", {
 
       collectDefinitionEffects(definition)
       const resolved = getFinalPartStats(instanceId)
+      console.log('MOVEMENT DEV PART:', getDevPartState('Movement'))  
+      console.log('MOBILITY RESOLVED:', {
+    id: definition.id,
+    category: definition.category,
+    ratedLoad: resolved.ratedLoad,
+    groundCapacity: resolved.groundCapacity
+  })
+      
       resolved.installedChipStates.forEach((chipState) => {
         if (!chipState.active || !chipState.supportedByCompute) {
           return
@@ -5566,7 +5624,7 @@ console.log("RATED LOAD FLOW CHECK", {
         name: definition.name,
         integrity: resolved.currentIntegrity,
         maxIntegrity: definition.integrity,
-        
+          ratedLoad: resolved.ratedLoad ?? 0,   // ✅ ADD THIS,
         armorValue: resolved.armorValue,
         online: resolved.currentIntegrity > 0,
         weight: resolved.weight,

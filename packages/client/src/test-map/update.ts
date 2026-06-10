@@ -64,7 +64,6 @@ export type MobilityType = 'Wheels' | 'Treads' | 'Hover' | 'Walker' | 'Flight' |
 
 export interface MovementArchetypeProfile {
   mobilityType: MobilityType
-  ratedLoad: number
   groundAcceleration: number
   groundDeceleration: number
   maxForwardSpeed: number
@@ -73,8 +72,7 @@ export interface MovementArchetypeProfile {
   turnRate: number
   terrainPenaltyMultiplier: number
   energyUse: number
-} // end interface MovementArchetypeProfile
-
+}
 export interface UpdateEnvironment {
   player: Player
   input: InputState
