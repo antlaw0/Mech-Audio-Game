@@ -385,9 +385,11 @@ const normalizeCatalogDefinition = (entry: unknown, index: number): PartDefiniti
     category: categoryRaw as PartCategory,
     integrity: parseFiniteNumber(source.integrity, `${id}.integrity`),
     armorValue: source.armorValue === undefined
+    
       ? parseFiniteNumber(source.integrity, `${id}.integrity`)
       : parseFiniteNumber(source.armorValue, `${id}.armorValue`),
     weight: parseFiniteNumber(source.weight, `${id}.weight`),
+    ratedLoad: parseFiniteNumber(source.ratedLoad ?? 0, `${id}.ratedLoad`),
 	groundCapacity: 0,
     PDEF: parseFiniteNumber(source.PDEF, `${id}.PDEF`),
     EDEF: parseFiniteNumber(source.EDEF, `${id}.EDEF`),

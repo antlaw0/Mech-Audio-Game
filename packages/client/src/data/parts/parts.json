@@ -392,6 +392,7 @@
     "category": "GroundMobility",
     "integrity": 130,
     "weight": 140,
+	"ratedLoad":  1337,
     "PDEF": 10,
     "EDEF": 8,
     "energyDrain": 0,

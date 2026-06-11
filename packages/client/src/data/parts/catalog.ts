@@ -156,6 +156,13 @@ const loadSeedCatalog = (): PartDefinition[] => {
 }
 
 const seedCatalog = loadSeedCatalog()
+const debugLegs = seedCatalog.find(part => part.id === 'basic.legs')
+
+console.log(
+  '[DEBUG ratedLoad]',
+  debugLegs?.id,
+  debugLegs?.ratedLoad
+)
 const seedCatalogById = new Map(seedCatalog.map((definition) => [definition.id, definition] as const))
 
 const createInstanceId = (): string => {

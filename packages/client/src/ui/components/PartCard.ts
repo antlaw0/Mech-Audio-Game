@@ -46,6 +46,7 @@ const PART_STAT_LABELS: Record<string, string> = {
   currentIntegrity: 'Current Integrity',
   armorValue: 'Armor Value',
   weight: 'Weight',
+  ratedLoad: 'Rated Load',
   PDEF: 'PDEF',
   EDEF: 'EDEF',
   energyDrain: 'Energy Drain',
@@ -112,7 +113,7 @@ const getCategoryStats = (category: PartCategory): string[] => {
     case 'Utility2':
       return ['currentIntegrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'liftCapacity', 'speedModifier', 'energyUse']
     case 'GroundMobility':
-      return ['currentIntegrity', 'armorValue', 'weight', 'PDEF', 'EDEF', 'energyDrain', 'speedModifier', 'stability', 'energyUse']
+      return ['currentIntegrity', 'armorValue', 'weight', 'ratedLoad', 'PDEF', 'EDEF', 'energyDrain', 'speedModifier', 'stability', 'energyUse']
     case 'HandWeapon':
       return [
         'currentIntegrity',
