@@ -18,6 +18,7 @@ const REQUIRED_NUMERIC_KEYS = ['integrity', 'weight', 'PDEF', 'EDEF', 'energyDra
 const OPTIONAL_NUMERIC_KEYS = [
   'energyCapacity',
   'powerOutput',
+  'ratedLoad'
   'heatGeneration',
   'heatDissipation',
   'liftCapacity',
@@ -104,6 +105,7 @@ const normalizeDefinition = (entry, index) => {
     category,
     integrity: parseFiniteNumber(source.integrity, `${id}.integrity`),
     weight: parseFiniteNumber(source.weight, `${id}.weight`),
+	ratedLoad: parseFiniteNumber(source.ratedLoad, `${id}.ratedLoad`),
     PDEF: parseFiniteNumber(source.PDEF, `${id}.PDEF`),
     EDEF: parseFiniteNumber(source.EDEF, `${id}.EDEF`),
     energyDrain: parseFiniteNumber(source.energyDrain, `${id}.energyDrain`),
