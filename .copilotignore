@@ -1,7 +1,18 @@
+# Generated output and dependencies
 node_modules/
-dist/
-build/
-packages/server/
-packages/shared/
-packages/client/src/net/
-packages/client/src/data/
+**/dist/
+**/build/
+coverage/
+
+# Large binary content that rarely helps code reasoning
+assets/audio/
+assets/music/
+assets/sounds/
+
+# Backups and local exports
+packages/client/src/data/parts/backups/
+exports/
+*.log
+
+# Generated repository-analysis artifacts
+.repo_source_summary.json

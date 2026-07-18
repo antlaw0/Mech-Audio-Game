@@ -1,231 +1,78 @@
----
+# Mech Audio Game Prime Directive
 
-name: Mech Audio Game AI Execution Contract
-description: Architecture preservation and implementation guardrails for Mech Audio Game
-invokable: false
-----------------
+Follow the active documentation authority:
 
-# Mech Audio Game AI Execution Contract
+1. Current user instruction
+2. `SESSION_NOTES.md`
+3. `AI_CONTEXT.md`
+4. `docs/CURRENT_STATE.md`
+5. `docs/ROADMAP.md`
+6. Current source code and authored data
 
-You are working in the Mech Audio Game codebase.
+Archived roadmaps and specifications are historical reference only.
 
-Your primary objective is to preserve architectural consistency while making the smallest possible change required to satisfy the request.
+## Before editing
 
-## Core Principle
+- Inspect the current ownership and data flow.
+- Identify the authoritative source of truth.
+- Search for existing helpers and systems.
+- List the smallest required file set.
+- Identify regression risks.
+- Convert the request into observable acceptance criteria.
 
-Existing architecture is authoritative unless the user explicitly requests architectural changes.
+## While editing
 
-Do not redesign systems.
+- Work on one focused task.
+- Preserve unrelated behavior.
+- Reuse existing stores, resolvers, event paths, and systems.
+- Do not duplicate calculations.
+- Do not reformat unrelated code.
+- Do not rename unrelated symbols.
+- Do not combine roadmap tickets.
+- Do not introduce a new framework.
+- Do not perform broad cleanup.
 
-Do not invent new architectures.
+`packages/client/src/test-map/main.ts` is the composition root and is oversized.
 
-Do not move responsibilities between systems unless explicitly instructed.
+Do not continue placing independent systems directly into it. Extract only the smallest coherent boundary required by the current task, while preserving behavior.
 
-When uncertain, stop and explain the uncertainty before making changes.
+## Accessibility
 
----
+- Use semantic HTML.
+- Keep keyboard operation complete.
+- Protect editable controls from gameplay hotkeys.
+- Restore logical focus when overlays close.
+- Do not rely on visuals or color alone.
+- Avoid excessive live announcements.
+- Preserve one stable meaning per audio cue.
 
-## Single Source Of Truth Rules
+## Code conventions
 
-Resolvers are authoritative.
+- Use TypeScript for project code.
+- Use explicit exported types.
+- Prefer `unknown` and validation over `any`.
+- Add a trailing explanatory comment after every closing brace added or modified when comments are legal.
+- Do not add comments to strict JSON.
 
-If a resolver exists for a value:
+## Verification
 
-* Use the resolver.
-* Extend the resolver if necessary.
-* Consume resolver output.
-* Do not duplicate resolver calculations elsewhere.
+Run:
 
-UI, overlays, telemetry, traces, debugging tools, inspectors, and developer consoles must consume authoritative outputs rather than recomputing values.
+```text
+npm run typecheck
+npm run build
+```
 
-If duplicate calculations are discovered:
+Use `npm run verify` when available.
 
-* Report them.
-* Do not silently create additional copies.
+Report:
 
----
+- Files changed
+- Behavior changed
+- Source of truth
+- Command results
+- Manual test steps
+- Unverified behavior
+- Regression risks
 
-## Calculation Rules
-
-Never introduce a second calculation path for the same gameplay value.
-
-Before adding a calculation:
-
-1. Search for an existing implementation.
-2. Determine whether it is authoritative.
-3. Reuse it whenever possible.
-
-Avoid:
-
-* duplicated formulas
-* duplicated state machines
-* duplicated derived values
-* duplicated threshold logic
-* duplicated normalization logic
-
-If multiple implementations already exist:
-
-* identify the authoritative implementation
-* report the duplication
-* avoid introducing additional copies
-
----
-
-## Editing Rules
-
-Prefer modifying existing code over creating new code.
-
-Prefer extending existing functions over introducing new systems.
-
-Prefer patches over rewrites.
-
-Prefer local changes over broad changes.
-
-Do not perform unrelated cleanup.
-
-Do not rename symbols unless explicitly requested.
-
-Do not reformat large files unless explicitly requested.
-
-Do not change behavior outside the requested scope.
-
----
-
-## Architecture Preservation Rules
-
-Do not create new manager classes, service layers, controllers, abstractions, frameworks, registries, factories, or helper systems unless explicitly requested.
-
-Do not split files merely for organization.
-
-Do not consolidate files merely for organization.
-
-Do not relocate logic between modules unless explicitly requested.
-
-Do not introduce patterns simply because they are considered best practice.
-
-Respect the existing architecture.
-
----
-
-## Debugging Rules
-
-Runtime evidence is authoritative.
-
-Prefer:
-
-* trace output
-* debug snapshots
-* runtime inspection
-* dump functions
-* instrumentation data
-
-Do not speculate about runtime behavior when evidence is available.
-
-If evidence is missing:
-
-* explain what evidence is required
-* request that evidence
-
-Do not guess.
-
----
-
-## Trace System Rules
-
-Trace output is a diagnostic tool and source of runtime evidence.
-
-When trace data exists:
-
-* trust observed runtime behavior
-* do not override trace evidence with assumptions
-
-If a bug report conflicts with trace output:
-
-* investigate the discrepancy
-* do not ignore the trace
-
----
-
-## Resolver Rules
-
-Resolvers should expose authoritative state.
-
-Resolvers should separate:
-
-* raw inputs
-* derived values
-* diagnostics
-
-Consumers should read resolver outputs rather than recomputing values.
-
-If a resolver is missing data required by consumers:
-
-* extend the resolver
-* do not create parallel calculations
-
----
-
-## Scope Control Rules
-
-Before editing:
-
-Identify:
-
-* files affected
-* systems affected
-* source of truth
-* expected behavior
-
-Keep edits as small as possible.
-
-If the requested change would require modifying more than three major systems:
-
-Stop.
-
-Explain the proposed plan before editing.
-
----
-
-## Response Requirements
-
-Before making edits:
-
-1. Identify authoritative source of truth.
-2. Identify files that require modification.
-3. Explain why those files need modification.
-4. Describe the smallest viable implementation.
-
-After edits:
-
-1. Summarize changed files.
-2. Summarize behavior changes.
-3. List assumptions made.
-4. List follow-up validation steps.
-
----
-
-## Accessibility Rules
-
-When generating code:
-
-* Use descriptive naming.
-* Avoid unnecessary nesting.
-* Prefer clarity over cleverness.
-* Keep logic easy to inspect with screen readers.
-* Maintain consistent naming across files.
-
-When modifying existing code:
-
-* Preserve naming conventions already used by the project.
-
----
-
-## Mission-Critical Rule
-
-If a request can be satisfied by extending an existing system, do not create a new system.
-
-If a request can be satisfied by consuming existing authoritative data, do not create new calculations.
-
-If a request can be satisfied by modifying an existing function, do not create parallel functionality.
-
-The safest change that accomplishes the goal is preferred over the most sophisticated change.
+Do not claim manual verification that did not occur.

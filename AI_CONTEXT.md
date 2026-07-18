@@ -1,459 +1,786 @@
-# Project: Audio-First Mech Shooter (Hybrid 2D + Spatial Audio)
+# Mech Audio Game: AI Context
 
-    This document defines the architecture, design principles, coding conventions, and system expectations for the project. All AI assistants (including GitHub Copilot) must follow this specification unless explicitly overridden.
+Last reviewed: 2026-07-18  
+Primary repository: `https://github.com/antlaw0/Mech-Audio-Game`  
+Active development branch: `dev`
 
----
+This document provides stable repository-wide context for AI assistants and human contributors. It describes the current architecture, authoritative data ownership, development rules, and near-term product direction.
 
-## 1. Project Overview
-
-This is an **audio-first first-person mech shooter**, inspired by the feel of the Armored Core series. The game is:
-
-
-## Working Memory System
-
-When SESSION_NOTES.md is open, treat it as highest-priority task context.
-
-- SESSION_NOTES.md = current task + constraints
-- AI_CONTEXT.md = stable architecture reference
-- Source code = implementation truth
-
-When SESSION_NOTES.md conflicts with other context, prefer SESSION_NOTES.md.
-* **Single-player offline by default**
-* With **optional future multiplayer**
-* Built using a **2D hybrid rendering model** with spatial audio providing the 3D experience
-* Designed for **desktop and mobile**
-* Built for **accessibility**, with a focus on screen-reader clarity
-* Developed in **TypeScript** on both frontend and backend
-* Architected for long-term maintainability and deterministic behavior when needed
-
-Visuals support sighted players without being required for gameplay.
-
-Audio contains elevation, direction, distance, and dynamic effects via **Tone.js** + **Web Audio API**.
+It is not a task tracker, an implementation diary, or a substitute for inspecting the source code.
 
 ---
 
-## 2. Technology Stack
+## 1. Authority Order
 
-### Frontend (Browser)
+Use the following authority order when sources disagree:
 
-* **Phaser 3** (WebGL renderer)
-* **Tone.js** (procedural and reactive audio)
-* **Web Audio API** (3D spatial panning, elevation, cones, doppler)
-* **TypeScript**
-* **WebSockets/Colyseus client** (multiplayer future support)
+1. The user's explicit instruction in the current conversation or task.
+2. `SESSION_NOTES.md`, for the current task only.
+3. `AI_CONTEXT.md`, for stable architecture and development rules.
+4. `docs/CURRENT_STATE.md`, for recently audited implementation status.
+5. `docs/ROADMAP.md`, for current priorities and sequencing.
+6. Current source code and authored data, as implementation truth.
+7. Archived documents, old roadmaps, and historical specifications.
 
-### Backend (Node.js)
+Important rules:
 
-* **Node 20+**
-* **TypeScript**
-* **Colyseus** (or WebSocket framework) for multiplayer sessions
-* **Game logic simulation** for multiplayer; local simulation otherwise
-* **Express** (optional) for updates or asset hosting
-
-### Build & Project Structure
-
-* **Monorepo**
-* **npm workspaces**
-* Simple folder-based asset pipeline (no Vite/Webpack unless needed later)
+- Source code is the final authority for what the project currently does.
+- Authored data files are the final authority for content values assigned to them.
+- A historical design document does not override working source code unless the current task explicitly restores that design.
+- Never copy old assumptions into new code without verifying them against the active implementation.
+- When documentation and source code conflict, report the conflict and use the smallest safe change that follows the current task.
 
 ---
 
-## 3. Architectural Principles
+## 2. Project Identity
 
-### 3.1 Hybrid Simulation Model
+Mech Audio Game is an audio-first browser-based mech combat game built as a TypeScript monorepo.
 
-* **Single-player/offline**: Entire world simulated locally on client.
-* **Multiplayer**: Server becomes authoritative.
+The game is designed so that critical gameplay information is available through audio, speech, semantic HTML, and keyboard interaction. Visual rendering supports sighted and low-vision players but must not be the only way to understand or operate the game.
 
-  * Server validates inputs and runs the simulation.
-  * Clients send actions, receive authoritative world snapshots or delta updates.
-  * Simulation on clients interpolates for smooth rendering.
+The current development objective is a playable single-player demo built around the existing test-map runtime.
 
-### 3.2 Rendering Model
+The target demo loop is:
 
-* 2D tile/grid logic with a **z-height attribute** for entities.
-* Camera first-person via HUD + audio rather than literal 3D rendering.
-* Visual layers:
+1. Start at a friendly outpost.
+2. Inspect the player's mech, equipment, inventory, and mission.
+3. Receive or accept a mission.
+4. Navigate through a streamed world.
+5. Encounter and fight hostile entities.
+6. Find or collect loot.
+7. Complete the mission objective.
+8. Return to the outpost.
+9. Buy, sell, repair, or change equipment.
+10. Save and restore the resulting state.
 
-  * Cockpit HUD
-  * Radar/lock indicators
-  * Minimal world shapes, sprites, silhouettes, particles
-
-### 3.3 Audio Model
-
-* Tone.js handles:
-
-  * Engine hums
-  * Weapon charge cycles
-  * Procedural ambience
-  * Synthesized mech UI beeps
-* Web Audio API handles:
-
-  * 3D positional panning
-  * Cone-based directionality
-  * Distance falloff
-  * Height (elevation) modeling
-
-Spatial audio is prioritized over visuals.
+Optional multiplayer remains a future direction. Do not make the first playable demo depend on the multiplayer server.
 
 ---
 
-## 4. Determinism and Timing
+## 3. Current Technology Stack
 
-Because the project may support multiplayer, but determinism isn’t fully decided yet:
+### Repository
 
-* Code should be structured **as if determinism may be enabled later**.
-* All randomness must use a seedable RNG wrapper if determinism is required.
-* Game loop must support:
+- TypeScript monorepo
+- npm workspaces
+- Node.js 20 or later
+- npm 10 or later
 
-  * fixed timestep updates
-  * or hybrid fixed/variable
-* Physics and combat logic should be modular enough to run in either:
+### Client
 
-  * client-only mode
-  * server authoritative mode
+The primary active gameplay runtime is under:
+
+`packages/client/src/test-map`
+
+Important current client technologies include:
+
+- TypeScript
+- Three.js
+- `three-mesh-bvh`
+- `bitecs`
+- Tone.js
+- Web Audio API
+- Resonance Audio
+- Semantic HTML and browser DOM APIs
+
+Phaser is installed in the client package, but AI must not assume Phaser owns the active test-map renderer. Inspect imports and current usage before modifying rendering code.
+
+Do not introduce, remove, or replace a rendering or audio framework unless the current task explicitly requires it.
+
+### Server and shared packages
+
+The repository contains:
+
+- A shared TypeScript package for common types, schemas, constants, and utilities.
+- A plain WebSocket server path.
+- A Colyseus server scaffold.
+- Server-side world state and simulation modules.
+
+These systems support future multiplayer work, but the current playable-demo priority is the local client runtime.
 
 ---
 
-## 5. Folder Structure (Monorepo)
+## 4. Monorepo Structure
 
-```
-/project-root
-  /packages
-    /client
-      /src
-        /audio
-        /phaser
-        /scenes
-        /ui
-        /net
-        /types
-      /assets
-        /audio
-        /sprites
-        /ui
-      tsconfig.json
-
-    /server
-      /src
-        /rooms
-        /simulation
-        /net
-        /types
-      tsconfig.json
-
-    /shared
-      /src
-        /math
-        /types
-        /constants
-        /utils
-      tsconfig.json
-
-  package.json
-  README.md
-  AI_CONTEXT.md
+```text
+packages/
+  client/
+    src/
+      data/
+      net/
+      systems/
+      test-map/
+      types/
+      ui/
+  server/
+    src/
+      colyseus/
+      net/
+      simulation/
+      state/
+  shared/
+    src/
+      constants/
+      schemas/
+      types/
+      utils/
 ```
 
-Shared types must live in `/packages/shared` and be imported by both client and server.
+### Primary runtime entry points
+
+- Browser shell: `test-map.html`
+- Compiled client entry: `packages/client/dist/test-map/main.js`
+- Source client entry: `packages/client/src/test-map/main.ts`
+- WebSocket server entry: `packages/server/src/index.ts`
+- Colyseus entry: `packages/server/src/colyseus/index.ts`
+
+The browser loads compiled output. Changes made under `packages/client/src` will not appear in the browser until the client build or TypeScript watcher updates `packages/client/dist`.
 
 ---
 
-## 6. Code Style & Conventions
+## 5. Current Runtime Architecture
 
-### General
+`packages/client/src/test-map/main.ts` is the primary runtime orchestrator. It currently wires together gameplay, UI, audio, combat, inventory, garage, targeting, world streaming, rendering, developer tools, and persistence.
 
-* **TypeScript everywhere**
-* **Semi-strict linting** (ESLint recommended rules)
-* **Prettier optional**
-* Prefer pure functions where possible
-* All module imports must be explicit (no wildcard imports)
+This file has accumulated too many responsibilities.
 
-### Naming
+### Rules for `main.ts`
 
-* File names: `kebab-case`
-* Functions & variables: `camelCase`
-* Classes & types: `PascalCase`
-* Constants: `UPPER_SNAKE_CASE`
+- Preserve its role as the runtime composition root.
+- Do not add a new independent system directly to `main.ts` when that system can have a focused module.
+- Do not perform a broad rewrite of `main.ts`.
+- Extract only the smallest coherent boundary required by the current task.
+- Keep orchestration in `main.ts`; move reusable state, calculations, DOM rendering, and lifecycle behavior into focused modules.
+- Avoid circular imports back into `main.ts`.
+- Every extraction must preserve behavior before adding new behavior.
+- A task that only changes UI must not casually refactor combat, audio, networking, or world simulation.
 
-### Function Design
+Examples of coherent extraction boundaries include:
 
-* No global state outside engine initialization
-* Clear parameter types and return types
-* No “magic numbers”; use constants or enums
+- Player pause-menu controller
+- Developer-tools overlay controller
+- Mech-status snapshot adapter
+- Facility interaction controller
+- Mission state manager
+- Faction relationship resolver
+- Shop transaction service
+- Reproducible debug scenario loader
 
-### Brace Tracking (Accessibility Requirement)
-
-Every closing brace `}` must have a trailing comment that clarifies what is being closed. Examples:
-
-```ts
-if (condition) {
-  doThing()
-} // end if condition
-
-function makeSound() {
-  return true
-} // end function makeSound
-
-class AudioManager {
-  /* ... */
-} // end class AudioManager
-```
-
-This rule is **mandatory**.
-
-### Comments
-
-* Prefer concise, meaningful comments
-* Describe *why*, not “what”
-* Avoid overly clever phrasing
+The garage controller under `packages/client/src/ui/garage` is also large. Preserve its working behavior and relocate its presentation before attempting internal cleanup.
 
 ---
 
-## 7. Multiplayer Rules
+## 6. Authoritative Sources of Truth
 
-### Single-player (default)
+Always identify the authoritative owner before changing or displaying a value.
 
-* Client runs simulation
-* No server dependency
-* Same code paths used as multiplayer when possible
+### Part definitions
 
-### Multiplayer (optional)
+Authoritative authored file:
 
-* Server runs authoritative simulation
-* Client performs prediction/interpolation
-* Server periodically sends:
-
-  * full world snapshots
-  * or delta updates
-
-### Shared Types
-
-* All world state interfaces, mech stats, projectile definitions, etc. must live in `packages/shared`.
-
----
-
-## 8. Phaser Standards
-
-### Required practices:
-
-* One root `Game` instance per session.
-* Each HUD piece isolated into components/modules.
-* No inline assets; load all assets from `/assets`.
-* Maintain a strict separation:
-
-  * **Scene logic**
-  * **Rendering**
-  * **Game state**
-
-### Coordinate System
-
-* World coordinates: `{ x, y, z }`
-* Phaser visuals use `{ x, y }` only
-* `z` influences:
-
-  * audio height
-  * sprite scaling (if needed)
-  * shadow size
-  * UI indicators
-
----
-
-## 9. Audio Standards
-
-### Spatial Audio Responsibilities
-
-* Web Audio API handles:
-
-  * Listener position = player
-  * Panner nodes for enemies/projectiles
-  * Smooth continuous updates each frame
-
-### Tone.js Responsibilities
-
-* Procedural SFX
-* Looping engine rumble
-* Boost effects
-* UI cues
-* Layered weapon firing audio
-
-### Rule
-
-Audio must never block gameplay. Creation and disposal of nodes must be efficient.
-
----
-
-## 10. Copilot Guidelines
-
-Copilot must follow:
-
-1. **TypeScript** for all code.
-2. Brace-tracking comments.
-3. Semi-strict formatting.
-4. Always use shared types from `/packages/shared` when applicable.
-5. No 3D libraries (no three.js).
-6. Phaser 3 for rendering only.
-7. Tone.js + Web Audio for audio.
-8. No undocumented APIs.
-9. Suggest deterministic patterns but do not enforce them unless asked.
-10. Prioritize readability and NVDA-friendly structure.
-
-Copilot should:
-
-* Ask clarifying questions when ambiguous.
-* Prefer modular, small files.
-* Not generate dead code or stubs unless instructed.
-
----
-
-## 11. Accessibility Requirements
-
-* Color choices must remain within legible contrast ranges.
-* HUD elements must:
-
-  * avoid motion blur
-  * be large enough for magnifier users
-  * avoid long animations that obscure information
-* Navigation must not trap keyboard users.
-* Audio cues must have clear directional and distance information.
-
----
-
-## 12. Future-Proofing
-
-This architecture supports:
-
-* Optional deterministic lockstep later
-* Full multiplayer expansion
-* Procedural enemy AI
-* Modular content (missions, mechs, weapons)
-* Platform-agnostic playability
-
----
-
-## 13. Open World Zone Streaming Spec (Phase 1)
-
-This section defines the first production target for scaling from small maps to open world play using zone streaming.
-
-### 13.1 Unit Scale
-
-* 1 tile = 1 world unit.
-* Keep movement and combat ranges in world units exactly as they are today.
-* World coordinates remain float-based, but streaming and indexing must use integer chunk coordinates.
-
-### 13.2 Chunk Shape and Indexing
-
-* Chunk size: 64 x 64 world units.
-* Chunk key format: chunkX,chunkY where:
-
-  * chunkX = floor(worldX / 64)
-  * chunkY = floor(worldY / 64)
-* Each chunk owns:
-
-  * terrain tiles for that 64 x 64 area
-  * static obstacles/sprites in that area
-  * optional spawn metadata and ambient audio metadata
-
-### 13.3 Loaded Zone Rings
-
-Use concentric chunk rings around the player anchor chunk.
-
-* Collision ring (authoritative): radius 1 chunk (3 x 3 = 9 chunks)
-* Gameplay ring (AI + combat + interactables): radius 2 chunks (5 x 5 = 25 chunks)
-* Visual/audio ambience ring: radius 3 chunks (7 x 7 = 49 chunks)
-
-Simulation policy:
-
-* Full simulation only inside gameplay ring.
-* Background simplification outside gameplay ring.
-* No per-entity updates outside ambience ring.
-
-### 13.4 Streaming Triggers
-
-* Trigger preload when player is within 16 units of a chunk edge.
-* Trigger activation when entering a new anchor chunk.
-* Keep previous ring data alive for a 1.5 to 2.0 second grace period to avoid hitching.
-
-### 13.5 Snapshot and Network Policy
-
-Do not send full world map arrays per tick once streaming is enabled.
-
-Server messages should be split into:
-
-* worldInit:
-
-  * chunkSize
-  * seed/version
-  * initial chunk set near spawn
-* chunkData:
-
-  * chunk key
-  * tile payload for one chunk
-  * static obstacle payload for one chunk
-* entityDelta:
-
-  * active entities in gameplay ring only
-  * changed fields only
-
-Target bandwidth envelopes per client:
-
-* steady state entity updates: approximately 10 to 30 KB/s
-* chunk transfer bursts during traversal: up to approximately 150 KB/s
-
-### 13.6 Initial World Size Targets
-
-World size ceilings assume chunk streaming is in place and only nearby chunks are loaded.
-
-* Milestone A: 8192 x 8192 units
-* Milestone B: 32768 x 32768 units
-* Milestone C: 65536 x 65536 units
-
-Any size beyond Milestone C should add floating origin rebasing to preserve precision.
-
-### 13.7 Floating Origin Threshold
-
-* Rebase threshold: when player distance from current local origin exceeds 4096 units.
-* Rebase operation:
-
-  * shift all active entities/chunks by an equal offset
-  * keep chunk indices in global coordinates
-  * keep local simulation coordinates near zero
-
-### 13.8 Chunk Lifecycle
-
-Chunk states:
-
-* unloaded
-* loading
-* resident
-* active
-* cooling
+`packages/client/src/data/parts/parts.json`
 
 Rules:
 
-* active = inside gameplay ring
-* resident = inside ambience ring
-* cooling = recently left ambience ring; eligible for eviction after grace timeout
+- Fixed part values such as weight, defense, energy drain, damage-related authored properties, and movement-part `ratedLoad` belong in `parts.json`.
+- Do not silently rewrite, normalize away, regenerate, or delete manually authored fields.
+- Browser-local catalog overrides are not the source of truth.
+- The client build synchronizes the authoritative source catalog into compiled output.
 
-### 13.9 Performance Budgets
+### Part types and catalog loading
 
-At 60 Hz on a mid-range desktop target:
+- Types: `packages/client/src/data/parts/types.ts`
+- Catalog loader and persistence boundary: `packages/client/src/data/parts/catalog.ts`
 
-* streaming + decode: <= 1.0 ms/frame average
-* collision broadphase updates: <= 1.0 ms/frame average
-* AI update budget in gameplay ring: <= 2.0 ms/frame average
-* audio spatial update budget: <= 1.0 ms/frame average
+### Resolved part statistics
 
-If these budgets are exceeded, reduce active ring radius before increasing chunk size.
+Authoritative resolver:
 
-### 13.10 Implementation Order
+`packages/client/src/systems/parts/statResolver.ts`
 
-1. Introduce chunk key math and chunk data structures in shared package.
-2. Replace full map snapshot with worldInit + chunkData + entityDelta messages.
-3. Move collision world build to per-chunk assembly instead of full-map scanning.
-4. Gate AI/combat updates by gameplay ring membership.
-5. Add preload triggers and chunk grace-period eviction.
-6. Add floating-origin rebasing behind a feature flag.
+Use the resolver for final part values affected by integrity, variants, chips, and effect modifiers.
+
+Do not duplicate resolved-stat formulas in a UI component.
+
+### Part effects
+
+Authoritative effect logic:
+
+`packages/client/src/systems/parts/effectModifiers.ts`
+
+### Mech weight and load behavior
+
+Authoritative system:
+
+`packages/client/src/systems/weight/mechWeight.ts`
+
+Use the equipped movement system's authored `ratedLoad` for ground carrying capacity. Do not confuse ground `ratedLoad` with flight lift capacity.
+
+### Garage
+
+- Store and loadout mutation: `packages/client/src/ui/garage/store.ts`
+- Garage UI controller: `packages/client/src/ui/garage/index.ts`
+- Part-card UI: `packages/client/src/ui/components/PartCard.ts`
+
+The garage store owns equip, unequip, inventory, and loadout mutation behavior.
+
+The pause-menu status and loadout screens must not create a second garage state model.
+
+### Items and inventory
+
+- Item definitions: `packages/client/src/data/items`
+- Item database: `packages/client/src/systems/inventory/itemDatabase.ts`
+- Inventory state and operations: `packages/client/src/systems/inventory/inventoryManager.ts`
+
+### Loot
+
+- Loot table definitions: `packages/client/src/data/lootTables`
+- Loot generation: `packages/client/src/systems/loot/lootGenerator.ts`
+
+Use a seedable random source where reproducibility matters.
+
+### Pickups and world items
+
+- Pickup system: `packages/client/src/systems/pickup/pickupSystem.ts`
+- World pickup representation: `packages/client/src/systems/pickup/pickupWorldSystem.ts`
+- World-item persistence: `packages/client/src/systems/persistence/worldItemPersistence.ts`
+
+### Controls and keyboard focus
+
+- Control definitions and bindings: `packages/client/src/test-map/controls.ts`
+- Input binding: `packages/client/src/test-map/input.ts`
+- Editable-focus protection: `packages/client/src/test-map/keyboard-focus.ts`
+
+Do not create a second independent keyboard binding layer for player menus or facilities.
+
+### Rendering and collision
+
+- Three.js renderer: `packages/client/src/test-map/three-render.ts`
+- World collision and ray tracing: `packages/client/src/test-map/world-collision.ts`
+- Map data: `packages/client/src/test-map/map-data.ts`
+- Scene layout and current points of interest: `packages/client/src/test-map/scene-layout.ts`
+- World streaming: `packages/client/src/test-map/world-streaming.ts`
+- World map overlay: `packages/client/src/test-map/world-map-overlay.ts`
+
+Read chunk size and streaming behavior from the current implementation or runtime configuration. Do not copy the obsolete 64-unit chunk assumptions from archived documentation.
+
+### Combat and targeting
+
+- Combat ECS: `packages/client/src/test-map/combat-ecs.ts`
+- Target acquisition and lock state: `packages/client/src/test-map/target-lock.ts`
+- Target subsystem layouts: `packages/client/src/test-map/target-layout.ts`
+- Weapon definitions and behavior: `packages/client/src/test-map/weapons.ts`
+- Enemy definitions: `packages/client/src/test-map/enemies`
+
+Do not introduce a second damage-routing system.
+
+### Audio
+
+- Main runtime audio controller: `packages/client/src/test-map/audio.ts`
+- Audio configuration: `packages/client/src/test-map/audio-config.ts`
+- Audio utility functions: `packages/client/src/test-map/audio-utils.ts`
+- Occlusion: `packages/client/src/test-map/audio-occlusion.ts`
+- Shared spatial-audio wrapper: `packages/client/src/test-map/spatial-audio.ts`
+
+Use semantic event meanings rather than scattering raw asset paths through unrelated systems.
+
+### Runtime tuning and scheduling
+
+- Runtime tuning: `packages/client/src/test-map/runtime-config.ts`
+- Frame-budgeted scheduling: `packages/client/src/test-map/update-scheduler.ts`
+- Player movement update: `packages/client/src/test-map/update.ts`
+
+### Shared network contracts
+
+Use `packages/shared` for types and schemas that genuinely cross client and server boundaries.
+
+Do not move a client-only prototype type into `packages/shared` merely because it might become networked later.
+
+---
+
+## 7. Player UI Architecture
+
+The project must use three distinct UI surfaces.
+
+### 7.1 Player pause menu
+
+The player pause menu is available during ordinary play and must contain player-facing information and settings.
+
+Target sections:
+
+- Mech Status
+- Loadout
+- Inventory and Cargo
+- Map and Objectives
+- Controls and Accessibility
+- Options
+
+The pause menu may allow inspection anywhere, but it must not allow garage-only equipment mutation.
+
+### 7.2 Contextual facility screens
+
+Facility screens become available only when the player interacts with a corresponding world access point.
+
+Initial facility types:
+
+- Garage
+- Shop
+- Mission terminal
+- Repair point
+
+The existing garage should be presented through this facility system rather than rewritten.
+
+### 7.3 Developer tools
+
+Developer-only interfaces include:
+
+- Runtime statistics
+- Event log
+- Diagnostics
+- Live tuning
+- Spawn and mutation tools
+- Editors
+- Trace export
+- Developer console
+
+Developer tools must remain available during the player UI redesign, but they must not be presented as ordinary player pause-menu tabs.
+
+---
+
+## 8. Mech Status UI Rules
+
+The Mech Status view must read from authoritative runtime snapshots and resolvers.
+
+It should organize information into meaningful groups.
+
+### Condition
+
+- Core health
+- Maximum health
+- Subsystem integrity
+- Online or offline status
+- Active status effects
+
+### Resources
+
+- Current and maximum energy
+- Energy regeneration
+- Current and maximum heat
+- Cooling rate
+- Current heat state
+- Current energy state
+
+### Mobility
+
+- Mobility type
+- Forward, reverse, strafe, and turn values
+- Acceleration and deceleration
+- Total weight
+- Ground `ratedLoad`
+- Load ratio or weight factor
+- Flight availability
+- Flight lift capacity when applicable
+
+### Defense
+
+- Physical defense
+- Energy defense
+- Stagger resistance
+
+### Combat
+
+- Ready or selected weapon
+- Damage
+- Range
+- Fire rate
+- Damage type
+- Ammunition
+- Energy cost
+- Heat generation
+- Current target
+- Lock stage
+- Selected subsystem
+
+Rules:
+
+- Do not invent missing values.
+- Do not show placeholder numbers as if they are authoritative.
+- If a value is not implemented, omit it or clearly announce that it is unavailable.
+- Prefer semantic headings and definition lists.
+- Dynamic changes must be announced only when meaningful; do not create constant screen-reader chatter.
+- Never require a visual chart to understand a stat.
+
+---
+
+## 9. Open-World Direction
+
+The playable demo should be open-world-shaped but deliberately small.
+
+Initial world content should be data-driven wherever practical:
+
+- Points of interest
+- Spawn zones
+- Facilities
+- Loot containers
+- Mission objectives
+- Shops
+- Friendly, neutral, and hostile population definitions
+
+### Entity model
+
+Friendly, neutral, and hostile entities should share ordinary world and combat foundations where practical.
+
+Differences should come from:
+
+- Controller or behavior
+- Faction
+- Disposition
+- Capabilities
+- Role-specific data
+
+Do not build completely separate engines for enemies, allies, and neutral actors.
+
+### Factions and dispositions
+
+The initial relationship results are:
+
+- Hostile
+- Friendly
+- Neutral
+
+Faction relationships should govern:
+
+- Automatic targeting
+- Aggression
+- Assistance
+- Friendly fire policy
+- Protected mission targets
+- Shop or facility access when later required
+
+### Interactables
+
+Use a common interaction foundation for:
+
+- Garages
+- Shops
+- Mission terminals
+- Repair points
+- Loot containers
+- Doors
+- Communication terminals
+
+An interactable should have a stable ID, kind, accessible name, position, interaction range, state, and activation handler or action reference.
+
+### Missions
+
+The first mission system should support:
+
+- Visit a location
+- Defeat specified entities
+- Collect an item
+- Interact with a world object
+- Return or turn in
+
+Do not begin with procedural missions, branching narrative graphs, or a reputation simulation.
+
+### Shop economy
+
+The first shop system needs only:
+
+- Currency
+- Shop stock
+- Buy
+- Sell
+- Price
+- Availability
+- Confirmation
+- Error feedback
+
+Existing item and part definitions remain authoritative. Do not create duplicate shop-only item definitions.
+
+---
+
+## 10. Accessibility Requirements
+
+Accessibility is a core gameplay requirement, not a later polish pass.
+
+### Keyboard and focus
+
+- Every player-facing action must be operable with a keyboard.
+- Use semantic HTML controls before custom widgets.
+- Do not use positive `tabindex` values.
+- Do not trap focus except inside a true modal dialog.
+- Restore focus to the logical triggering control when a dialog or facility closes.
+- While focus is in `input`, `textarea`, `select`, or an editable region, gameplay and global hotkeys must not fire.
+- `Tab` and `Shift+Tab` must move predictably through the active interface.
+- `Escape` behavior must be deterministic and must not close unrelated layers.
+
+### Screen-reader output
+
+- Controls need unique accessible names.
+- Use headings and landmarks to expose structure.
+- Use status regions sparingly for important changes.
+- Do not repeatedly announce rapidly changing telemetry.
+- Use concise speech for combat-critical information.
+- Provide a user-initiated status summary for dense information.
+
+### Audio-first gameplay
+
+- Direction, distance, elevation, threat, and state changes must be understandable without visuals.
+- One audio cue should have one stable meaning.
+- Avoid several simultaneous cues communicating the same fact.
+- Important cues need sensible priority and interruption behavior.
+- Audio assets must not block gameplay while loading.
+- Dispose of audio nodes and loops when their owners are removed.
+
+### Visual support
+
+- Color must not be the only indicator.
+- Text must remain usable with magnification.
+- Avoid unnecessary motion and long animations.
+- Player information must remain available through text and audio.
+
+---
+
+## 11. TypeScript and Code Conventions
+
+### General
+
+- Use TypeScript for project code.
+- Prefer explicit parameter and return types for exported functions.
+- Use `unknown` at untrusted boundaries and validate before use.
+- Avoid `any` unless an external API boundary makes it unavoidable and the reason is documented.
+- Prefer pure functions for calculations.
+- Keep side effects at clear boundaries.
+- Use explicit imports.
+- Use existing project naming and module patterns.
+- Do not reformat unrelated code.
+- Do not rename unrelated symbols during a feature task.
+- Do not create speculative abstractions for possible future systems.
+
+### Naming
+
+- File names: `kebab-case` unless an existing local convention requires otherwise.
+- Functions and variables: `camelCase`
+- Types, interfaces, and classes: `PascalCase`
+- Constants: `UPPER_SNAKE_CASE`
+
+### Closing-brace comments
+
+Every closing brace `}` added or modified by AI must have a trailing comment that identifies what it closes.
+
+Examples:
+
+```ts
+if (condition) {
+  performAction()
+} // end if condition
+
+const calculateValue = (): number => {
+  return 1
+} // end function calculateValue
+
+class AudioManager {
+  public dispose(): void {
+    // Dispose owned audio nodes.
+  } // end method dispose
+} // end class AudioManager
+```
+
+This requirement applies to TypeScript, JavaScript, JSON-like code examples that permit comments, PowerShell script blocks, and other brace-based source files when comments are syntactically valid.
+
+Do not add illegal comments to strict JSON files.
+
+### Error handling
+
+- Fail with actionable messages at data boundaries.
+- Do not silently replace invalid authored values with unrelated defaults.
+- Missing optional audio assets may use the project's intended fallback behavior.
+- Invalid gameplay data should be reported during validation rather than concealed at runtime.
+
+---
+
+## 12. Refactoring Rules
+
+Refactoring is allowed when it directly reduces risk for the current feature.
+
+A focused extraction is appropriate when code has:
+
+- Independent state
+- A clear lifecycle
+- More than one public operation
+- Reuse potential
+- Independent testing value
+- A distinct UI responsibility
+
+Refactoring is not appropriate when it:
+
+- Changes unrelated behavior
+- Rewrites stable systems without acceptance criteria
+- Renames large portions of the project
+- Introduces a new framework
+- Combines several roadmap tickets
+- Moves code only to satisfy an arbitrary line-count target
+
+Use this sequence:
+
+1. Identify current behavior and source of truth.
+2. Add a narrow adapter or test seam when needed.
+3. Move one coherent responsibility.
+4. Build and verify behavior preservation.
+5. Add the new feature.
+6. Build and verify again.
+
+---
+
+## 13. AI Work Procedure
+
+For every non-trivial task, AI must perform these steps.
+
+### Before editing
+
+1. Restate the concrete outcome.
+2. Inspect `SESSION_NOTES.md`.
+3. Inspect the relevant section of `AI_CONTEXT.md`.
+4. Inspect `docs/CURRENT_STATE.md` and the matching roadmap item.
+5. Identify the authoritative source of truth.
+6. Identify the smallest set of files likely to change.
+7. Search for existing helpers before creating new ones.
+8. List likely regression risks.
+9. Distinguish required work from optional cleanup.
+
+Do not edit before understanding the current ownership path.
+
+### During editing
+
+- Keep changes within the current ticket.
+- Preserve working behavior unless the ticket explicitly changes it.
+- Reuse existing stores, resolvers, and event paths.
+- Add tests or validation at the same time as pure logic.
+- Avoid unrelated formatting.
+- Add closing-brace comments.
+- Keep the working tree understandable.
+
+### When design information is missing
+
+- Make the smallest conservative assumption when it is reversible and does not invent a gameplay rule.
+- State the assumption in the completion report.
+- Do not create a large placeholder system.
+- Stop and report the exact missing decision only when proceeding would be destructive, incompatible, or likely to encode the wrong game rule.
+
+### After editing
+
+Report:
+
+1. Files changed
+2. Behavior changed
+3. Source of truth used
+4. Automated commands run
+5. Results
+6. Exact manual playtest steps
+7. Unverified behavior
+8. Regression risks
+9. Documentation that should be updated
+
+---
+
+## 14. Verification
+
+Current baseline commands:
+
+```text
+npm run typecheck
+npm run build
+```
+
+Current full local playtest command:
+
+```text
+npm run dev:playtest
+```
+
+Until `npm run verify` is implemented, both type checking and build are required for code changes.
+
+When `npm run verify` exists, it should become the standard automated gate and include:
+
+- Type checking
+- Workspace build
+- Data validation
+- Focused automated tests
+
+Do not claim a feature works because TypeScript compiled. Separate these states:
+
+- Implemented
+- Automated checks passed
+- Manually playtested
+- Developer approved
+
+---
+
+## 15. Documentation Maintenance
+
+### `AI_CONTEXT.md`
+
+Update only when stable architecture, ownership, or repository-wide rules change.
+
+### `docs/CURRENT_STATE.md`
+
+Update after:
+
+- Baseline audits
+- Major playtests
+- Confirmed defects
+- Completed roadmap items
+- Changes in verification status
+
+### `docs/ROADMAP.md`
+
+Update when priorities, dependencies, scope, or milestone status changes.
+
+Do not paste full implementation prompts into the roadmap.
+
+### `SESSION_NOTES.md`
+
+Replace for each focused work session. It should describe one task, its constraints, files to inspect, and acceptance criteria.
+
+### Archived documents
+
+Archived documents are historical evidence only. They do not control active development.
+
+---
+
+## 16. Known Architectural Debt
+
+Current known debt includes:
+
+- `packages/client/src/test-map/main.ts` is an oversized orchestration hub.
+- The player pause menu and developer tools are mixed together.
+- The garage is exposed through pause instead of a contextual world facility.
+- The garage controller is large and tightly integrated with DOM behavior.
+- Automated test coverage is limited or absent.
+- Repository mapping artifacts may become stale or incomplete.
+- Several advanced targeting tickets remain unfinished or unverified.
+- The world lacks a completed faction, mission, facility, and shop loop.
+- Existing implemented systems require a fresh baseline smoke test before being treated as demo-ready.
+
+Address these through roadmap tickets, not opportunistic rewrites.
+
+---
+
+## 17. Deferred Work
+
+Unless a current ticket explicitly changes priority, defer:
+
+- Full multiplayer authority and synchronization
+- Massive cities or a huge world
+- Procedural mission generation
+- Deep faction reputation simulation
+- Complex dialogue trees
+- Dynamic economy simulation
+- Broad engine replacement
+- Large visual redesign unrelated to the playable loop
+- Advanced targeting work that does not block the demo
+- General cleanup with no acceptance criteria
 
 ---
 
