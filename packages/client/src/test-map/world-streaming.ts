@@ -1,5 +1,6 @@
 import { getCell } from './map-data.js'
 import type { SpriteObject } from './types.js'
+import { getChunkDistance, toChunkCoordinate, toChunkKey } from './chunk-coordinates.js'
 
 export type WorldChunkState = 'unloaded' | 'dormant' | 'active'
 
@@ -83,18 +84,6 @@ const DEFAULT_DORMANT_RADIUS_CHUNKS = 4
 const DEFAULT_MAX_ACTIVATIONS_PER_FRAME = 2
 const DEFAULT_MAX_TRANSITIONS_PER_FRAME = 10
 
-function toChunkCoord(value: number, chunkSize: number): number {
-  return Math.floor(value / chunkSize)
-}
-
-function toChunkKey(chunkX: number, chunkY: number): string {
-  return `${chunkX},${chunkY}`
-}
-
-function chunkDistance(observerX: number, observerY: number, chunkX: number, chunkY: number): number {
-  return Math.max(Math.abs(chunkX - observerX), Math.abs(chunkY - observerY))
-}
-
 function resolveTargetState(distance: number, config: WorldStreamingConfig): WorldChunkState {
   if (distance <= config.activeRadiusChunks) {
     return 'active'
@@ -146,13 +135,13 @@ function buildChunkRecords(
       if (getCell(mapData, col, row) === 0) {
         continue
       }
-      const record = getOrCreate(toChunkCoord(col, chunkSize), toChunkCoord(row, chunkSize))
+      const record = getOrCreate(toChunkCoordinate(col, chunkSize), toChunkCoordinate(row, chunkSize))
       record.wallCount += 1
     }
   }
 
   for (const sprite of sprites) {
-    const record = getOrCreate(toChunkCoord(sprite.x, chunkSize), toChunkCoord(sprite.y, chunkSize))
+    const record = getOrCreate(toChunkCoordinate(sprite.x, chunkSize), toChunkCoordinate(sprite.y, chunkSize))
     record.decorCount += 1
   }
 
@@ -178,8 +167,8 @@ export function createWorldStreamingManager(args: {
   }
 
   const chunkRecords = buildChunkRecords(args.mapData, args.sprites, args.mapWidth, args.mapHeight, config.chunkSize)
-  let observerChunkX = toChunkCoord(args.mapWidth * 0.5, config.chunkSize)
-  let observerChunkY = toChunkCoord(args.mapHeight * 0.5, config.chunkSize)
+  let observerChunkX = toChunkCoordinate(args.mapWidth * 0.5, config.chunkSize)
+  let observerChunkY = toChunkCoordinate(args.mapHeight * 0.5, config.chunkSize)
 
   let frameTransitions = 0
   let frameActivationMs = 0
@@ -214,12 +203,12 @@ export function createWorldStreamingManager(args: {
   }
 
   const update = (playerX: number, playerY: number): void => {
-    observerChunkX = toChunkCoord(playerX, config.chunkSize)
-    observerChunkY = toChunkCoord(playerY, config.chunkSize)
+    observerChunkX = toChunkCoordinate(playerX, config.chunkSize)
+    observerChunkY = toChunkCoordinate(playerY, config.chunkSize)
 
     const transitions: Array<{ record: WorldChunkRecord; target: WorldChunkState; distance: number }> = []
     for (const record of chunkRecords.values()) {
-      const distance = chunkDistance(observerChunkX, observerChunkY, record.chunkX, record.chunkY)
+      const distance = getChunkDistance(observerChunkX, observerChunkY, record.chunkX, record.chunkY)
       const desiredState = resolveTargetState(distance, config)
       if (desiredState !== record.state) {
         transitions.push({ record, target: desiredState, distance })
@@ -258,7 +247,7 @@ export function createWorldStreamingManager(args: {
   }
 
   const getChunkStateAt = (x: number, y: number): WorldChunkState => {
-    const record = chunkRecords.get(toChunkKey(toChunkCoord(x, config.chunkSize), toChunkCoord(y, config.chunkSize)))
+    const record = chunkRecords.get(toChunkKey(toChunkCoordinate(x, config.chunkSize), toChunkCoordinate(y, config.chunkSize)))
     return record?.state ?? 'unloaded'
   }
 
