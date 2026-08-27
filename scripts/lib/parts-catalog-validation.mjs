@@ -22,6 +22,50 @@ const REQUIRED_NUMERIC_KEYS = [
   'energyDrain'
 ]
 
+const OPTIONAL_NUMERIC_KEYS = [
+  'armorValue',
+  'energyCapacity',
+  'idleEnergyRegen',
+  'movingEnergyRegen',
+  'flyingEnergyRegen',
+  'regenDelay',
+  'powerOutput',
+  'heatGeneration',
+  'heatDissipation',
+  'heatCapacity',
+  'emergencyCooling',
+  'liftCapacity',
+  'rotorCount',
+  'verticalTakeoffTime',
+  'flightStability',
+  'speedModifier',
+  'groundCapacity',
+  'ratedLoad',
+  'energyUse',
+  'range',
+  'lockOn',
+  'stability',
+  'meleeDamage',
+  'accuracy',
+  'sensorStrength',
+  'damagePerShot',
+  'fireRateCooldownSeconds',
+  'projectileCount',
+  'spreadDegrees',
+  'bulletSpeed',
+  'clipSize',
+  'weaponReach',
+  'meleeContactTimeMs',
+  'horizontalLockAngle',
+  'verticalLockAngle',
+  'effectiveRange',
+  'ammoConsumedPerShot',
+  'energyPerShot',
+  'chipSlots',
+  'computeBandWidth',
+  'chipMemoryCost'
+]
+
 const assertFiniteNumber = (definition, key, sourceLabel) => {
   if (typeof definition[key] !== 'number' || !Number.isFinite(definition[key])) {
     throw new Error(`${sourceLabel}: ${definition.id}.${key} must be a finite number.`)
@@ -60,6 +104,12 @@ export const validatePartsCatalog = (rawCatalog, sourceLabel = 'parts catalog') 
       } // end if inherited variant field
       assertFiniteNumber(definition, key, sourceLabel)
     } // end for required numeric field
+
+    for (const key of OPTIONAL_NUMERIC_KEYS) {
+      if (definition[key] !== undefined) {
+        assertFiniteNumber(definition, key, sourceLabel)
+      } // end if optional numeric field present
+    } // end for optional numeric field
 
     if (definition.category === 'GroundMobility' && definition.deprecated !== true) {
       if (typeof definition.ratedLoad !== 'number' || !Number.isFinite(definition.ratedLoad) || definition.ratedLoad <= 0) {

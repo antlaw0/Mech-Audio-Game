@@ -38,7 +38,7 @@ const randomIntInclusive = (min: number, max: number, random: () => number): num
     return lower
   } // end if degenerate range
 
-  const sample = Math.max(0, Math.min(1, random()))
+  const sample = Math.max(0, Math.min(1 - Number.EPSILON, random()))
   const span = upper - lower + 1
   return lower + Math.floor(sample * span)
 } // end function randomIntInclusive

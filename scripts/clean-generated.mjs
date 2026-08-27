@@ -23,7 +23,12 @@ const main = async () => {
       throw new Error(`Refusing to remove path outside repository: ${targetPath}`)
     } // end if target outside repository
 
-    await rm(targetPath, { force: true, recursive: true })
+    await rm(targetPath, {
+      force: true,
+      recursive: true,
+      maxRetries: 3,
+      retryDelay: 100
+    })
     console.log(`[clean-generated] Removed ${relativePath}`)
   } // end for generated path
 } // end function main

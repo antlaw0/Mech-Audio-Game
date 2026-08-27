@@ -47,6 +47,16 @@ test('invalid required number identifies definition and field', () => {
 } // end test invalid required number
 )
 
+test('invalid optional number identifies definition and field', () => {
+  const catalog = [makeDefinition({ energyCapacity: 'unlimited' })]
+
+  assert.throws(
+    () => validatePartsCatalog(catalog, 'fixture'),
+    /fixture: test\.head\.energyCapacity must be a finite number/
+  )
+} // end test invalid optional number
+)
+
 test('active ground mobility requires positive ratedLoad', () => {
   const catalog = [makeDefinition({
     id: 'test.legs',

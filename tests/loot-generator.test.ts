@@ -52,3 +52,16 @@ test('missing loot table returns an empty result with requested ID', () => {
   assert.deepEqual(generator.generateForContainer('missing'), { tableId: 'missing', stacks: [] })
 } // end test missing loot table
 )
+
+test('loot quantity remains at the inclusive maximum when random returns one', () => {
+  const generator = createLootGenerator({
+    itemDatabase: createItemDatabase(definitions),
+    lootTables: tables,
+    random: () => 1
+  })
+
+  assert.deepEqual(generator.generateFromEntries([
+    { itemId: 'scrap', minQuantity: 1, maxQuantity: 3, dropChance: 1 }
+  ]), [{ itemId: 'scrap', quantity: 3 }])
+} // end test inclusive maximum loot quantity
+)

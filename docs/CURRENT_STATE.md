@@ -1,6 +1,6 @@
 # Mech Audio Game: Current Project State
 
-Last document review: 2026-07-18  
+Last document review: 2026-08-27
 Target branch: `dev`  
 Repository: `https://github.com/antlaw0/Mech-Audio-Game`
 
@@ -83,8 +83,7 @@ git rev-parse HEAD
 node --version
 npm --version
 npm ci
-npm run typecheck
-npm run build
+npm run verify
 npm run dev:playtest
 ```
 
@@ -92,9 +91,10 @@ npm run dev:playtest
 
 | Check | Status | Notes |
 |---|---|---|
-| Dependency installation | Not run for return audit | |
-| Workspace type check | Not run for return audit | |
-| Workspace build | Not run for return audit | |
+| Dependency installation | Automated Checks Passed | Passed with `npm ci` in the isolated baseline-development checkout; rerun on the integrated Windows `dev` commit |
+| Clean workspace build | Automated Checks Passed | `npm run verify` removes generated output and builds shared, client, then server in dependency order |
+| Authored-data validation | Automated Checks Passed | Parts catalog, item definitions, and loot-table references are checked without modifying source data |
+| Focused regression suite | Automated Checks Passed | 30 tests passed on the baseline-development branch |
 | Client startup | Not run for return audit | |
 | Server startup | Not run for return audit | |
 
