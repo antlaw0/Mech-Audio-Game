@@ -1,7 +1,7 @@
 # Development Baseline and Codex Workflow Design
 
-Date: 2026-08-27  
-Repository: `https://github.com/antlaw0/Mech-Audio-Game`  
+Date: 2026-08-27
+Repository: `https://github.com/antlaw0/Mech-Audio-Game`
 Candidate baseline branch: `dev`
 
 ## 1. Purpose
