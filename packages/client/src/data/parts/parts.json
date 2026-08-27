@@ -519,7 +519,7 @@
     "name": "Basic Pistol",
     "category": "HandWeapon",
     "integrity": 130,
-    "weight": 72,
+    "weight": 12,
     "PDEF": 7,
     "EDEF": 6,
     "energyDrain": 0,
