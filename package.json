@@ -10,29 +10,24 @@
     "build:shared": "npm run build -w @mech-audio/shared",
     "build:client": "npm run build -w @mech-audio/client",
     "build:server": "npm run build -w @mech-audio/server",
-
     "dev:playtest": "node ./scripts/with-dev-lock.mjs npm run dev:playtest:boot",
-
     "dev:playtest:boot": "npm run build:server && npm run build:client && npm run dev:playtest:inner",
-
     "dev:playtest:inner": "concurrently --handle-input --restart-tries 3 --restart-after 2000 --names server,watch,static -c yellow,cyan,green \"npm run dev:server\" \"npm run dev:watch\" \"npm run dev:static\"",
-
     "stop:playtest": "stop.bat",
-
     "dev": "concurrently --handle-input --names watch,serve -c cyan,green \"npm run dev:watch\" \"npm run dev:static\"",
-
     "dev:watch": "tsc -b tsconfig.json --watch --preserveWatchOutput --watchDirectory useFsEvents",
-
     "predev:static": "npm run build:client",
     "dev:static": "serve . --listen tcp://localhost:3000",
-
     "dev:server": "npm run dev -w @mech-audio/server",
-
     "start:colyseus": "npm run start:colyseus -w @mech-audio/server",
-
     "typecheck": "npm run build:shared && npm run typecheck:workspaces",
     "typecheck:workspaces": "npm run typecheck -w @mech-audio/shared && npm run typecheck -w @mech-audio/client && npm run typecheck -w @mech-audio/server",
-
+    "clean:generated": "node ./scripts/clean-generated.mjs",
+    "test:compile": "tsc -p tsconfig.tests.json",
+    "test": "npm run test:compile && node --test .test-dist/tests/*.test.js",
+    "validate": "node ./scripts/validate-data.mjs",
+    "verify:quick": "npm run typecheck && npm run validate && npm test",
+    "verify": "npm run clean:generated && npm run build && npm run validate && npm test",
     "catalog:apply": "node ./scripts/apply-catalog-export.mjs",
     "catalog:apply:latest": "node ./scripts/apply-latest-catalog-export.mjs"
   },
