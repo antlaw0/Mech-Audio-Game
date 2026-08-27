@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -ws",
+    "build": "npm run build:shared && npm run build:client && npm run build:server",
     "build:shared": "npm run build -w @mech-audio/shared",
     "build:client": "npm run build -w @mech-audio/client",
     "build:server": "npm run build -w @mech-audio/server",
@@ -30,7 +30,8 @@
 
     "start:colyseus": "npm run start:colyseus -w @mech-audio/server",
 
-    "typecheck": "npm run typecheck -ws",
+    "typecheck": "npm run build:shared && npm run typecheck:workspaces",
+    "typecheck:workspaces": "npm run typecheck -w @mech-audio/shared && npm run typecheck -w @mech-audio/client && npm run typecheck -w @mech-audio/server",
 
     "catalog:apply": "node ./scripts/apply-catalog-export.mjs",
     "catalog:apply:latest": "node ./scripts/apply-latest-catalog-export.mjs"

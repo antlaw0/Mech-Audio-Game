@@ -30,6 +30,12 @@ npm install
 npm run build
 ```
 
+The root build command compiles the shared package before the client and server packages. The root type-check command establishes the same shared-package prerequisite automatically:
+
+```bash
+npm run typecheck
+```
+
 Parts catalog source of truth:
 
 - `packages/client/src/data/parts/parts.json` is authoritative.
