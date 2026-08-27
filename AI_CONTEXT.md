@@ -1,10 +1,12 @@
 # Mech Audio Game: AI Context
 
-Last reviewed: 2026-07-18  
+Last reviewed: 2026-08-27
 Primary repository: `https://github.com/antlaw0/Mech-Audio-Game`  
 Active development branch: `dev`
 
 This document provides stable repository-wide context for AI assistants and human contributors. It describes the current architecture, authoritative data ownership, development rules, and near-term product direction.
+
+Codex operating rules and required verification commands live in `AGENTS.md`.
 
 It is not a task tracker, an implementation diary, or a substitute for inspecting the source code.
 

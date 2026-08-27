@@ -1,16 +1,16 @@
 # Current Session: Return-to-Development Baseline
 
-Created: 2026-07-18  
+Created: 2026-08-27
 Target branch: `dev`  
 Roadmap item: D0.2 Fresh Local Baseline
 
 ## 1. Session Outcome
 
-Establish the exact current condition of the project before redesigning the pause menu or adding open-world systems.
+Complete the Windows, browser, audio, keyboard, NVDA, and gameplay baseline after the automated foundation passes.
 
 This session should produce:
 
-- A clean build result
+- A clean `npm run verify` result
 - A completed smoke-test matrix
 - Reproduction steps for blocking defects
 - An updated `docs/CURRENT_STATE.md`
@@ -71,8 +71,7 @@ git log -1 --oneline
 node --version
 npm --version
 npm ci
-npm run typecheck
-npm run build
+npm run verify
 npm run dev:playtest
 ```
 
@@ -266,17 +265,22 @@ chore: record playable demo baseline
 
 ---
 
-## 10. Likely Next Session
+## 10. Automated Foundation Status
 
-Roadmap item:
+Completed in the baseline-foundation branch:
 
-D0.3 One-Command Verification
+- Dependency-ordered clean build
+- `npm run verify:quick`
+- `npm run verify`
+- Read-only parts-catalog validation
+- Focused regression tests for parts, weight, inventory, loot, heat, energy, and chunk coordinates
+- Codex repository instructions and current navigation documents
 
-Possible exception:
+The next session is the D0.2 manual Windows and NVDA smoke test described above. D0.2 remains In Progress until those results are recorded against the exact integrated `dev` commit.
 
-If the fresh baseline finds a critical startup or data-loss defect, fix that defect first as a narrowly scoped ticket.
+If the fresh baseline finds a critical startup or data-loss defect, fix that defect first as a narrowly scoped ticket using the evidence ladder in `AGENTS.md`.
 
-After verification is established, proceed to:
+After D0.2 and D0.3 are verified, proceed to:
 
 D1.1 Define and Preserve Existing UI Behavior
 

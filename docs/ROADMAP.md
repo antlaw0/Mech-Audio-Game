@@ -7,7 +7,7 @@ Target branch: `dev`
 
 This roadmap defines the shortest safe route from the current prototype to a playable single-player demo.
 
-It is outcome-oriented. It does not contain full Copilot prompts or implementation diaries.
+It is outcome-oriented. It does not contain full agent prompts or implementation diaries.
 
 Detailed instructions for the active task belong in `SESSION_NOTES.md`.
 
@@ -55,7 +55,7 @@ Once a system works for one facility, mission, shop, spawn zone, or point of int
 
 Player pause UI, contextual facility UI, and developer tools must remain distinct.
 
-### Protect Copilot usage
+### Protect agentic-development effort
 
 Each implementation task should:
 
@@ -89,7 +89,7 @@ Do not add broad content on top of an unverified baseline.
 
 ## D0.1 Documentation and AI Context Reset
 
-Status: Ready to apply from documentation package  
+Status: Verified
 Priority: Critical  
 Dependencies: None
 
@@ -105,9 +105,8 @@ AI assistants and the developer use a small, consistent set of active documents 
 - Updated `SESSION_NOTES.md`
 - Archived legacy implementation roadmap
 - Focused advanced-targeting backlog
-- GitHub Copilot repository instructions
-- Reusable Copilot prompt files
-- Updated Continue prime directive
+- Repository instructions for Codex and other contributors
+- A single active-task handoff in `SESSION_NOTES.md`
 
 ### Acceptance criteria
 
@@ -116,13 +115,13 @@ AI assistants and the developer use a small, consistent set of active documents 
 - No active instruction prohibits Three.js.
 - No active instruction incorrectly fixes chunk size at 64 world units.
 - No active instruction forbids focused module extraction.
-- Copilot can identify the authority order without reading the archived roadmap.
+- Codex can identify the authority order without reading the archived roadmap.
 
 ---
 
 ## D0.2 Fresh Local Baseline
 
-Status: Ready  
+Status: In Progress
 Priority: Critical  
 Dependencies: D0.1
 
@@ -159,7 +158,7 @@ chore: record playable demo baseline
 
 ## D0.3 One-Command Verification
 
-Status: Not Started  
+Status: Implemented, Needs Verification
 Priority: Critical  
 Dependencies: D0.2
 
@@ -251,7 +250,7 @@ Dependencies: D0.2
 
 ### Outcome
 
-One developer command produces a compact report that can be pasted into ChatGPT or Copilot.
+One developer command produces a compact report that can be pasted into ChatGPT or Codex.
 
 ### Report contents
 
@@ -978,7 +977,7 @@ A ticket is done only when:
 - Unverified behavior is explicitly recorded.
 - The work is committed as a focused change.
 
-Copilot completion is not developer approval.
+Agent completion is not developer approval.
 
 ---
 
