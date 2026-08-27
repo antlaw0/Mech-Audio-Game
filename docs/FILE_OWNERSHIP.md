@@ -8,7 +8,7 @@ Ownership means a value or behavior has one authoritative home. Consumers may di
 |---|---|---|---|
 | Authored part values | `packages/client/src/data/parts/parts.json` | Catalog loader, garage, stat resolver, runtime | Edit values here deliberately. Validators and builds must not normalize or delete fields. |
 | Part schema and numeric keys | `packages/client/src/data/parts/types.ts` | Catalog, garage, resolver, scripts | Keep categories and supported fields consistent with authored data. |
-| Runtime catalog loading | `packages/client/src/data/parts/catalog.ts` | Garage store and runtime | Load and expose source definitions; do not become an alternate authored catalog. |
+| Runtime catalog loading | `packages/client/src/data/parts/catalog.ts` | Garage store and runtime | Load and normalize source definitions; `armorValue` may be derived from authored `integrity` when omitted. Do not become an alternate authored catalog. |
 | Resolved installed-part values | `packages/client/src/systems/parts/statResolver.ts` | Runtime stats and UI | Own integrity and instance-modifier resolution. UI must not duplicate formulas. |
 | Conditional part effects | `packages/client/src/systems/parts/effectModifiers.ts` | Runtime resource, movement, and weapon calculations | Own condition matching and effect application. |
 | Ground carrying capacity | Equipped `GroundMobility.ratedLoad`, interpreted by `packages/client/src/systems/weight/mechWeight.ts` | Movement, status, garage | Never substitute `liftCapacity`, legacy `groundCapacity`, or a UI-derived value. |

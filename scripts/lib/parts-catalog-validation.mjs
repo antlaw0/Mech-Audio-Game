@@ -23,6 +23,7 @@ const REQUIRED_NUMERIC_KEYS = [
 ]
 
 const OPTIONAL_NUMERIC_KEYS = [
+  // Raw authored definitions may omit armorValue; catalog.ts derives it from integrity.
   'armorValue',
   'energyCapacity',
   'idleEnergyRegen',
