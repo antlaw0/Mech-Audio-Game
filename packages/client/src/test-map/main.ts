@@ -83,6 +83,12 @@ import {
 import { SURFACE_MATERIAL, resolveWorldSurfaceMaterial } from './surface-material.js'
 import { createWorldStreamingManager } from './world-streaming.js'
 import { createFrameUpdateScheduler } from './update-scheduler.js'
+import {
+  calculateEnergyRegeneration,
+  getEnergyHeatMultiplier,
+  resolveHeatState,
+  type HeatState
+} from './resource-policy.js'
 import type { GarageSnapshot, MechLoadout, PartCategory, PartDefinition, PartEffectModifier, PartEffectTarget, WeaponMountSlot } from '../data/parts/types.js'
 import type { InventoryStack, ItemCategory } from '../data/items/types.js'
 import { createInventoryManager } from '../systems/inventory/inventoryManager.js'
@@ -159,8 +165,6 @@ interface KnownPoi {
 
 type PauseDebugTabId = 'runtime' | 'events' | 'diagnostics' | 'tuning' | 'inventory' | 'loadout' | 'controls'
 type PauseOverlayMode = 'pause' | 'container-transfer'
-type HeatState = 'NORMAL' | 'HOT' | 'CRITICAL' | 'DANGER' | 'OVERHEAT'
-
 const EMERGENCY_COOLING_ENGAGE_RATIO = 0.95
 const EMERGENCY_COOLING_DISENGAGE_RATIO = 0.7
 const MELEE_DASH_DURATION_SECONDS = 0.34
@@ -1836,22 +1840,10 @@ function startTestMap(): void {
   } // end function getEffectiveMeleeDamagePerSwing
 
 
-  const getEnergyHeatMultiplier = (): number => {
+  const getCurrentEnergyHeatMultiplier = (): number => {
     const heatState = resolveHeatState(devCurrentHeat, devMaxHeat, devHeatState)
-    if (heatState === 'HOT') {
-      return 0.8
-    }
-    if (heatState === 'CRITICAL') {
-      return 0.55
-    }
-    if (heatState === 'DANGER') {
-      return 0.25
-    }
-    if (heatState === 'OVERHEAT') {
-      return 0
-    }
-    return 1
-  } // end function getEnergyHeatMultiplier
+    return getEnergyHeatMultiplier(heatState)
+  } // end function getCurrentEnergyHeatMultiplier
 
   const getCurrentBaseEnergyRegenPerSecond = (): number => {
     if (isOverheatShutdownActive()) {
@@ -1870,10 +1862,14 @@ function startTestMap(): void {
 
   const getCurrentEnergyRegenPerSecond = (totalWeight: number, ratedLoad: number): number => {
     const baseRegen = getCurrentBaseEnergyRegenPerSecond()
-const groundRatedLoad = getDevPartState('Movement')?.ratedLoad ?? 0
-const weightFactor = calculateWeightFactor(totalWeight, groundRatedLoad).weightFactor
-    const heatMultiplier = getEnergyHeatMultiplier()
-    const regenBeforeEffects = baseRegen * weightFactor * heatMultiplier * Math.max(0, devEnergyRegenRate)
+    const weightFactor = calculateWeightFactor(totalWeight, ratedLoad).weightFactor
+    const heatMultiplier = getCurrentEnergyHeatMultiplier()
+    const regenBeforeEffects = calculateEnergyRegeneration({
+      basePerSecond: baseRegen,
+      weightFactor,
+      heatMultiplier,
+      runtimeMultiplier: devEnergyRegenRate
+    })
     return applyPartEffectsWithDiagnostics(
       regenBeforeEffects,
       'energyRegenPerSecond',
@@ -5257,29 +5253,6 @@ const weightFactor = calculateWeightFactor(totalWeight, groundRatedLoad).weightF
     runtimeDebugOverlayElement.setAttribute('aria-hidden', visible ? 'false' : 'true')
     isRuntimeDebugOverlayVisible = visible
   } // end function setRuntimeDebugOverlayVisible
-
-  const resolveHeatState = (heatValue: number, maxHeatValue: number, previousState: HeatState): HeatState => {
-    const ratio = heatValue / Math.max(1, maxHeatValue)
-    if (ratio >= 1) {
-      return 'OVERHEAT'
-    }
-
-    // Canonical overheat recovery threshold from spec: stay overheated until <= 25%.
-    if (previousState === 'OVERHEAT' && ratio > 0.25) {
-      return 'OVERHEAT'
-    }
-
-    if (ratio >= 0.85) {
-      return 'DANGER'
-    }
-    if (ratio >= 0.65) {
-      return 'CRITICAL'
-    }
-    if (ratio >= 0.4) {
-      return 'HOT'
-    }
-    return 'NORMAL'
-  } // end function resolveHeatState
 
   const updateHeatState = (): HeatState => {
     const nextState = resolveHeatState(devCurrentHeat, devMaxHeat, devHeatState)
@@ -10963,4 +10936,3 @@ const baseEnergyRegenPerSecond = getCurrentEnergyRegenPerSecond(
 } // end function startTestMap
 
 startTestMap()
-      
