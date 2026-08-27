@@ -3,22 +3,29 @@
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import { validatePartsCatalog } from './lib/parts-catalog-validation.mjs'
+
 const PART_CATEGORIES = new Set([
   'Head',
   'Computer',
   'Core',
   'Generator',
+  'ThermalRegulator',
   'LeftArm',
   'RightArm',
   'Utility1',
-  'Utility2'
+  'Utility2',
+  'GroundMobility',
+  'Chip',
+  'HandWeapon',
+  'ShoulderWeapon'
 ])
 
 const REQUIRED_NUMERIC_KEYS = ['integrity', 'weight', 'PDEF', 'EDEF', 'energyDrain']
 const OPTIONAL_NUMERIC_KEYS = [
   'energyCapacity',
   'powerOutput',
-  'ratedLoad'
+  'ratedLoad',
   'heatGeneration',
   'heatDissipation',
   'liftCapacity',
@@ -182,12 +189,12 @@ const main = async () => {
 
   let parsed
   try {
-    parsed = JSON.parse(rawInput)
+    parsed = JSON.parse(rawInput.replace(/^\uFEFF/, ''))
   } catch {
     throw new Error('Input file is not valid JSON.')
   }
 
-  const normalizedCatalog = normalizeCatalog(parsed)
+  const validatedCatalog = validatePartsCatalog(parsed, path.relative(PROJECT_ROOT, inputPath))
 
   if (!hasFlag('--no-backup')) {
     await mkdir(BACKUP_DIR, { recursive: true })
@@ -196,11 +203,11 @@ const main = async () => {
     console.log(`Backup written: ${path.relative(PROJECT_ROOT, backupPath)}`)
   }
 
-  await writeFile(TARGET_CATALOG_PATH, `${JSON.stringify(normalizedCatalog, null, 2)}\n`, 'utf8')
+  await writeFile(TARGET_CATALOG_PATH, `${JSON.stringify(validatedCatalog, null, 2)}\n`, 'utf8')
 
   const requiredFieldText = REQUIRED_NUMERIC_KEYS.join(', ')
   console.log(`Catalog applied to ${path.relative(PROJECT_ROOT, TARGET_CATALOG_PATH)}`)
-  console.log(`Definitions: ${normalizedCatalog.length}`)
+  console.log(`Definitions: ${validatedCatalog.length}`)
   console.log(`Validated required numeric fields: ${requiredFieldText}`)
 }
 
