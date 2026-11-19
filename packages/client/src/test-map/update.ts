@@ -215,6 +215,7 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   if (!Number.isFinite(state.pitchHardRecenterTimeRemainingSeconds)) {
     state.pitchHardRecenterTimeRemainingSeconds = 0
   } // end if hard recenter timer state is uninitialized
+  const angleBeforeTurn = player.angle
   const turnInput = fpsModeEnabled ? 0 : ((input.turnRight ? 1 : 0) - (input.turnLeft ? 1 : 0))
   if (turnInput !== 0) {
     const isFlying = player.isFlying || player.flightState === 'ascending' || player.flightState === 'airborne'
@@ -849,8 +850,9 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   } // end if isMoving
 
   if (audio.isAudioStarted()) {
-    const shouldPlayServo = input.turnLeft
-      || input.turnRight
+    // Drive turning audio from actual rotation, not the keys or weight alone.
+    const rotatedThisFrame = Math.abs(player.angle - angleBeforeTurn) > 0.000000001
+    const shouldPlayServo = rotatedThisFrame
       || input.lookUp
       || input.lookDown
       || normalizedPitchAssistMotion > 0.015
