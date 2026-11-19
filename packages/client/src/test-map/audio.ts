@@ -787,7 +787,6 @@ export function createAudioController(): AudioController {
   let audioPaused = false
   let servoPlaying = false
   let servoWasPlayingBeforePause = false
-  let servoTimeBeforePause = 0
   let footstepWasPlayingBeforePause = false
   let footstepTimeBeforePause = 0
   let ambienceWasPlayingBeforePause = false
@@ -967,7 +966,7 @@ export function createAudioController(): AudioController {
     ambienceAudio.volume = ambienceBaseVolume * (1 - cityAmbienceMix)
     cityAmbienceAudio.volume = ambienceBaseVolume * cityAmbienceMix
     musicAudio.volume = AUDIO_CONFIG.player.musicVolume * masterVolume * musicVolume
-    servoAudio.volume = AUDIO_CONFIG.player.servoVolume * masterVolume * servoVolume
+    servoGain.gain.value = AUDIO_CONFIG.player.servoVolume * masterVolume * servoVolume
     footstepAudio.volume = 0.25 * masterVolume * footstepsVolume
     allTerrainStepAudios.forEach((audio) => {
       audio.volume = AUDIO_CONFIG.player.terrainStepVolume * masterVolume * footstepsVolume
@@ -1295,10 +1294,10 @@ export function createAudioController(): AudioController {
 
   const getMusicTrack = (): string => currentMusicTrackName
 
-  const servoAudio = new Audio('assets/sounds/servomotor.ogg')
-  servoAudio.preload = 'auto'
+  // A decoded Web Audio buffer loops without the media-element restart gap.
+  const servoGain = new Tone.Gain(AUDIO_CONFIG.player.servoVolume).toDestination()
+  const servoAudio = new Tone.Player('assets/sounds/servomotor.ogg').connect(servoGain)
   servoAudio.loop = true
-  servoAudio.volume = AUDIO_CONFIG.player.servoVolume
 
   const impactFallbackEmitter = createWorldEmitter(2.5, 220)
   const impactSynth = new Tone.MetalSynth({
@@ -2184,7 +2183,6 @@ export function createAudioController(): AudioController {
       if (!audioStarted) {
         await Tone.loaded()
         footstepAudio.muted = true
-        servoAudio.muted = true
         ambienceAudio.muted = true
         musicAudio.muted = true
         cityAmbienceAudio.muted = true
@@ -2194,9 +2192,6 @@ export function createAudioController(): AudioController {
         await footstepAudio.play().catch(() => undefined)
         footstepAudio.pause()
         footstepAudio.currentTime = 0
-        await servoAudio.play().catch(() => undefined)
-        servoAudio.pause()
-        servoAudio.currentTime = 0
         await ambienceAudio.play().catch(() => undefined)
         ambienceAudio.pause()
         ambienceAudio.currentTime = 0
@@ -2256,7 +2251,6 @@ export function createAudioController(): AudioController {
           energyStatusCrackleStarted = true
         } // end if energy crackle noise source not started
         footstepAudio.muted = false
-        servoAudio.muted = false
         ambienceAudio.muted = false
         musicAudio.muted = false
         cityAmbienceAudio.muted = false
@@ -2658,10 +2652,9 @@ export function createAudioController(): AudioController {
     audioPaused = true
     contextWasRunningBeforePause = isAudioContextRunning()
 
-    servoWasPlayingBeforePause = servoPlaying && !servoAudio.paused
-    servoTimeBeforePause = servoAudio.currentTime
+    servoWasPlayingBeforePause = servoPlaying && servoAudio.state === 'started'
     if (servoWasPlayingBeforePause) {
-      servoAudio.pause()
+      servoAudio.stop()
     } // end if servo was playing
     servoPlaying = false
 
@@ -2715,9 +2708,8 @@ export function createAudioController(): AudioController {
       } // end try/catch context resume
     } // end if context should resume
 
-    if (servoWasPlayingBeforePause) {
-      servoAudio.currentTime = servoTimeBeforePause
-      void servoAudio.play().catch(() => undefined)
+    if (servoWasPlayingBeforePause && servoAudio.loaded) {
+      servoAudio.start()
       servoPlaying = true
     } // end if servo should resume
 
@@ -4591,33 +4583,24 @@ export function createAudioController(): AudioController {
   }
 
   const startServo = (): void => {
-    if (audioPaused || !audioStarted) {
+    if (audioPaused || !audioStarted || !servoAudio.loaded) {
       return
-    } // end if servo audio is unavailable
+    } // end if servo audio cannot start
 
-    if (!servoAudio.paused && !servoAudio.ended) {
+    if (servoAudio.state === 'started') {
       servoPlaying = true
       return
-    } // end if servo audio is already playing
+    } // end if the decoded loop is already active
 
-    // Recover if the browser stopped playback while turning was still requested.
+    servoAudio.start()
     servoPlaying = true
-    if (servoAudio.ended) {
-      servoAudio.currentTime = 0
-    } // end if servo reached the end of its recording
-    void servoAudio.play().catch(() => {
-      servoPlaying = false
-    }) // end playback rejection handler
   } // end function startServo
 
   const stopServo = (): void => {
-    if (!servoPlaying) {
-      return
-    } // end if servo not playing
-
+    if (servoAudio.state === 'started') {
+      servoAudio.stop()
+    } // end if the servo loop was running
     servoPlaying = false
-    servoAudio.pause()
-    servoAudio.currentTime = 0
   } // end function stopServo
 
   const playFootstep = (terrainLayer: FootstepTerrainLayer = 'default'): void => {
@@ -5247,7 +5230,7 @@ export function createAudioController(): AudioController {
     playProjectileNearMiss,
     isAudioStarted: () => audioStarted,
     getAudioContextState,
-    isServoPlaying: () => servoPlaying && !servoAudio.paused && !servoAudio.ended,
+    isServoPlaying: () => servoPlaying && servoAudio.state === 'started',
     toggleCategory,
     setCategoryEnabled,
     getCategoryEnabled,
