@@ -4591,13 +4591,23 @@ export function createAudioController(): AudioController {
   }
 
   const startServo = (): void => {
-    if (audioPaused || servoPlaying) {
+    if (audioPaused || !audioStarted) {
       return
-    } // end if servo already playing
+    } // end if servo audio is unavailable
 
+    if (!servoAudio.paused && !servoAudio.ended) {
+      servoPlaying = true
+      return
+    } // end if servo audio is already playing
+
+    // Recover if the browser stopped playback while turning was still requested.
     servoPlaying = true
-    servoAudio.currentTime = 0
-    void servoAudio.play().catch(() => undefined)
+    if (servoAudio.ended) {
+      servoAudio.currentTime = 0
+    } // end if servo reached the end of its recording
+    void servoAudio.play().catch(() => {
+      servoPlaying = false
+    }) // end playback rejection handler
   } // end function startServo
 
   const stopServo = (): void => {
@@ -5237,7 +5247,7 @@ export function createAudioController(): AudioController {
     playProjectileNearMiss,
     isAudioStarted: () => audioStarted,
     getAudioContextState,
-    isServoPlaying: () => servoPlaying,
+    isServoPlaying: () => servoPlaying && !servoAudio.paused && !servoAudio.ended,
     toggleCategory,
     setCategoryEnabled,
     getCategoryEnabled,
