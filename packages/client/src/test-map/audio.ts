@@ -1425,7 +1425,6 @@ export function createAudioController(): AudioController {
   let minigunLoadPromise: Promise<void> | null = null
   let minigunLoopMode: 'idle' | 'spooling' | 'sustain' = 'idle'
   let minigunStartLoopTimeoutId: number | null = null
-  const reloadClipDurationMsCache = new Map<string, number>()
   const reloadServoLoopFallbackPath = 'assets/sounds/servomotor.ogg'
   const reloadServoPlayerCache = new Map<string, Tone.Player>()
   const reloadServoGain = new Tone.Gain(0.001).toDestination()
@@ -1594,22 +1593,6 @@ export function createAudioController(): AudioController {
       return null
     }
   } // end function getOrCreateWeaponSoundPlayer
-
-  const getReloadClipDurationMs = async (soundPath: string): Promise<number> => {
-    const cachedDuration = reloadClipDurationMsCache.get(soundPath)
-    if (cachedDuration !== undefined) {
-      return cachedDuration
-    } // end if duration is cached
-
-    const player = await getOrCreateWeaponSoundPlayer(soundPath)
-    if (!player?.buffer.loaded) {
-      return 0
-    } // end if player buffer could not be loaded
-
-    const durationMs = Math.max(0, player.buffer.duration * 1000)
-    reloadClipDurationMsCache.set(soundPath, durationMs)
-    return durationMs
-  } // end function getReloadClipDurationMs
 
   const getOrCreateReloadServoPlayer = async (soundPath: string): Promise<Tone.Player | null> => {
     const cachedPlayer = reloadServoPlayerCache.get(soundPath)
@@ -3550,7 +3533,7 @@ export function createAudioController(): AudioController {
       return
     } // end if reload timeline is empty
 
-    const clipEvents: Array<{ soundPath: string; startMs: number }> = []
+    const clipEvents: Array<{ player: Tone.Player; startMs: number }> = []
     let cursorMs = 0
     for (const segment of definition.timeline) {
       if (segment.type === 'pause') {
@@ -3558,8 +3541,16 @@ export function createAudioController(): AudioController {
         continue
       } // end if segment is pause
 
-      const durationMs = await getReloadClipDurationMs(segment.soundPath)
-      clipEvents.push({ soundPath: segment.soundPath, startMs: cursorMs })
+      // Use the exact decoded clip whose duration controls this reload.
+      // Sending it through fireGunshot would lazy-load another voice pool,
+      // potentially playing the clip after its scheduled timeline position.
+      const clipPlayer = await getOrCreateWeaponSoundPlayer(segment.soundPath)
+      const durationMs = clipPlayer?.buffer.loaded
+        ? Math.max(0, clipPlayer.buffer.duration * 1000)
+        : 0
+      if (clipPlayer?.loaded) {
+        clipEvents.push({ player: clipPlayer, startMs: cursorMs })
+      } // end if the reload clip is ready
       cursorMs += durationMs
     } // end for each timeline segment
 
@@ -3592,7 +3583,9 @@ export function createAudioController(): AudioController {
     const scheduledTimers: number[] = []
     for (const clipEvent of clipEvents) {
       const timerId = window.setTimeout(() => {
-        fireGunshot(clipEvent.soundPath)
+        if (audioStarted && !audioPaused && isAudioContextRunning()) {
+          retriggerLoadedPlayer(clipEvent.player)
+        } // end if reload audio can be played
       }, Math.max(0, clipEvent.startMs))
       scheduledTimers.push(timerId)
     } // end for each reload clip event
