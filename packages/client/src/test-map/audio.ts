@@ -2766,29 +2766,20 @@ export function createAudioController(): AudioController {
     flightBoostGain.gain.rampTo(0.9 + ((activeFlightLoopCount - 1) * 0.12), 0.22)
   } // end function startFlightLoop
 
-  const stopFlightLoop = (params?: FlightLoopStopParams): void => {
+  const stopFlightLoop = (_params?: FlightLoopStopParams): void => {
+    // Flight cutoff is immediate for controls, energy loss, overheating and subsystem failure.
+    // Do not delay shutdown or leave a separate synthetic propulsion rumble active.
     emitSemanticMovementEvent('thruster_stop')
     clearFlightSpinDownTimeout()
-    if (!isAnyFlightLoopPlaying()) {
-      return
-    } // end if no flight loop voice is active
-
-    if (params?.quickSpinDown) {
-      setActiveFlightPlaybackRate(0.62)
-      flightBoostFilter.frequency.rampTo(800, 0.12)
-      flightBoostDistortion.wet.rampTo(0.18, 0.09)
-      flightBoostGain.gain.rampTo(0.55, 0.14)
-      flightSpinDownTimeoutId = window.setTimeout(() => {
-        stopAllFlightLoopPlayers()
-        flightBoostFilter.frequency.rampTo(20000, 0.26)
-        flightBoostDistortion.wet.rampTo(0, 0.22)
-        flightBoostGain.gain.rampTo(1, 0.22)
-        flightSpinDownTimeoutId = null
-      }, 170)
-      return
-    } // end if quick spin-down requested
-
     stopAllFlightLoopPlayers()
+    flightMobilityGain.gain.cancelScheduledValues(Tone.now())
+    flightMobilityGain.gain.value = 0
+    flightBoostGain.gain.cancelScheduledValues(Tone.now())
+    flightBoostGain.gain.value = 1
+    flightBoostFilter.frequency.cancelScheduledValues(Tone.now())
+    flightBoostFilter.frequency.value = 20000
+    flightBoostDistortion.wet.cancelScheduledValues(Tone.now())
+    flightBoostDistortion.wet.value = 0
   } // end function stopFlightLoop
 
   const updateFlightLoopAudio = (params: FlightLoopUpdateParams): void => {
@@ -2799,6 +2790,9 @@ export function createAudioController(): AudioController {
     // After rotor cut, leave the brief shutdown entirely to stopFlightLoop.
     // Per-frame updates during descent must not restart a stopped rotor voice.
     if (params.flightState !== 'ascending' && params.flightState !== 'airborne') {
+      if (isAnyFlightLoopPlaying()) {
+        stopFlightLoop()
+      } // end if a rotor or jet is still playing after flight cutoff
       return
     } // end if flight propulsion is not engaged
 
