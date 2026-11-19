@@ -706,6 +706,9 @@ function startTestMap(): void {
     ...weapon,
     explosionSounds: [...weapon.explosionSounds]
   }))
+  // Decode every weapon's reload audio before first use, rather than on weapon switch.
+  // Loading failures do not block gameplay; the reload sequence retains its fallback.
+  void audio.preloadWeaponReloadAudio(weaponLoadout.map((weapon) => weapon.reloadDefinition))
   const meleeLoadout: PlayerMeleeWeaponDefinition[] = PLAYER_MELEE_WEAPON_DEFINITIONS.map((weapon) => ({
     ...weapon,
     swingSoundPaths: [...weapon.swingSoundPaths]
