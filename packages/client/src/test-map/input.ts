@@ -234,9 +234,6 @@ export function bindInput(
         window.speechSynthesis.speak(new SpeechSynthesisUtterance(`navigation ${enabled ? 'on' : 'off'}`))
       } // end if toggleNavigationAudio
 
-      if ((matchesBoundControl(event, 'turnLeft') || matchesBoundControl(event, 'turnRight')) && audio.isAudioStarted()) {
-        audio.startServo()
-      } // end if turn key and audio started
     } // end if key was not held
 
     if (shouldPreventDefault(event.code)) {
