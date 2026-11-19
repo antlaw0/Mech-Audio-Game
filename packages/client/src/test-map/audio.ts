@@ -2796,6 +2796,12 @@ export function createAudioController(): AudioController {
       return
     } // end if audio graph is inactive
 
+    // After rotor cut, leave the brief shutdown entirely to stopFlightLoop.
+    // Per-frame updates during descent must not restart a stopped rotor voice.
+    if (params.flightState !== 'ascending' && params.flightState !== 'airborne') {
+      return
+    } // end if flight propulsion is not engaged
+
     if (!isAnyFlightLoopPlaying()) {
       return
     } // end if there is no active flight loop to shape

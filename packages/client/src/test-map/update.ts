@@ -811,8 +811,13 @@ export function updateFrame(environment: UpdateEnvironment, deltaSeconds: number
   } // end if flight loop audio should update
 
   if (audio.isAudioStarted()) {
+    // An installed flight system must not emit propulsion rumble when its rotor is off.
+    const flightPropulsionActive = player.flightState === 'ascending' || player.flightState === 'airborne'
+    const mobilityAudioType = movementProfile.mobilityType === 'Flight' && !flightPropulsionActive
+      ? 'Placeholder'
+      : movementProfile.mobilityType
     audio.updatePlayerMobilityAudio(
-      movementProfile.mobilityType,
+      mobilityAudioType,
       normalizedGroundSpeed,
       normalizedForward,
       accelerating,
