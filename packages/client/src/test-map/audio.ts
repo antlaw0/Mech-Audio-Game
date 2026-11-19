@@ -1411,6 +1411,7 @@ export function createAudioController(): AudioController {
   const minigunSpinDownPath = 'assets/sounds/weapons/minigun_spinDown.ogg'
   const playerFireSound = new Tone.Player(defaultPlayerFireSoundPath).toDestination()
   const playerFireSoundCache = new Map<string, Tone.Player>([[defaultPlayerFireSoundPath, playerFireSound]])
+  const weaponSoundLoadPromises = new Map<string, Promise<Tone.Player | null>>()
   const playerFireSoundVoicePools = new Map<string, Tone.Player[]>()
   const playerFireSoundVoiceCursors = new Map<string, number>()
   const playerFireSoundPendingLoads = new Set<string>()
@@ -1568,30 +1569,36 @@ export function createAudioController(): AudioController {
     reloadServoLowpass.frequency.value = 18000
   } // end function resetReloadServoEffectNodes
 
-  const getOrCreateWeaponSoundPlayer = async (soundPath: string): Promise<Tone.Player | null> => {
+  const getOrCreateWeaponSoundPlayer = (soundPath: string): Promise<Tone.Player | null> => {
+    const pendingLoad = weaponSoundLoadPromises.get(soundPath)
+    if (pendingLoad) {
+      return pendingLoad
+    } // end if this clip is already loading
+
     const cachedPlayer = playerFireSoundCache.get(soundPath)
-    if (cachedPlayer) {
-      if (!cachedPlayer.loaded) {
-        try {
-          await cachedPlayer.load(soundPath)
-        } catch {
-          return null
-        }
-      } // end if cached player needs loading
+    if (cachedPlayer?.loaded) {
+      return Promise.resolve(cachedPlayer)
+    } // end if the decoded clip is ready
 
-      return cachedPlayer
-    } // end if sound player already exists
-
-    const dynamicPlayer = new Tone.Player(soundPath).toDestination()
-    playerFireSoundCache.set(soundPath, dynamicPlayer)
-    try {
-      await dynamicPlayer.load(soundPath)
-      return dynamicPlayer
-    } catch {
-      playerFireSoundCache.delete(soundPath)
-      dynamicPlayer.dispose()
-      return null
-    }
+    // Do not supply a URL to Tone.Player and then call load(URL) again.
+    const player = cachedPlayer ?? new Tone.Player().toDestination()
+    playerFireSoundCache.set(soundPath, player)
+    const loadPromise = player.load(soundPath)
+      .then(() => player as Tone.Player | null)
+      .catch(() => {
+        if (playerFireSoundCache.get(soundPath) === player) {
+          playerFireSoundCache.delete(soundPath)
+        } // end if the failed entry is still cached
+        if (player !== playerFireSound) {
+          player.dispose()
+        } // end if this is a disposable dynamic clip
+        return null
+      }) // end load failure handler
+      .finally(() => {
+        weaponSoundLoadPromises.delete(soundPath)
+      }) // end load completion handler
+    weaponSoundLoadPromises.set(soundPath, loadPromise)
+    return loadPromise
   } // end function getOrCreateWeaponSoundPlayer
 
   const getOrCreateReloadServoPlayer = async (soundPath: string): Promise<Tone.Player | null> => {
@@ -1619,6 +1626,24 @@ export function createAudioController(): AudioController {
       return null
     }
   } // end function getOrCreateReloadServoPlayer
+
+  const preloadWeaponReloadAudio = async (definitions: WeaponReloadDefinition[]): Promise<void> => {
+    const clipPaths = new Set<string>()
+    const servoPaths = new Set<string>()
+    for (const definition of definitions) {
+      for (const segment of definition.timeline) {
+        if (segment.type === 'audio') {
+          clipPaths.add(segment.soundPath)
+        } // end if segment contains reload audio
+      } // end for each reload segment
+      servoPaths.add(definition.servoLoopSoundPath)
+    } // end for each weapon reload definition
+
+    await Promise.all([
+      ...Array.from(clipPaths, (path) => getOrCreateWeaponSoundPlayer(path)),
+      ...Array.from(servoPaths, (path) => getOrCreateReloadServoPlayer(path))
+    ])
+  } // end function preloadWeaponReloadAudio
 
   const playerMechHitGain = new Tone.Gain(0.9).toDestination()
   const playerMechHitBaseFilter = new Tone.Filter(1200, 'bandpass').connect(playerMechHitGain)
@@ -5141,6 +5166,7 @@ export function createAudioController(): AudioController {
     stopMinigunFiringLoop,
     isMinigunLoopActive,
     playWeaponReloadSequence,
+    preloadWeaponReloadAudio,
     playCardinalOrientationCue,
     setAimAssistEnabled,
     isAimAssistEnabled: () => aimAssistEnabled,

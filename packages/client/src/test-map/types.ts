@@ -433,6 +433,7 @@ export interface AudioController {
   stopMinigunFiringLoop: () => void
   isMinigunLoopActive: () => boolean
   playWeaponReloadSequence: (definition: WeaponReloadDefinition) => Promise<void>
+  preloadWeaponReloadAudio: (definitions: WeaponReloadDefinition[]) => Promise<void>
   startFlightLoop: (params?: FlightLoopStartParams) => void
   stopFlightLoop: (params?: FlightLoopStopParams) => void
   updateFlightLoopAudio: (params: FlightLoopUpdateParams) => void
