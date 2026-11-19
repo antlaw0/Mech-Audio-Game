@@ -1425,7 +1425,6 @@ export function createAudioController(): AudioController {
   let minigunLoadPromise: Promise<void> | null = null
   let minigunLoopMode: 'idle' | 'spooling' | 'sustain' = 'idle'
   let minigunStartLoopTimeoutId: number | null = null
-  const reloadClipDurationMsCache = new Map<string, number>()
   const reloadServoLoopFallbackPath = 'assets/sounds/servomotor.ogg'
   const reloadServoPlayerCache = new Map<string, Tone.Player>()
   const reloadServoGain = new Tone.Gain(0.001).toDestination()
@@ -1594,22 +1593,6 @@ export function createAudioController(): AudioController {
       return null
     }
   } // end function getOrCreateWeaponSoundPlayer
-
-  const getReloadClipDurationMs = async (soundPath: string): Promise<number> => {
-    const cachedDuration = reloadClipDurationMsCache.get(soundPath)
-    if (cachedDuration !== undefined) {
-      return cachedDuration
-    } // end if duration is cached
-
-    const player = await getOrCreateWeaponSoundPlayer(soundPath)
-    if (!player?.buffer.loaded) {
-      return 0
-    } // end if player buffer could not be loaded
-
-    const durationMs = Math.max(0, player.buffer.duration * 1000)
-    reloadClipDurationMsCache.set(soundPath, durationMs)
-    return durationMs
-  } // end function getReloadClipDurationMs
 
   const getOrCreateReloadServoPlayer = async (soundPath: string): Promise<Tone.Player | null> => {
     const cachedPlayer = reloadServoPlayerCache.get(soundPath)
