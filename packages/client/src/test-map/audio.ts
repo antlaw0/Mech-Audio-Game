@@ -2816,7 +2816,7 @@ export function createAudioController(): AudioController {
     setActiveFlightLoopCount(rotorCount, true)
 
     const normalizedSpeed = clamp(params.normalizedSpeed, 0, 1)
-    const spinProgress = clamp(params.spinProgress ?? (params.flightState === 'grounded' ? 0 : 1), 0, 1)
+    const spinProgress = clamp(params.spinProgress ?? 1, 0, 1)
     const spinUpSeconds = Math.max(0.4, params.spinUpSeconds ?? lastFlightSpinUpSeconds)
     lastFlightSpinUpSeconds = spinUpSeconds
 
